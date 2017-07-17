@@ -1,0 +1,9 @@
+ipython>=5,<6
+sphinx
+sphinx-autobuild
+prettytable
+pefile
+capstone
+distorm3
+pycrypto
+pytz

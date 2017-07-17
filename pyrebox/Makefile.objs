@@ -1,0 +1,49 @@
+#-------------------------------------------------------------------------------
+#
+#   Copyright (C) 2017 Cisco Talos Security Intelligence and Research Group
+#
+#   PyREBox: Python scriptable Reverse Engineering Sandbox 
+#   Author: Xabier Ugarte-Pedrero 
+#   
+#   This program is free software; you can redistribute it and/or modify
+#   it under the terms of the GNU General Public License version 2 as
+#   published by the Free Software Foundation.
+#   
+#   This program is distributed in the hope that it will be useful,
+#   but WITHOUT ANY WARRANTY; without even the implied warranty of
+#   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#   GNU General Public License for more details.
+#
+#   You should have received a copy of the GNU General Public License
+#   along with this program; if not, write to the Free Software
+#   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston,
+#   MA 02110-1301, USA.
+#   
+#-------------------------------------------------------------------------------
+
+PYTHON_CFLAGS = -I/usr/include/python2.7 -I/usr/include/python2.7 -fno-strict-aliasing -DNDEBUG -fwrapv  -fstack-protector --param=ssp-buffer-size=4
+PYTHON_LIBS = -L/usr/lib/python2.7/config -lpthread -ldl -lutil -lm -lpython2.7 -Wl,-O1 -Wl,-Bsymbolic-functions -Xlinker -export-dynamic
+
+obj-y += process_mgr.o
+obj-y += utils.o
+obj-y += pyrebox.o
+obj-y += qemu_glue.o
+obj-y += api.o
+obj-y += qemu_commands.o
+obj-y += callbacks.o
+obj-y += qemu_glue_callbacks.o
+obj-y += vmi.o
+obj-y += windows_vmi.o
+
+pyrebox.o-libs := $(PYTHON_LIBS)
+
+qemu_glue_callbacks.o-cflags := $(PYTHON_CFLAGS)
+pyrebox.o-cflags := $(PYTHON_CFLAGS)
+utils.o-cflags := $(PYTHON_CFLAGS)
+process_mgr.o-cflags := -std=c++11 $(PYTHON_CFLAGS)
+qemu_glue.o-cflags := $(PYTHON_CFLAGS)
+callbacks.o-cflags := -std=c++11 $(PYTHON_CFLAGS)
+api.o-cflags := -std=c++11 $(PYTHON_CFLAGS)
+qemu_commands.o-cflags := $(PYTHON_CFLAGS)
+vmi.o-cflags := -std=c++11 $(PYTHON_CFLAGS)
+windows_vmi.o-cflags := -std=c++11 $(PYTHON_CFLAGS)

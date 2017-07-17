@@ -1,0 +1,20 @@
+PROJECT
+
+    PANDA: Platform for Architecture-Neutral Dynamic Analysis
+    https://github.com/moyix/panda
+    https://github.com/panda-re/panda
+
+LICENSE
+
+    GPLv2
+
+AFFECTED FILES
+
+    memory-access.c
+    memory-access.h
+        Modified versions of the following functions are used in qemu_glue.c:
+            connection_write_memory
+            connection_read_memory
+
+    pmemaddressspace.py
+        File used as an address space in the volatility component of PyREBox

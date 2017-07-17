@@ -1,0 +1,12 @@
+*.d
+*.o
+*.pyc
+.gdbinit
+config.h
+pyrebox.conf
+*.so
+docs/build
+qemu
+volatility
+pyrebox-i386
+pyrebox-x86_64
