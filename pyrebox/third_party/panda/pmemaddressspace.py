@@ -1,5 +1,6 @@
 #!/usr/bin/python
 
+from __future__ import print_function
 import volatility.addrspace as addrspace
 import urllib
 import socket
@@ -47,8 +48,8 @@ class PMemAddressSpace(addrspace.BaseAddressSpace):
                 else:
                     memory += temp_mem 
                 read_length += read_len
-        except AssertionError, e:
-            print e
+        except AssertionError as e:
+            print(e)
             memory = ''
         if pad:
             if memory is None:
@@ -71,11 +72,7 @@ class PMemAddressSpace(addrspace.BaseAddressSpace):
         return longval
 
     def get_memory_size(self):
-        size = api_internal.vol_get_memory_size()
-        if size is None:
-            return 0
-        else:
-            return size
+        return api_internal.vol_get_memory_size() or 0
 
     def get_available_addresses(self):
         # Since the second parameter is the length of the run
@@ -99,6 +96,6 @@ class PMemAddressSpace(addrspace.BaseAddressSpace):
                 raise AssertionError("PMemAddressSpace: WRITE of length " + str(length) +
                                      " @ " + hex(addr) + " failed.")
         except AssertionError, e:
-            print e
+            print(e)
             return False
         return True
