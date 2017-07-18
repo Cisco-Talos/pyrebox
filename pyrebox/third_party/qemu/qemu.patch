@@ -1,0 +1,876 @@
+diff -Naur qemu/chardev/char-fd.c qemu-2.9.0-pyrebox/chardev/char-fd.c
+--- qemu/chardev/char-fd.c	2017-07-10 15:01:43.185509825 +0100
++++ qemu-2.9.0-pyrebox/chardev/char-fd.c	2017-07-10 19:55:59.101875232 +0100
+@@ -30,6 +30,7 @@
+ 
+ #include "char-fd.h"
+ #include "char-io.h"
++#include "pyrebox/pyrebox.h"
+ 
+ /* Called with chr_write_lock held.  */
+ static int fd_chr_write(Chardev *chr, const uint8_t *buf, int len)
+@@ -41,6 +42,10 @@
+ 
+ static gboolean fd_chr_read(QIOChannel *chan, GIOCondition cond, void *opaque)
+ {
++
++    //Lock the python mutex
++    pthread_mutex_lock(&pyrebox_mutex);
++
+     Chardev *chr = CHARDEV(opaque);
+     FDChardev *s = FD_CHARDEV(opaque);
+     int len;
+@@ -52,6 +57,9 @@
+         len = s->max_size;
+     }
+     if (len == 0) {
++        //Unlock the pyrebox mutex
++        pthread_mutex_unlock(&pyrebox_mutex);
++
+         return TRUE;
+     }
+ 
+@@ -60,13 +68,22 @@
+     if (ret == 0) {
+         remove_fd_in_watch(chr, NULL);
+         qemu_chr_be_event(chr, CHR_EVENT_CLOSED);
++        //Unlock the pyrebox mutex
++        pthread_mutex_unlock(&pyrebox_mutex);
++
+         return FALSE;
+     }
+     if (ret > 0) {
+         qemu_chr_be_write(chr, buf, ret);
+     }
+ 
++    //Unlock the pyrebox mutex
++    pthread_mutex_unlock(&pyrebox_mutex);
++
++
+     return TRUE;
++
++
+ }
+ 
+ static int fd_chr_read_poll(void *opaque)
+diff -Naur qemu/cpu-exec.c qemu-2.9.0-pyrebox/cpu-exec.c
+--- qemu/cpu-exec.c	2017-07-10 15:01:43.193509825 +0100
++++ qemu-2.9.0-pyrebox/cpu-exec.c	2017-07-10 19:55:58.941875229 +0100
+@@ -35,6 +35,7 @@
+ #endif
+ #include "sysemu/cpus.h"
+ #include "sysemu/replay.h"
++#include "pyrebox/qemu_glue_callbacks.h"
+ 
+ /* -icount align implementation. */
+ 
+@@ -670,6 +671,13 @@
+         int tb_exit = 0;
+ 
+         while (!cpu_handle_interrupt(cpu, &last_tb)) {
++            //Pyrebox: update the cpu which is executing
++            notify_cpu_executing(cpu);
++            //Pyrebox: perform flush if necessary
++            if (is_tb_flush_needed()){
++                tb_flush(cpu);
++            }
++
+             TranslationBlock *tb = tb_find(cpu, last_tb, tb_exit);
+             cpu_loop_exec_tb(cpu, tb, &last_tb, &tb_exit);
+             /* Try to align the host and virtual clocks
+diff -Naur qemu/cputlb.c qemu-2.9.0-pyrebox/cputlb.c
+--- qemu/cputlb.c	2017-07-10 15:01:43.193509825 +0100
++++ qemu-2.9.0-pyrebox/cputlb.c	2017-07-10 19:55:58.945875229 +0100
+@@ -33,6 +33,8 @@
+ #include "exec/helper-proto.h"
+ #include "qemu/atomic.h"
+ 
++#include "pyrebox/qemu_glue_callbacks_tlb.h"
++
+ /* DEBUG defines, enable DEBUG_TLB_LOG to log to the CPU_LOG_MMU target */
+ /* #define DEBUG_TLB */
+ /* #define DEBUG_TLB_LOG */
+@@ -603,6 +605,7 @@
+                              hwaddr paddr, MemTxAttrs attrs, int prot,
+                              int mmu_idx, target_ulong size)
+ {
++    qemu_tlb_exec_callback(cpu,vaddr);
+     CPUArchState *env = cpu->env_ptr;
+     MemoryRegionSection *section;
+     unsigned int index;
+diff -Naur qemu/hmp-commands.hx qemu-2.9.0-pyrebox/hmp-commands.hx
+--- qemu/hmp-commands.hx	2017-07-10 15:01:43.205509825 +0100
++++ qemu-2.9.0-pyrebox/hmp-commands.hx	2017-07-10 19:55:58.945875229 +0100
+@@ -1777,3 +1777,5 @@
+ STEXI
+ @end table
+ ETEXI
++
++#include "pyrebox/qemu_commands_defs.h"
+diff -Naur qemu/hw/input/ps2.c qemu-2.9.0-pyrebox/hw/input/ps2.c
+--- qemu/hw/input/ps2.c	2017-07-10 15:01:43.245509826 +0100
++++ qemu-2.9.0-pyrebox/hw/input/ps2.c	2017-07-10 19:55:59.129875233 +0100
+@@ -31,6 +31,8 @@
+ 
+ #include "trace.h"
+ 
++#include "pyrebox/qemu_glue_callbacks_target_independent.h"
++
+ /* debug PC keyboard */
+ //#define DEBUG_KBD
+ 
+@@ -570,6 +572,11 @@
+ {
+     PS2KbdState *s = opaque;
+ 
++    //Pyrebox
++    if (is_keystroke_callback_needed()){
++        qemu_keystroke_callback(keycode);
++    }
++
+     trace_ps2_put_keycode(opaque, keycode);
+     qemu_system_wakeup_request(QEMU_WAKEUP_REASON_OTHER);
+ 
+diff -Naur qemu/hw/net/ne2000.c qemu-2.9.0-pyrebox/hw/net/ne2000.c
+--- qemu/hw/net/ne2000.c	2017-07-10 15:01:32.465509603 +0100
++++ qemu-2.9.0-pyrebox/hw/net/ne2000.c	2017-07-10 19:55:59.133875233 +0100
+@@ -29,6 +29,8 @@
+ #include "hw/loader.h"
+ #include "sysemu/sysemu.h"
+ 
++#include "pyrebox/qemu_glue_callbacks_target_independent.h"
++
+ /* debug NE2000 card */
+ //#define DEBUG_NE2000
+ 
+@@ -247,6 +249,11 @@
+     p[3] = total_len >> 8;
+     index += 4;
+ 
++    //Pyrebox: nic_receive
++    if (is_nic_rec_callback_needed()){
++        qemu_nic_rec_callback((unsigned char *)buf, size, index-NE2000_PMEM_START, s->start-NE2000_PMEM_START, s->stop-NE2000_PMEM_START);
++    }
++
+     /* write packet data */
+     while (size > 0) {
+         if (index <= s->stop)
+@@ -297,8 +304,14 @@
+                 /* XXX: next 2 lines are a hack to make netware 3.11 work */
+                 if (index >= NE2000_PMEM_END)
+                     index -= NE2000_PMEM_SIZE;
++
+                 /* fail safe: check range on the transmitted length  */
+                 if (index + s->tcnt <= NE2000_PMEM_END) {
++                    //Pyrebox: nic_send
++                    if (is_nic_send_callback_needed()){
++                        qemu_nic_send_callback((unsigned char*)s->mem+index, s->tcnt, index-NE2000_PMEM_START);
++                    }
++
+                     qemu_send_packet(qemu_get_queue(s->nic), s->mem + index,
+                                      s->tcnt);
+                 }
+diff -Naur qemu/include/monitor/monitor.h qemu-2.9.0-pyrebox/include/monitor/monitor.h
+--- qemu/include/monitor/monitor.h	2017-07-10 15:01:32.545509605 +0100
++++ qemu-2.9.0-pyrebox/include/monitor/monitor.h	2017-07-10 19:55:59.161875234 +0100
+@@ -6,6 +6,8 @@
+ #include "block/block.h"
+ #include "qemu/readline.h"
+ 
++#include "pyrebox/qemu_commands.h"
++
+ extern Monitor *cur_mon;
+ 
+ /* flags for monitor_init */
+diff -Naur qemu/Makefile.target qemu-2.9.0-pyrebox/Makefile.target
+--- qemu/Makefile.target	2017-07-10 15:01:43.153509824 +0100
++++ qemu-2.9.0-pyrebox/Makefile.target	2017-07-10 19:55:58.945875229 +0100
+@@ -142,6 +142,7 @@
+ obj-y += arch_init.o cpus.o monitor.o gdbstub.o balloon.o ioport.o numa.o
+ obj-y += qtest.o bootdevice.o
+ obj-y += hw/
++obj-y += pyrebox/
+ obj-$(CONFIG_KVM) += kvm-all.o
+ obj-y += memory.o cputlb.o
+ obj-y += memory_mapping.o
+diff -Naur qemu/softmmu_template.h qemu-2.9.0-pyrebox/softmmu_template.h
+--- qemu/softmmu_template.h	2017-07-10 15:01:32.697509608 +0100
++++ qemu-2.9.0-pyrebox/softmmu_template.h	2017-07-10 19:55:58.941875229 +0100
+@@ -165,8 +165,17 @@
+     haddr = addr + env->tlb_table[mmu_idx][index].addend;
+ #if DATA_SIZE == 1
+     res = glue(glue(ld, LSUFFIX), _p)((uint8_t *)haddr);
++    CPUX86State* env2 = &(X86_CPU((CPUState*)ENV_GET_CPU(env))->env);
++    if (is_mem_read_callback_needed(env2->cr[3])){
++        helper_qemu_mem_read_callback(ENV_GET_CPU(env), addr, DATA_SIZE);
++    }
+ #else
+     res = glue(glue(ld, LSUFFIX), _le_p)((uint8_t *)haddr);
++    CPUX86State* env2 = &(X86_CPU((CPUState*)ENV_GET_CPU(env))->env);
++    if (is_mem_read_callback_needed(env2->cr[3])){
++        helper_qemu_mem_read_callback(ENV_GET_CPU(env), addr, DATA_SIZE);
++    }
++
+ #endif
+     return res;
+ }
+@@ -231,6 +240,11 @@
+ 
+     haddr = addr + env->tlb_table[mmu_idx][index].addend;
+     res = glue(glue(ld, LSUFFIX), _be_p)((uint8_t *)haddr);
++    CPUX86State* env2 = &(X86_CPU((CPUState*)ENV_GET_CPU(env))->env);
++    if (is_mem_read_callback_needed(env2->cr[3])){
++        helper_qemu_mem_read_callback(ENV_GET_CPU(env), addr, DATA_SIZE);
++    }
++
+     return res;
+ }
+ #endif /* DATA_SIZE > 1 */
+@@ -335,8 +349,18 @@
+     haddr = addr + env->tlb_table[mmu_idx][index].addend;
+ #if DATA_SIZE == 1
+     glue(glue(st, SUFFIX), _p)((uint8_t *)haddr, val);
++    CPUX86State* env2 = &(X86_CPU((CPUState*)ENV_GET_CPU(env))->env);
++    if (is_mem_write_callback_needed(env2->cr[3])){
++        helper_qemu_mem_write_callback(ENV_GET_CPU(env), addr, DATA_SIZE);
++    }
++
+ #else
+     glue(glue(st, SUFFIX), _le_p)((uint8_t *)haddr, val);
++    CPUX86State* env2 = &(X86_CPU((CPUState*)ENV_GET_CPU(env))->env);
++    if (is_mem_write_callback_needed(env2->cr[3])){
++        helper_qemu_mem_write_callback(ENV_GET_CPU(env), addr, DATA_SIZE);
++    }
++
+ #endif
+ }
+ 
+@@ -410,6 +434,11 @@
+ 
+     haddr = addr + env->tlb_table[mmu_idx][index].addend;
+     glue(glue(st, SUFFIX), _be_p)((uint8_t *)haddr, val);
++    CPUX86State* env2 = &(X86_CPU((CPUState*)ENV_GET_CPU(env))->env);
++    if (is_mem_write_callback_needed(env2->cr[3])){
++        helper_qemu_mem_write_callback(ENV_GET_CPU(env), addr, DATA_SIZE);
++    }
++
+ }
+ #endif /* DATA_SIZE > 1 */
+ #endif /* !defined(SOFTMMU_CODE_ACCESS) */
+diff -Naur qemu/target/i386/helper.h qemu-2.9.0-pyrebox/target/i386/helper.h
+--- qemu/target/i386/helper.h	2017-07-10 15:01:32.713509608 +0100
++++ qemu-2.9.0-pyrebox/target/i386/helper.h	2017-07-10 19:55:59.205875235 +0100
+@@ -1,6 +1,21 @@
+ DEF_HELPER_FLAGS_4(cc_compute_all, TCG_CALL_NO_RWG_SE, tl, tl, tl, tl, int)
+ DEF_HELPER_FLAGS_4(cc_compute_c, TCG_CALL_NO_RWG_SE, tl, tl, tl, tl, int)
+ 
++//void qemu_block_begin_callback(CPUState* cpu,TranslationBlock* tb);
++DEF_HELPER_2(qemu_block_begin_callback, void, ptr, ptr)
++//void qemu_op_block_begin_callback(CPUState* cpu,TranslationBlock* tb);
++//DEF_HELPER_2(qemu_op_block_begin_callback, void, ptr, ptr)
++//void qemu_op_insn_begin_callback(CPUState* cpu);
++//DEF_HELPER_1(qemu_op_insn_begin_callback, void, ptr)
++//void qemu_block_end_callback(CPUState* cpu,TranslationBlock* next_tb, target_ulong from);
++DEF_HELPER_4(qemu_block_end_callback, void, ptr,ptr,tl,tl)
++//void qemu_insn_begin_callback(CPUState* cpu);
++DEF_HELPER_1(qemu_insn_begin_callback, void, ptr)
++//void qemu_insn_end_callback(CPUState* cpu);
++DEF_HELPER_1(qemu_insn_end_callback, void, ptr)
++//void qemu_opcode_range_callback(CPUState* cpu, target_ulong from, target_ulong to, uint32_t opcode);
++DEF_HELPER_4(qemu_opcode_range_callback, void, ptr,tl,tl,i32)
++
+ DEF_HELPER_3(write_eflags, void, env, tl, i32)
+ DEF_HELPER_1(read_eflags, tl, env)
+ DEF_HELPER_2(divb_AL, void, env, tl)
+diff -Naur qemu/target/i386/translate.c qemu-2.9.0-pyrebox/target/i386/translate.c
+--- qemu/target/i386/translate.c	2017-07-10 15:01:43.369509829 +0100
++++ qemu-2.9.0-pyrebox/target/i386/translate.c	2017-07-10 19:55:59.205875235 +0100
+@@ -31,6 +31,8 @@
+ #include "trace-tcg.h"
+ #include "exec/log.h"
+ 
++#include "pyrebox/qemu_glue_callbacks_needed.h"
++
+ 
+ #define PREFIX_REPZ   0x01
+ #define PREFIX_REPNZ  0x02
+@@ -102,6 +104,24 @@
+     TCGMemOp dflag;
+     target_ulong pc_start;
+     target_ulong pc; /* pc = eip + cs_base */
++
++    //------------------------------PYREBOX ADDED-------------------------------
++
++    //Pyrebox: Save the PGD in the DisasContext to allow conditional
++    //instrumentation based on the PGD
++    target_ulong pgd;
++    //Pyrebox: Save the pc between each pair of instructions,
++    //because when the insn_end / block_end is triggered,
++    //the enviroment CPU is already pointing to the next block
++    target_ulong saved_pc;
++    //Pyrebox: Save the opcode while doing the dissasembly, in 
++    //order to call the corresponding opcode range callback.
++    uint32_t saved_opcode;
++    //Pyrebox: the cpu
++    CPUState* cs;
++
++    //---------------------------END PYREBOX ADDED------------------------------
++
+     int is_jmp; /* 1 = means jump (stop translation), 2 means CPU
+                    static state change (stop translation) */
+     /* current block context */
+@@ -2151,6 +2171,51 @@
+         /* jump to same page: we can use a direct jump */
+         tcg_gen_goto_tb(tb_num);
+         gen_jmp_im(eip);
++
++        //Pyrebox: insn end 
++        //helper_qemu_insn_end_callback(CPUState* cpu)
++        //At this point, we take the pgd from the DisasContext, 
++        //because we previously saved it
++        if (is_insn_end_callback_needed(s->pgd)){
++            TCGv_ptr tcg_cpu = tcg_const_ptr((tcg_target_ulong)s->cs);
++            gen_helper_qemu_insn_end_callback(tcg_cpu);
++            tcg_temp_free_ptr(tcg_cpu);
++        }
++        //Pyrebox: block_end
++        //helper_qemu_block_end_callback(CPUState* cpu,TranslationBlock* next_tb, target_ulong from,target_ulong to)
++        if (is_block_end_callback_needed(s->pgd)){
++            TCGv_ptr tcg_tb = tcg_const_ptr((tcg_target_ulong)s->tb);
++            TCGv tcg_from = tcg_temp_new();
++            tcg_gen_movi_tl(tcg_from, s->saved_pc);
++            TCGv tcg_to = tcg_temp_new();
++            tcg_gen_movi_tl(tcg_to, pc);
++            TCGv_ptr tcg_cpu = tcg_const_ptr((tcg_target_ulong)s->cs);
++            gen_helper_qemu_block_end_callback(tcg_cpu,tcg_tb,tcg_from,tcg_to);
++            tcg_temp_free(tcg_to);
++            tcg_temp_free(tcg_from);
++            tcg_temp_free_ptr(tcg_tb);
++            tcg_temp_free_ptr(tcg_cpu);
++        }
++        //Pyrebox: opcode range
++        //helper_qemu_opcode_range_callback(CPUState* cpu, target_ulong from, target_ulong to, uint16_t opcode)
++        
++        if (is_opcode_range_callback_needed((target_ulong)s->saved_opcode,s->pgd)){
++            //CPU points to the next instruction
++            TCGv tcg_saved_pc = tcg_temp_new();
++            tcg_gen_movi_tl(tcg_saved_pc, s->saved_pc);
++            TCGv tcg_next_pc = tcg_temp_new();
++            tcg_gen_movi_tl(tcg_next_pc, pc);
++            TCGv_i32 tcg_opcode = tcg_const_i32(s->saved_opcode);
++
++            TCGv_ptr tcg_cpu = tcg_const_ptr((tcg_target_ulong)s->cs);
++            gen_helper_qemu_opcode_range_callback(tcg_cpu, tcg_saved_pc, tcg_next_pc, tcg_opcode);
++            tcg_temp_free(tcg_saved_pc);
++            tcg_temp_free(tcg_next_pc);
++            tcg_temp_free_i32(tcg_opcode);
++            tcg_temp_free_ptr(tcg_cpu);
++        }
++
++
+         tcg_gen_exit_tb((uintptr_t)s->tb + tb_num);
+     } else {
+         /* jump to another page: currently not optimized */
+@@ -2531,6 +2596,50 @@
+     } else if (s->tf) {
+         gen_helper_single_step(cpu_env);
+     } else {
++
++        //Pyrebox: insn end 
++        //helper_qemu_insn_end_callback(CPUState* cpu)
++        //At this point, we take the pgd from the DisasContext, 
++        //because we previously saved it
++        if (is_insn_end_callback_needed(s->pgd)){
++            TCGv_ptr tcg_cpu = tcg_const_ptr((tcg_target_ulong)s->cs);
++            gen_helper_qemu_insn_end_callback(tcg_cpu);
++            tcg_temp_free_ptr(tcg_cpu);
++        }
++        //Pyrebox: block_end
++        //helper_qemu_block_end_callback(CPUState* cpu,TranslationBlock* next_tb, target_ulong from)
++        if (is_block_end_callback_needed(s->pgd)){
++            TCGv_ptr tcg_tb = tcg_const_ptr((tcg_target_ulong)s->tb);
++            TCGv tcg_from = tcg_temp_new();
++            tcg_gen_movi_tl(tcg_from, s->saved_pc);
++            TCGv tcg_to = tcg_temp_new();
++            tcg_gen_movi_tl(tcg_to, 0);
++            TCGv_ptr tcg_cpu = tcg_const_ptr((tcg_target_ulong)s->cs);
++            gen_helper_qemu_block_end_callback(tcg_cpu,tcg_tb,tcg_from,tcg_to);
++            tcg_temp_free(tcg_to);
++            tcg_temp_free(tcg_from);
++            tcg_temp_free_ptr(tcg_tb);
++            tcg_temp_free_ptr(tcg_cpu);
++        }
++        //Pyrebox: opcode range
++        //helper_qemu_opcode_range_callback(CPUState* cpu, target_ulong from, target_ulong to, uint16_t opcode)
++        
++        if (is_opcode_range_callback_needed((target_ulong)s->saved_opcode,s->pgd)){
++            //CPU points to next instruction
++            TCGv tcg_saved_pc = tcg_temp_new();
++            tcg_gen_movi_tl(tcg_saved_pc, s->saved_pc);
++            TCGv tcg_next_pc = tcg_temp_new();
++            tcg_gen_movi_tl(tcg_next_pc, 0);
++            TCGv_i32 tcg_opcode = tcg_const_i32(s->saved_opcode);
++
++            TCGv_ptr tcg_cpu = tcg_const_ptr((tcg_target_ulong)s->cs);
++            gen_helper_qemu_opcode_range_callback(tcg_cpu, tcg_saved_pc, tcg_next_pc, tcg_opcode);
++            tcg_temp_free(tcg_saved_pc);
++            tcg_temp_free(tcg_next_pc);
++            tcg_temp_free_i32(tcg_opcode);
++            tcg_temp_free_ptr(tcg_cpu);
++        }
++
+         tcg_gen_exit_tb(0);
+     }
+     s->is_jmp = DISAS_TB_JUMP;
+@@ -4425,7 +4534,7 @@
+     if (s->pc - pc_start > 14) {
+         goto illegal_op;
+     }
+-    b = cpu_ldub_code(env, s->pc);
++    s->saved_opcode = b = cpu_ldub_code(env, s->pc);
+     s->pc++;
+     /* Collect prefixes.  */
+     switch (b) {
+@@ -4505,7 +4614,7 @@
+             rex_r = (~vex2 >> 4) & 8;
+             if (b == 0xc5) {
+                 vex3 = vex2;
+-                b = cpu_ldub_code(env, s->pc++);
++                s->saved_opcode = b = cpu_ldub_code(env, s->pc++);
+             } else {
+ #ifdef TARGET_X86_64
+                 s->rex_x = (~vex2 >> 3) & 8;
+@@ -4515,13 +4624,13 @@
+                 rex_w = (vex3 >> 7) & 1;
+                 switch (vex2 & 0x1f) {
+                 case 0x01: /* Implied 0f leading opcode bytes.  */
+-                    b = cpu_ldub_code(env, s->pc++) | 0x100;
++                    s->saved_opcode = b = cpu_ldub_code(env, s->pc++) | 0x100;
+                     break;
+                 case 0x02: /* Implied 0f 38 leading opcode bytes.  */
+-                    b = 0x138;
++                    s->saved_opcode = b = 0x138;
+                     break;
+                 case 0x03: /* Implied 0f 3a leading opcode bytes.  */
+-                    b = 0x13a;
++                    s->saved_opcode = b = 0x13a;
+                     break;
+                 default:   /* Reserved for future use.  */
+                     goto unknown_op;
+@@ -4567,7 +4676,7 @@
+     case 0x0f:
+         /**************************/
+         /* extended op code */
+-        b = cpu_ldub_code(env, s->pc++) | 0x100;
++        s->saved_opcode = b = cpu_ldub_code(env, s->pc++) | 0x100;
+         goto reswitch;
+ 
+         /**************************/
+@@ -6929,10 +7038,48 @@
+         }
+         break;
+     case 0xcc: /* int3 */
++        //XXX: Pyrebox - opcode_range. We need to put it BEFORE the instruction, at the time
++        //of insn_begin, because the gen_interrupt will provoke to exit the cpu loop,
++        //so whatever we insert after that will never be executed.
++        
++        if (is_opcode_range_callback_needed((target_ulong)s->saved_opcode,s->pgd)){
++            TCGv tcg_saved_pc = tcg_temp_new();
++            tcg_gen_movi_tl(tcg_saved_pc, s->saved_pc);
++            TCGv tcg_next_pc = tcg_temp_new();
++            tcg_gen_movi_tl(tcg_next_pc, s->pc);
++            TCGv_i32 tcg_opcode = tcg_const_i32(s->saved_opcode);
++
++            TCGv_ptr tcg_cpu = tcg_const_ptr((tcg_target_ulong)s->cs);
++            gen_helper_qemu_opcode_range_callback(tcg_cpu, tcg_saved_pc, tcg_next_pc, tcg_opcode);
++            tcg_temp_free(tcg_saved_pc);
++            tcg_temp_free(tcg_next_pc);
++            tcg_temp_free_i32(tcg_opcode);
++            tcg_temp_free_ptr(tcg_cpu);
++        }
++
+         gen_interrupt(s, EXCP03_INT3, pc_start - s->cs_base, s->pc - s->cs_base);
+         break;
+     case 0xcd: /* int N */
+         val = cpu_ldub_code(env, s->pc++);
++        //XXX: Pyrebox - opcode_range. We need to put it BEFORE the instruction, at the time
++        //of insn_begin, because the gen_interrupt will provoke to exit the cpu loop,
++        //so whatever we insert after that will never be executed.
++        
++        if (is_opcode_range_callback_needed((target_ulong)s->saved_opcode,s->pgd)){
++            TCGv tcg_saved_pc = tcg_temp_new();
++            tcg_gen_movi_tl(tcg_saved_pc, s->saved_pc);
++            TCGv tcg_next_pc = tcg_temp_new();
++            tcg_gen_movi_tl(tcg_next_pc, s->pc);
++            TCGv_i32 tcg_opcode = tcg_const_i32(s->saved_opcode);
++
++            TCGv_ptr tcg_cpu = tcg_const_ptr((tcg_target_ulong)s->cs);
++            gen_helper_qemu_opcode_range_callback(tcg_cpu, tcg_saved_pc, tcg_next_pc, tcg_opcode);
++            tcg_temp_free(tcg_saved_pc);
++            tcg_temp_free(tcg_next_pc);
++            tcg_temp_free_i32(tcg_opcode);
++            tcg_temp_free_ptr(tcg_cpu);
++        }
++
+         if (s->vm86 && s->iopl != 3) {
+             gen_exception(s, EXCP0D_GPF, pc_start - s->cs_base);
+         } else {
+@@ -8242,6 +8389,42 @@
+     default:
+         goto unknown_op;
+     }
++
++    if (!s->is_jmp) {
++        //Pyrebox: Generate a jump to the next instruction before we call
++        //insn end and opcode range callback, so that the cpu context
++        //when these callbacks are trigger corresponds to the next
++        //instruction, just like for the previous cases.
++        gen_jmp_im(s->pc - s->cs_base);
++        //Pyrebox: insn end 
++        //helper_qemu_insn_end_callback(CPUState* cpu)
++        //At this point, we take the pgd from the DisasContext, 
++        //because we previously saved it
++        if (is_insn_end_callback_needed(s->pgd)){
++            TCGv_ptr tcg_cpu = tcg_const_ptr((tcg_target_ulong)s->cs);
++            gen_helper_qemu_insn_end_callback(tcg_cpu);
++            tcg_temp_free_ptr(tcg_cpu);
++        }
++        //Pyrebox: opcode range
++        //helper_qemu_opcode_range_callback(CPUState* cpu, target_ulong from, target_ulong to, uint16_t opcode)
++        
++        if (is_opcode_range_callback_needed((target_ulong)s->saved_opcode,s->pgd)){
++            TCGv tcg_saved_pc = tcg_temp_new();
++            tcg_gen_movi_tl(tcg_saved_pc, s->saved_pc);
++            TCGv tcg_next_pc = tcg_temp_new();
++            tcg_gen_movi_tl(tcg_next_pc, s->pc);
++            TCGv_i32 tcg_opcode = tcg_const_i32(s->saved_opcode);
++
++            TCGv_ptr tcg_cpu = tcg_const_ptr((tcg_target_ulong)s->cs);
++            gen_helper_qemu_opcode_range_callback(tcg_cpu, tcg_saved_pc, tcg_next_pc, tcg_opcode);
++            tcg_temp_free(tcg_saved_pc);
++            tcg_temp_free(tcg_next_pc);
++            tcg_temp_free_i32(tcg_opcode);
++            tcg_temp_free_ptr(tcg_cpu);
++
++        }
++    }
++
+     return s->pc;
+  illegal_op:
+     gen_illegal_opcode(s);
+@@ -8358,6 +8541,10 @@
+     cs_base = tb->cs_base;
+     flags = tb->flags;
+ 
++    //Pyrebox: Save the current PGD in the DisasContext, and the cpu index 
++    dc->pgd = env->cr[3];
++    dc->cs = cs;
++
+     dc->pe = (flags >> HF_PE_SHIFT) & 1;
+     dc->code32 = (flags >> HF_CS32_SHIFT) & 1;
+     dc->ss32 = (flags >> HF_SS32_SHIFT) & 1;
+@@ -8432,6 +8619,17 @@
+         max_insns = TCG_MAX_INSNS;
+     }
+ 
++    //Pyrebox, block_begin
++    //At this point in translation time, we can assume env points to the correct cr3
++    //helper_qemu_block_begin_callback(CPUState* cpu,TranslationBlock* tb);
++    if (is_block_begin_callback_needed(pc_start,env->cr[3])){
++        TCGv_ptr tmpTb = tcg_const_ptr((tcg_target_ulong)tb);
++        TCGv_ptr cpu_addr = tcg_const_ptr((tcg_target_ulong)cpu);
++        gen_helper_qemu_block_begin_callback(cpu_addr, tmpTb);
++        tcg_temp_free_ptr(tmpTb);
++        tcg_temp_free_ptr(cpu_addr);
++    }
++
+     gen_tb_start(tb);
+     for(;;) {
+         tcg_gen_insn_start(pc_ptr, dc->cc_op);
+@@ -8453,6 +8651,17 @@
+             gen_io_start();
+         }
+ 
++        //Pyrebox, insn_begin
++        //helper_qemu_insn_begin_callback(CPUState* cpu);
++        if (is_insn_begin_callback_needed(pc_ptr,env->cr[3])){
++            TCGv_ptr cpu_addr = tcg_const_ptr((tcg_target_ulong)cpu);
++            gen_helper_qemu_insn_begin_callback(cpu_addr);
++            tcg_temp_free_ptr(cpu_addr);
++        }
++        
++        //Pyrebox, save the pc_ptr for using it in the generation of insn_end and block_end
++        dc->saved_pc = pc_ptr;
++
+         pc_ptr = disas_insn(env, dc, pc_ptr);
+         /* stop translation if indicated */
+         if (dc->is_jmp)
+diff -Naur qemu/tcg/i386/tcg-target.inc.c qemu-2.9.0-pyrebox/tcg/i386/tcg-target.inc.c
+--- qemu/tcg/i386/tcg-target.inc.c	2017-07-10 15:01:43.389509829 +0100
++++ qemu-2.9.0-pyrebox/tcg/i386/tcg-target.inc.c	2017-07-10 19:55:59.189875234 +0100
+@@ -24,6 +24,8 @@
+ 
+ #include "tcg-be-ldst.h"
+ 
++#include "pyrebox/qemu_glue_callbacks_memory.h"
++
+ #ifdef CONFIG_DEBUG_TCG
+ static const char * const tcg_target_reg_names[TCG_TARGET_NB_REGS] = {
+ #if TCG_TARGET_REG_BITS == 64
+@@ -148,6 +150,17 @@
+ 
+ static tcg_insn_unit *tb_ret_addr;
+ 
++#if TCG_TARGET_REG_BITS == 64 
++static void load_operation(target_ulong vaddr, target_ulong size, CPUState* cpu) {
++    helper_qemu_mem_read_callback(cpu, vaddr, size);
++}
++static void store_operation(target_ulong vaddr, target_ulong size, CPUState* cpu) {
++    helper_qemu_mem_write_callback(cpu, vaddr, size);
++}
++
++#endif
++
++
+ static void patch_reloc(tcg_insn_unit *code_ptr, int type,
+                         intptr_t value, intptr_t addend)
+ {
+@@ -1385,6 +1398,9 @@
+  */
+ static void tcg_out_qemu_ld_slow_path(TCGContext *s, TCGLabelQemuLdst *l)
+ {
++    //Pyrebox: This slow path has a tail call to the ld helper, 
++    //which contains the memory read instrumentation.
++
+     TCGMemOpIdx oi = l->oi;
+     TCGMemOp opc = get_memop(oi);
+     TCGReg data_reg;
+@@ -1468,6 +1484,10 @@
+  */
+ static void tcg_out_qemu_st_slow_path(TCGContext *s, TCGLabelQemuLdst *l)
+ {
++
++    //Pyrebox: This slow path has a tail call to the ld helper, 
++    //which contains the memory write instrumentation.
++
+     TCGMemOpIdx oi = l->oi;
+     TCGMemOp opc = get_memop(oi);
+     TCGMemOp s_bits = opc & MO_SIZE;
+@@ -1673,9 +1693,93 @@
+ #if defined(CONFIG_SOFTMMU)
+     mem_index = get_mmuidx(oi);
+ 
++/* Pyrebox: Taken from the doc for the function tcg_out_tlb_load: 
++ *
++ * Second argument register is loaded with the low part of the address.
++   In the TLB hit case, it has been adjusted as indicated by the TLB
++   and so is a host address.  In the TLB miss case, it continues to
++   hold a guest address.
++
++   First argument register is clobbered.  */
++
++
+     tcg_out_tlb_load(s, addrlo, addrhi, mem_index, opc,
+                      label_ptr, offsetof(CPUTLBEntry, addr_read));
+ 
++#if TCG_TARGET_REG_BITS == 64 
++
++    CPUX86State* env = &(X86_CPU((CPUState*)s->cpu)->env);
++    if (is_mem_read_callback_needed(env->cr[3])){
++        //For simplicity, only insert Pyrebox callbacks when the target platform (host system)
++        //is a 64 bit platform
++        //--------------------------------- Pyrebox added ----------------------------------
++        //
++        // 1) This path corresponds to TLB HIT.
++        // 2) We saveguard reg0, reg1, and reg2 because we will be using them in our call.
++        
++        //Save the arg 0 -> This one should have been clobbered by tcg_out_tlb_load,
++        //                  but we save it just in case.
++        tcg_out_push(s, tcg_target_call_iarg_regs[0]);
++        //Save the arg 1 -> This one contains the physical address or the guest address in
++        //                  case of TLB miss, it is populated by tcg_out_tlb_load. SAVE IT.
++        tcg_out_push(s, tcg_target_call_iarg_regs[1]);
++        //Push the arg
++        tcg_out_push(s, tcg_target_call_iarg_regs[2]);
++
++        //Saveguard datalo, datahi, addrlo, addrhi
++        tcg_out_push(s, datalo);
++        tcg_out_push(s, datahi);
++        tcg_out_push(s, addrlo);
++        tcg_out_push(s, addrhi);
++
++        //Push 8 bytes to ensure stack alignment to 16 bytes are required by GCC.w
++        tcg_out_push(s, 0);
++
++        //In 64 bit targets, the address is contained in addrlo
++        tcg_out_mov(s, TCG_TYPE_I64,tcg_target_call_iarg_regs[0], addrlo);
++
++        tcg_out_movi(s, TCG_TYPE_I64,tcg_target_call_iarg_regs[2], (tcg_target_long)s->cpu);
++
++        switch (opc & MO_SIZE) {
++          case MO_8:
++            tcg_out_movi(s, TCG_TYPE_I64,tcg_target_call_iarg_regs[1], 1);
++            break;
++          case MO_16:
++            tcg_out_movi(s, TCG_TYPE_I64,tcg_target_call_iarg_regs[1], 2);
++            break;
++          case MO_32:
++            tcg_out_movi(s, TCG_TYPE_I64,tcg_target_call_iarg_regs[1], 4);
++            break;
++          case MO_64:
++            tcg_out_movi(s, TCG_TYPE_I64,tcg_target_call_iarg_regs[1], 8);
++            break;
++          default:
++            tcg_abort();
++        }
++        tcg_out_call(s, (tcg_insn_unit*)load_operation);
++
++        //Undo stack alignment
++        TCGReg tmp = 0;
++        tcg_out_pop(s, tmp);
++
++        //Pop the rest
++        tcg_out_pop(s, addrhi);
++        tcg_out_pop(s, addrlo);
++        tcg_out_pop(s, datahi);
++        tcg_out_pop(s, datalo);
++
++        //Pop the arg
++        tcg_out_pop(s, tcg_target_call_iarg_regs[2]);
++        //Pop the arg 0
++        tcg_out_pop(s, tcg_target_call_iarg_regs[1]);
++        //Pop the arg 1
++        tcg_out_pop(s, tcg_target_call_iarg_regs[0]);
++    }
++
++    //---------------------------------End Pyrebox added ---------------------------------
++#endif
++
++
+     /* TLB Hit.  */
+     tcg_out_qemu_ld_direct(s, datalo, datahi, TCG_REG_L1, -1, 0, 0, opc);
+ 
+@@ -1816,6 +1920,82 @@
+     tcg_out_tlb_load(s, addrlo, addrhi, mem_index, opc,
+                      label_ptr, offsetof(CPUTLBEntry, addr_write));
+ 
++#if TCG_TARGET_REG_BITS == 64 
++
++    CPUX86State* env = &(X86_CPU((CPUState*)s->cpu)->env);
++    if (is_mem_write_callback_needed(env->cr[3])){
++
++        //For simplicity, only insert Pyrebox callbacks when the target platform (host system)
++        //is a 64 bit platform
++        //--------------------------------- Pyrebox added ----------------------------------
++        //
++        // 1) This path corresponds to TLB HIT.
++        // 2) We saveguard reg0, reg1, and reg2 because we will be using them in our call.
++
++        //Save the arg 0 -> This one should have been clobbered by tcg_out_tlb_load,
++        //                  but we save it just in case.
++        tcg_out_push(s, tcg_target_call_iarg_regs[0]);
++        //Save the arg 1 -> This one contains the physical address or the guest address in
++        //                  case of TLB miss, it is populated by tcg_out_tlb_load. SAVE IT.
++        tcg_out_push(s, tcg_target_call_iarg_regs[1]);
++        //Push the arg
++        tcg_out_push(s, tcg_target_call_iarg_regs[2]);
++
++        //Saveguard datalo, datahi, addrlo, addrhi
++        tcg_out_push(s, datalo);
++        tcg_out_push(s, datahi);
++        tcg_out_push(s, addrlo);
++        tcg_out_push(s, addrhi);
++
++
++        //Stack alignment
++        tcg_out_push(s, 0);
++
++        //In 64 bit targets, the address is contained in addrlo
++        tcg_out_mov(s, TCG_TYPE_I64,tcg_target_call_iarg_regs[0], addrlo);
++
++        tcg_out_movi(s, TCG_TYPE_I64,tcg_target_call_iarg_regs[2], (tcg_target_long)s->cpu);
++
++        switch (opc & MO_SIZE) {
++          case MO_8:
++            tcg_out_movi(s, TCG_TYPE_I64,tcg_target_call_iarg_regs[1], 1);
++            break;
++          case MO_16:
++            tcg_out_movi(s, TCG_TYPE_I64,tcg_target_call_iarg_regs[1], 2);
++            break;
++          case MO_32:
++            tcg_out_movi(s, TCG_TYPE_I64,tcg_target_call_iarg_regs[1], 4);
++            break;
++          case MO_64:
++            tcg_out_movi(s, TCG_TYPE_I64,tcg_target_call_iarg_regs[1], 8);
++            break;
++          default:
++            tcg_abort();
++        }
++        tcg_out_call(s, (tcg_insn_unit*)store_operation);
++
++        //Undo stack alignment
++        TCGReg tmp = 0;
++        tcg_out_pop(s, tmp);
++
++        //Pop the rest
++        tcg_out_pop(s, addrhi);
++        tcg_out_pop(s, addrlo);
++        tcg_out_pop(s, datahi);
++        tcg_out_pop(s, datalo);
++
++        //Pop the arg
++        tcg_out_pop(s, tcg_target_call_iarg_regs[2]);
++        //Pop the arg 0
++        tcg_out_pop(s, tcg_target_call_iarg_regs[1]);
++        //Pop the arg 1
++        tcg_out_pop(s, tcg_target_call_iarg_regs[0]);
++    }
++
++    //---------------------------------End Pyrebox added ---------------------------------
++#endif
++
++
+     /* TLB Hit.  */
+     tcg_out_qemu_st_direct(s, datalo, datahi, TCG_REG_L1, 0, 0, opc);
+ 
+diff -Naur qemu/translate-all.c qemu-2.9.0-pyrebox/translate-all.c
+--- qemu/translate-all.c	2017-07-10 15:01:43.409509829 +0100
++++ qemu-2.9.0-pyrebox/translate-all.c	2017-07-10 19:55:58.949875229 +0100
+@@ -1293,7 +1293,6 @@
+ 
+     tcg_ctx.cpu = ENV_GET_CPU(env);
+     gen_intermediate_code(env, tb);
+-    tcg_ctx.cpu = NULL;
+ 
+     trace_translate_block(tb, tb->pc, tb->tc_ptr);
+ 
+@@ -1321,6 +1320,9 @@
+        that should be required is to flush the TBs, allocate a new TB,
+        re-initialize it per above, and re-do the actual code generation.  */
+     gen_code_size = tcg_gen_code(&tcg_ctx, tb);
++    //Pyrebox, Null out here, so we have the correct context cpu inside TCG code generation
++    tcg_ctx.cpu = NULL;
++
+     if (unlikely(gen_code_size < 0)) {
+         goto buffer_overflow;
+     }
+diff -Naur qemu/vl.c qemu-2.9.0-pyrebox/vl.c
+--- qemu/vl.c	2017-07-10 15:01:43.421509830 +0100
++++ qemu-2.9.0-pyrebox/vl.c	2017-07-10 19:55:58.949875229 +0100
+@@ -130,6 +130,8 @@
+ #include "qapi/qmp/qerror.h"
+ #include "sysemu/iothread.h"
+ 
++#include "pyrebox/pyrebox.h"
++
+ #define MAX_VIRTIO_CONSOLES 1
+ #define MAX_SCLP_CONSOLES 1
+ 
+@@ -2941,6 +2943,7 @@
+ 
+ int main(int argc, char **argv, char **envp)
+ {
++    pyrebox_init();
+     int i;
+     int snapshot, linux_boot;
+     const char *initrd_filename;

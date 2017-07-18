@@ -1,0 +1,13 @@
+PROJECT
+
+    Volatility
+    http://www.volatilityfoundation.org/
+
+LICENSE
+    
+    GPLv2
+
+AFFECTED FILES
+
+    Volatility is used by PyREBox. In order to allow integration, conf.py file
+    is patched according to conf.py.patch
