@@ -39,6 +39,7 @@
 #   6) Using the PyREBox printer function that will prepend the script name to every line you print 
 #   7) Defining custom commands that can be used from the ipython shell 
 
+from __future__ import print_function
 import sys
 import api
 from ipython_shell import start_shell
@@ -102,9 +103,9 @@ def clean():
     necessary.
     '''
     global cm
-    print "[*]    Cleaning module"
+    print("[*]    Cleaning module")
     cm.clean()
-    print "[*]    Cleaned module"
+    print("[*]    Cleaned module")
 
 
 def find_ep(pgd,proc_name):
@@ -218,5 +219,5 @@ def remove_proc(pid,pgd,name):
 
 if __name__ == "__main__":
     #This message will be displayed when the script is loaded in memory
-    print "[*] Loading python module %s" % (__file__)
+    print("[*] Loading python module %s" % (__file__))
 
