@@ -21,6 +21,7 @@
 #   
 #-------------------------------------------------------------------------------
 
+from __future__ import print_function
 import sys
 import api
 from ipython_shell import start_shell
@@ -42,7 +43,7 @@ def insn_begin(cpu_index,cpu):
         pyrebox_print("Stopped monitoring process")
         cm.rm_callback("insn_begin")
     else:
-        print "This message should never be printed"
+        print("This message should never be printed")
 
 def clean():
     '''
@@ -79,4 +80,4 @@ def initialize_callbacks(module_hdl,printer):
     pyrebox_print("[*]    Initialized callbacks")
 
 if __name__ == "__main__":
-    print "[*] Loading python module %s" % (__file__)
+    print("[*] Loading python module %s" % (__file__))
