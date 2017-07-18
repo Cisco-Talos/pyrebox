@@ -21,6 +21,7 @@
 #   
 #-------------------------------------------------------------------------------
 
+from __future__ import print_function
 import sys
 import api
 from ipython_shell import start_shell
@@ -33,7 +34,7 @@ pyrebox_print = None
 
 if __name__ == "__main__":
     #This message will be displayed when the script is loaded in memory
-    print "[*] Loading python module %s" % (__file__)
+    print("[*] Loading python module %s" % (__file__))
 
 def new_proc(pid,pgd,name):
     '''
@@ -76,10 +77,10 @@ def clean():
     Clean up everything. 
     '''
     global cm
-    print "[*]    Cleaning module"
+    print("[*]    Cleaning module")
     #This call will unregister all existing callbacks
     cm.clean()
-    print "[*]    Cleaned module"
+    print("[*]    Cleaned module")
 
 def do_my_command(line):
     ''' Short description of the custom command.
@@ -91,4 +92,3 @@ def do_my_command(line):
 
     #Implementation of the command functionality
     pyrebox_print("This is a custom command")
-    

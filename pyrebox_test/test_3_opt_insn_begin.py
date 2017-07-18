@@ -21,6 +21,7 @@
 #   
 #-------------------------------------------------------------------------------
 
+from __future__ import print_function
 import sys
 from ipython_shell import start_shell
 from api import CallbackManager
@@ -75,4 +76,4 @@ def initialize_callbacks(module_hdl,printer):
     pyrebox_print("[!]    In order to run the rest, open calc.exe and monitor the process.")
 
 if __name__ == "__main__":
-    print "[*] Loading python module %s" % (__file__)
+    print("[*] Loading python module %s" % (__file__))
