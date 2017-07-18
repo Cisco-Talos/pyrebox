@@ -56,7 +56,12 @@ def import_module(module_name):
     import api_internal
     from ipython_shell import add_command
     try:
-        if not module_name in modules:
+        already_imported = False
+        for mod in modules:
+            if module_name == modules[mod][0]:
+                already_imported = True
+                break
+        if not already_imported:
             pp_print("[*]  Importing %s\n" % module_name)
             mod = __import__(module_name, fromlist=[''])
             mod.initialize_callbacks(MODULE_COUNTER,functools.partial(api_internal.print_internal,module_name))
@@ -71,12 +76,11 @@ def import_module(module_name):
     except Exception as e:
         pp_error("[!] Could not initialize python module due to exception\n")
         pp_error("    %s\n" % str(e))
-        traceback.print_exc()
         return
 
 def unload_module(mod):
     from ipython_shell import remove_command
-    if mod in modules:
+    if type(mod) is int and mod in modules:
         pp_print("[*]  Unloading %s\n" % modules[mod][0])
         #Add commands declared by the module
         for element in dir(modules[mod][1]):
@@ -86,7 +90,7 @@ def unload_module(mod):
         #Remove module from list
         del modules[mod]
     else:
-        pp_warning("[*]  Module %s not loaded\n" % module_name)
+        pp_warning("[*]  Module not loaded!\n")
 
 def list_modules():
     t = PrettyTable(["Hdl","Module name"])
