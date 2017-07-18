@@ -21,6 +21,7 @@
 #   
 #-------------------------------------------------------------------------------
 
+from __future__ import print_function
 import sys
 import api
 from ipython_shell import start_shell
@@ -78,4 +79,4 @@ def initialize_callbacks(module_hdl,printer):
     pyrebox_print("[*]    Initialized callbacks")
 
 if __name__ == "__main__":
-    print "[*] Loading python module %s" % (__file__)
+    print("[*] Loading python module %s" % (__file__))
