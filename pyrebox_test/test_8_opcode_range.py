@@ -21,6 +21,7 @@
 #   
 #-------------------------------------------------------------------------------
 
+from __future__ import print_function
 import sys
 import api
 from ipython_shell import start_shell
@@ -46,9 +47,9 @@ def clean():
     unregister all the registered callbacks.
     '''
     global cm
-    print "[*]    Cleaning module"
+    print("[*]    Cleaning module")
     cm.clean()
-    print "[*]    Cleaned module"
+    print("[*]    Cleaned module")
 
 def initialize_callbacks(module_hdl,printer):
     '''
@@ -68,4 +69,4 @@ def initialize_callbacks(module_hdl,printer):
 
 
 if __name__ == "__main__":
-    print "[*] Loading python module %s" % (__file__)
+    print("[*] Loading python module %s" % (__file__))
