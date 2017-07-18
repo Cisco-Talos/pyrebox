@@ -95,7 +95,7 @@ class PMemAddressSpace(addrspace.BaseAddressSpace):
             if result is None:
                 raise AssertionError("PMemAddressSpace: WRITE of length " + str(length) +
                                      " @ " + hex(addr) + " failed.")
-        except AssertionError, e:
+        except AssertionError as e:
             print(e)
             return False
         return True
