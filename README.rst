@@ -9,6 +9,7 @@
 .. _BUILD: BUILD.rst 
 .. _here: https://github.com/Cisco-Talos/pyrebox/issues
 .. _scripts: https://github.com/Cisco-Talos/pyrebox/tree/master/scripts
+.. _readthedocs.io: https://pyrebox.readthedocs.io/en/latest/
 
 PyREBox is a Python scriptable Reverse Engineering sandbox. It is based on QEMU, and its goal is 
 to aid reverse engineering by providing dynamic analysis and debugging capabilities from a 
@@ -29,6 +30,7 @@ on keeping the design simple, and on the usability of the system for threat anal
 Documentation
 =============
 
+The documentation of this project is hosted at readthedocs.io_.
 
 Goals
 =====
