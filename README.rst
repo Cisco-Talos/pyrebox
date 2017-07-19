@@ -115,7 +115,7 @@ Acknowledgement
 ===============
 
 First of all, PyREBox would not be possible without QEMU_ and Volatility_. We thank to their developers and
-mantainers for such a great work.
+maintainers for such a great work.
 
 PyREBox is inspired by several academic projects, such as DECAF_, or PANDA_. In fact, many of the callbacks
 supported by PyREBox are equivalent to those found in DECAF_, and the concepts behind the instrumentation
