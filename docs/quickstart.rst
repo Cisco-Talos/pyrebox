@@ -32,15 +32,15 @@ Creating a VM image for PyREBox
 
 At this moment, PyREBox supports any Windows image (32 and 64 bit) that is supported by Volatility.
  
-You can create your own image in QEMU, even using KVM (install QEMU from repositories). Example:
+You can create your own image using KVM. In order to avoid compatibility problems, use the pyrebox binaries instead of your system installation qemu binaries:
 ::
   qemu-img create -f qcow2 -o compat=0.10 images/xpsp3.qcow2 4G
-  qemu-system-i386 -m 256 -monitor stdio -usb -drive file=images/xpsp3.qcow,index=0,media=disk,format=qcow2,cache=unsafe -cdrom images/WinXP.iso -boot d -enable-kvm
+  ./pyrebox-i386 -m 256 -monitor stdio -usb -drive file=images/xpsp3.qcow2,index=0,media=disk,format=qcow2,cache=unsafe -cdrom images/WinXP.iso -boot d -enable-kvm
 
 
 Proceed with installation, and then boot with network (don't use -net none) and usb support (-usb), and plug in a usb (see Loading a USB image). Let the system install all the drivers
 ::
-  qemu-system-i386 -m 256 -monitor stdio -usb -drive file=images/xpsp3.qcow,index=0,media=disk,format=qcow2,cache=unsafe -netdev user,id=network0 -device rtl8139,netdev=network0
+  ./pyrebox-i386 -m 256 -monitor stdio -usb -drive file=images/xpsp3.qcow,index=0,media=disk,format=qcow2,cache=unsafe -netdev user,id=network0 -device rtl8139,netdev=network0
 
 Basic QEMU usage
 ----------------
@@ -84,7 +84,10 @@ Snapshots
 *********
 
 You can load an snapshot when starting a VM by using the -loadvm [snapshot] argument, where [snapshot] is the
-snapshot number or descriptor.
+snapshot number or descriptor. Snapshots taken when running with KVM are not compatible with snapshots taken
+when running the whole system emulation approach (no KVM). So, in order to take a snapshot that can be loaded
+with pyrebox, you should not enable KVM for it. Booting up the operating system will be slower, but hopefully
+you will only need to do this once.
 
 List snapshots
 ::
