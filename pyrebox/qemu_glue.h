@@ -181,6 +181,8 @@ int qemu_virtual_memory_rw_with_pgd(pyrebox_target_ulong pgd, pyrebox_target_ulo
                         uint8_t *buf, pyrebox_target_ulong len, int is_write);
 pyrebox_target_ulong qemu_virtual_to_physical_with_pgd(pyrebox_target_ulong pgd, pyrebox_target_ulong addr);
 
+uint32_t qemu_ioport_read(uint16_t address, uint8_t size);
+void qemu_ioport_write(uint16_t address, uint8_t size, uint32_t value);
 
 /******************************************* CPU/TB DATA EXTRAcTION **********************************************/
 

@@ -137,6 +137,44 @@ def w_va(pgd,addr,buff,length):
         #Given that the exception is self explanatory, we just let it propagate upwards 
         return c_api.w_va(pgd,addr,buff)
 
+def r_ioport(address,size):
+    """Read I/O port
+
+        :param address: The port address to read, from 0 to 65536
+        :type address: int
+
+        :param size: The size to read (1, 2, or 4)
+        :type size: int
+
+        :return: The value read
+        :rtype: int
+    """
+    import c_api
+    if size not in [1,2,4]:
+        raise ValueError("Incorrect size to read: it must be 1, 2 or 4")
+    if address < 0 or address > 65536:
+        raise ValueError("Incorrect port address: it must be between 0-65536")
+    return c_api.r_ioport(address,size)
+
+def w_ioport(address,size,value):
+    """Write I/O port
+
+        :param address: The port address to write, from 0 to 65536
+        :type address: int
+
+        :param size: The size to read (1, 2, or 4)
+        :type size: int
+
+        :return: The value written 
+        :rtype: int
+    """
+    import c_api
+    if size not in [1,2,4]:
+        raise ValueError("Incorrect size to read: it must be 1, 2 or 4")
+    if address < 0 or address > 65536:
+        raise ValueError("Incorrect port address: it must be between 0-65536")
+    return c_api.w_ioport(address,size,value)
+
 def w_r(cpu_index,regname,val):
     """Write register
 

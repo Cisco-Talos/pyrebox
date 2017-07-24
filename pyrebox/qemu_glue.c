@@ -44,6 +44,7 @@
 #include "qemu/main-loop.h"
 #include "monitor/monitor.h"
 #include "qemu/thread.h"
+#include "exec/ioport.h"
 
 #include "qemu_glue.h"
 
@@ -332,6 +333,48 @@ pyrebox_target_ulong qemu_virtual_to_physical_with_pgd(pyrebox_target_ulong pgd,
     }
 }
 
+uint32_t qemu_ioport_read(uint16_t address, uint8_t size){
+    //If the size parameter is incorrect, force it to be 1.
+    if (size != 1 && size != 2 && size != 4){
+        size = 1;
+    }
+    uint32_t val = 0;
+    
+    switch(size) {
+    default:
+    case 1:
+        val = cpu_inb(address);
+        break;
+    case 2:
+        val = cpu_inw(address);
+        break;
+    case 4:
+        val = cpu_inl(address);
+        break;
+    }
+    return val;
+}
+
+void qemu_ioport_write(uint16_t address, uint8_t size, uint32_t value){
+
+    //If the size parameter is incorrect, force it to be 1.
+    if (size != 1 && size != 2 && size != 4){
+        size = 1;
+    }
+
+    switch (size) {
+    default:
+    case 1:
+        cpu_outb(address, value);
+        break;
+    case 2:
+        cpu_outw(address, value);
+        break;
+    case 4:
+        cpu_outl(address, value);
+        break;
+    }
+}
 
 int read_register_convert(qemu_cpu_opaque_t cpu_opaque, register_num_t reg_num, pyrebox_target_ulong* out_val){
     assert(out_val != 0);

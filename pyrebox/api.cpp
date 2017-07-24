@@ -308,6 +308,45 @@ PyObject* r_cpu(PyObject *dummy, PyObject *args)
     return result;
 }
 
+PyObject* r_ioport(PyObject *dummy, PyObject* args){
+    PyObject *result = 0;
+    uint16_t port;
+    uint8_t size;
+    if (PyArg_ParseTuple(args, "HB",&port,&size)){
+        if(size != 1 && size != 2 && size != 4) {
+            PyErr_SetString(PyExc_ValueError, "Incorrect function parameters: size must be 1, 2 or 4");
+        } else {
+            uint32_t val = qemu_ioport_read(port,size);
+            result = Py_BuildValue("I",val);
+        }
+    }
+    else
+    {
+        PyErr_SetString(PyExc_ValueError, "Incorrect function parameters: port,size");
+    }
+    return result;
+}
+PyObject* w_ioport(PyObject *dummy, PyObject* args){
+    PyObject *result = 0;
+    uint16_t port;
+    uint8_t size;
+    uint32_t val;
+    if (PyArg_ParseTuple(args, "HBI",&port,&size,&val)){
+        if(size != 1 && size != 2 && size != 4) {
+            PyErr_SetString(PyExc_ValueError, "Incorrect function parameters: size must be 1, 2 or 4");
+        } else {
+            qemu_ioport_write(port,size,val);
+            Py_INCREF(Py_None);
+            result = Py_None;
+        }
+    }
+    else
+    {
+        PyErr_SetString(PyExc_ValueError, "Incorrect function parameters: port,size,val");
+    }
+    return result;
+}
+
 //Write register
 PyObject* w_r(PyObject *dummy, PyObject *args)
 {
@@ -839,6 +878,8 @@ PyMethodDef api_methods[] = {
       {"w_va",w_va, METH_VARARGS, "w_va"},
       {"w_r",w_r, METH_VARARGS, "w_r"},
       {"w_sr",w_sr, METH_VARARGS, "w_sr"},
+      {"r_ioport",r_ioport,METH_VARARGS,"r_ioport"},
+      {"w_ioport",w_ioport,METH_VARARGS,"w_ioport"},
       {"va_to_pa",va_to_pa, METH_VARARGS, "va_to_pa"},
       {"start_monitoring_process",start_monitoring_process, METH_VARARGS, "start_monitoring_process"},
       {"is_monitored_process",py_is_monitored_process, METH_VARARGS, "is_monitored_process"},

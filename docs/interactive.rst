@@ -135,6 +135,8 @@ Machine state inspection and manipulation
 ``eb,ew,ed,eq`` Overwrite byte,word,dword,qword of data in memory. Accepts HEX, ANSI strings and unicode strings.
 ``write``       Overwrite any size of data in memory. Accepts HEX, ANSI strings and unicode strings. 
 ``r``           Display and/or manipulate a register. See help.
+``ior[b|w|d]``  Read IO port address (byte, word, dword).
+``iow[b|w|d]``  Write IO port address (byte, word, dword).
 =============== ==================================================================================
 
 Symbols

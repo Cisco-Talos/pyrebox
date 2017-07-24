@@ -358,6 +358,19 @@ class ShellMagics(Magics):
                 found.append(regname)
         return found
 
+    def get_port_param(self,line):
+        '''
+        Helper to parse parameters in the form: 0x7c313452
+        '''
+        if line == "":
+            return None
+
+        addr = self.get_val(line)
+        if addr is None:
+            return None
+
+        return addr
+
     def get_addr_size_param(self,line):
         '''
         Helper to parse parameters in the form: [p]0x7c313452:0x100
@@ -805,6 +818,114 @@ class ShellMagics(Magics):
                     return
                 content = r_va(self.proc_context.get_pgd(),addr+(size*i),size)
             third_party.python_modules.hexdump.hexdump(content,addr+(size*i))
+
+    @line_magic
+    def iorb(self,line):
+        '''
+        Read IO Port, 1 byte. Format: iodb <port addr>
+        '''
+        addr = self.get_port_param(line)
+        if addr is None:
+            self.do_help("iorb")
+            return
+        size=1
+        val = r_ioport(addr,size)
+        pp_print("Port [0x%04x] = 0x%02x" % (addr,val))
+
+    @line_magic
+    def iorw(self,line):
+        '''
+        Read IO Port, 2 byte. Format: iorw <port addr>
+        '''
+        addr = self.get_port_param(line)
+        if addr is None:
+            self.do_help("iorw")
+            return
+        size=2
+        val = r_ioport(addr,size)
+        pp_print("Port [0x%04x] = 0x%04x" % (addr,val))
+
+    @line_magic
+    def iord(self,line):
+        '''
+        Read IO Port, 4 byte. Format: iord <port addr>
+        '''
+        addr = self.get_port_param(line)
+        if addr is None:
+            self.do_help("iord")
+            return
+        size=4
+        val = r_ioport(addr,size)
+        pp_print("Port [0x%04x] = 0x%08x" % (addr,val))
+
+    @line_magic
+    def iowb(self,line):
+        '''
+        Write IO Port, 1 byte. Format: iowb <port addr>=<val>
+        '''
+        addr,buf,physical = self.get_addr_content_param(line)
+
+        size = 1
+
+        if addr is None:
+            self.do_help("iowb")
+            return
+
+        if len(buf) != size:
+            pp_error("Incorrect value size\n")
+            self.do_help("iowb")
+            return
+
+        val = struct.unpack("<B",buf)[0]
+
+        w_ioport(addr,size,val)
+        pp_print("Port [0x%04x] = 0x%02x" % (addr,val))
+
+    @line_magic
+    def ioww(self,line):
+        '''
+        Write IO Port, 2 byte. Format: ioww <port addr>=<val>
+        '''
+        addr,buf,physical = self.get_addr_content_param(line)
+
+        size = 2
+
+        if addr is None:
+            self.do_help("ioww")
+            return
+
+        if len(buf) != size:
+            pp_error("Incorrect value size\n")
+            self.do_help("ioww")
+            return
+
+        val = struct.unpack("<H",buf)[0]
+
+        w_ioport(addr,size,val)
+        pp_print("Port [0x%04x] = 0x%04x" % (addr,val))
+
+    @line_magic
+    def iowd(self,line):
+        '''
+        Write IO Port, 4 bytes. Format: iowd <port addr>=<val>
+        '''
+        addr,buf,physical = self.get_addr_content_param(line)
+
+        size = 4
+
+        if addr is None:
+            self.do_help("iowd")
+            return
+
+        if len(buf) != size:
+            pp_error("Incorrect value size\n")
+            self.do_help("iowd")
+            return
+
+        val = struct.unpack("<I",buf)[0]
+
+        w_ioport(addr,size,val)
+        pp_print("Port [0x%04x] = 0x%08x" % (addr,val))
 
     @line_magic
     def dd(self,line):
@@ -1373,6 +1494,8 @@ class ShellMagics(Magics):
     r                 - Write register
     db|dw|dd|dq       - Display memory byte, word, dword, qword
     eb|ew|ed|eq       - Edit memory byte, word, dword, qword
+    iorb|iorw|iord    - Read IO Port (byte, word, dword)
+    iowb|ioww|iowd    - Write IO Port (byte, word, dword)
     write             - Write a buffer to memory
     dump              - Dump a buffer of memory into command line.
     print_cpu         - Show CPU status (registers)
