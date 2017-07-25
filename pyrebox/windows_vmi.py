@@ -1,14 +1,14 @@
-#-------------------------------------------------------------------------------
+# -------------------------------------------------------------------------
 #
 #   Copyright (C) 2017 Cisco Talos Security Intelligence and Research Group
 #
-#   PyREBox: Python scriptable Reverse Engineering Sandbox 
-#   Author: Xabier Ugarte-Pedrero 
-#   
+#   PyREBox: Python scriptable Reverse Engineering Sandbox
+#   Author: Xabier Ugarte-Pedrero
+#
 #   This program is free software; you can redistribute it and/or modify
 #   it under the terms of the GNU General Public License version 2 as
 #   published by the Free Software Foundation.
-#   
+#
 #   This program is distributed in the hope that it will be useful,
 #   but WITHOUT ANY WARRANTY; without even the implied warranty of
 #   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
@@ -18,279 +18,245 @@
 #   along with this program; if not, write to the Free Software
 #   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston,
 #   MA 02110-1301, USA.
-#   
-#-------------------------------------------------------------------------------
+#
+# -------------------------------------------------------------------------
 
-import sys
-import traceback
-
-from utils import pp_print
-from utils import pp_debug
-from utils import pp_warning
 from utils import pp_error
-
-
+import volatility.obj as obj
+# import volatility.plugins.kdbgscan as kdbg
+import volatility.utils as utils
+import traceback
 
 last_kdbg = None
 
-def windows_insert_module_internal(p_pid,p_pgd,base,size,fullname,basename,checksum,nt_header,update_symbols):
-    import volatility.conf as volconf
-    import volatility.registry as registry
-    import volatility.commands as commands
-    import volatility.addrspace as addrspace
-    import volatility.constants as constants
-    import volatility.exceptions as exceptions
-    import volatility.obj as obj
-    import volatility.scan as scan
-    import volatility.plugins.kdbgscan as kdbg
-    import volatility.win32.tasks as tasks
-    import volatility.utils as utils
+
+def windows_insert_module_internal(
+        p_pid,
+        p_pgd,
+        base,
+        size,
+        fullname,
+        basename,
+        checksum,
+        nt_header,
+        update_symbols):
+
     from utils import get_addr_space
     from vmi import modules
     from vmi import symbols
     from vmi import Module
-    from vmi import PseudoLDRDATA 
+    from vmi import PseudoLDRDATA
 
-    mod = Module(base,size,p_pid,p_pgd,checksum,basename,fullname)
+    mod = Module(base, size, p_pid, p_pgd, checksum, basename, fullname)
     if p_pgd != 0:
         addr_space = get_addr_space(p_pgd)
     else:
-        addr_space = get_addr_space() 
+        addr_space = get_addr_space()
 
-    #Getting symbols, from cache!
-    if (checksum,fullname) in symbols:
-        mod.set_symbols(symbols[(checksum,fullname)])
+    # Getting symbols, from cache!
+    if (checksum, fullname) in symbols:
+        mod.set_symbols(symbols[(checksum, fullname)])
     elif update_symbols:
         syms = []
         export_dir = nt_header.OptionalHeader.DataDirectory[0]
         if export_dir:
-            expdir = obj.Object('_IMAGE_EXPORT_DIRECTORY',
-                            offset = base + export_dir.VirtualAddress,
-                            vm = addr_space,
-                            parent = PseudoLDRDATA(base,basename,export_dir))
+            expdir = obj.Object(
+                '_IMAGE_EXPORT_DIRECTORY',
+                offset=base +
+                export_dir.VirtualAddress,
+                vm=addr_space,
+                parent=PseudoLDRDATA(
+                    base,
+                    basename,
+                    export_dir))
             if expdir.valid(nt_header):
-                # Ordinal, Function RVA, and Name Object 
+                # Ordinal, Function RVA, and Name Object
                 for o, f, n in expdir._exported_functions():
-                    if not type(o) is obj.NoneObject and \
-                       not type(f) is obj.NoneObject and \
-                       not type(n) is obj.NoneObject:
-                        syms.append((o,f.v(),str(n)))
-        symbols[(checksum,fullname)] = syms
+                    if not isinstance(o, obj.NoneObject) and \
+                       not isinstance(f, obj.NoneObject) and \
+                       not isinstance(n, obj.NoneObject):
+                        syms.append((o, f.v(), str(n)))
+        symbols[(checksum, fullname)] = syms
         mod.set_symbols(syms)
 
-    if base in modules[(p_pid,p_pgd)]:
-        del modules[(p_pid,p_pgd)][base]
+    if base in modules[(p_pid, p_pgd)]:
+        del modules[(p_pid, p_pgd)][base]
 
-    modules[(p_pid,p_pgd)][base] = mod
+    modules[(p_pid, p_pgd)][base] = mod
 
-def windows_insert_module(p_pid,p_pgd,module,update_symbols):
-    ''' 
-        Insert a module in the module list, only if it has not been inserted yet 
+
+def windows_insert_module(p_pid, p_pgd, module, update_symbols):
     '''
-    import volatility.conf as volconf
-    import volatility.registry as registry
-    import volatility.commands as commands
-    import volatility.addrspace as addrspace
-    import volatility.constants as constants
-    import volatility.exceptions as exceptions
-    import volatility.obj as obj
-    import volatility.scan as scan
-    import volatility.plugins.kdbgscan as kdbg
-    import volatility.win32.tasks as tasks
-    import volatility.utils as utils
-    from vmi import modules
-    from vmi import symbols
-    from vmi import Module
-    from vmi import PseudoLDRDATA
-    
+        Insert a module in the module list, only if it has not been inserted yet
+    '''
+
     base = module.DllBase.v()
-    if type(base) is obj.NoneObject: 
+    if isinstance(base, obj.NoneObject):
         base = 0
     size = module.SizeOfImage.v()
-    if type(size) is obj.NoneObject:
+    if isinstance(size, obj.NoneObject):
         size = 0
     fullname = module.FullDllName.v()
-    if type(fullname) is obj.NoneObject:
+    if isinstance(fullname, obj.NoneObject):
         fullname = "Unknown"
     basename = module.BaseDllName.v()
-    if type(basename) is obj.NoneObject:
+    if isinstance(basename, obj.NoneObject):
         basename = "Unknown"
 
-    #checksum
+    # checksum
     nt_header = module._nt_header()
-    if type(nt_header) is not obj.NoneObject:
+    if not isinstance(nt_header, obj.NoneObject):
         checksum = nt_header.OptionalHeader.CheckSum.v()
-        if type(checksum) is obj.NoneObject:
+        if isinstance(checksum, obj.NoneObject):
             checksum = 0
     else:
         checksum = 0
 
-    windows_insert_module_internal(p_pid,p_pgd,base,size,fullname,basename,checksum,nt_header,update_symbols)
+    windows_insert_module_internal(
+        p_pid,
+        p_pgd,
+        base,
+        size,
+        fullname,
+        basename,
+        checksum,
+        nt_header,
+        update_symbols)
 
-def windows_insert_module_from_base(base,size,pid,pgd,name,fullname):
+
+def windows_insert_module_from_base(base, size, pid, pgd, name, fullname):
     '''
         Insert a module given its base
     '''
-    import volatility.conf as volconf
-    import volatility.registry as registry
-    import volatility.commands as commands
-    import volatility.addrspace as addrspace
-    import volatility.constants as constants
-    import volatility.exceptions as exceptions
-    import volatility.obj as obj
-    import volatility.scan as scan
-    import volatility.plugins.kdbgscan as kdbg
-    import volatility.win32.tasks as tasks
-    import volatility.utils as utils
-    from utils import get_addr_space
     from vmi import modules
-    from vmi import symbols
-    from vmi import Module
-    from vmi import PseudoLDRDATA
+    from utils import get_addr_space
 
     if pgd != 0:
         addr_space = get_addr_space(pgd)
     else:
-        addr_space = get_addr_space() 
-    nt_header = obj.Object("_IMAGE_DOS_HEADER", offset = base, vm = addr_space)
+        addr_space = get_addr_space()
+    nt_header = obj.Object("_IMAGE_DOS_HEADER", offset=base, vm=addr_space)
     checksum = nt_header.OptionalHeader.CheckSum.v()
-    if (pid,pgd) not in modules:
-        modules[(pid,pgd)] = {}
-    windows_insert_module_internal(pid,pgd,base,size,fullname,name,checksum,nt_header,update_symbols = True)
+    if (pid, pgd) not in modules:
+        modules[(pid, pgd)] = {}
+    windows_insert_module_internal(
+        pid,
+        pgd,
+        base,
+        size,
+        fullname,
+        name,
+        checksum,
+        nt_header,
+        update_symbols=True)
 
-def windows_update_modules(pgd,update_symbols = False):
+
+def windows_update_modules(pgd, update_symbols=False):
     '''
         Use volatility to get the modules and symbols for a given process, and
         update the cache accordingly
     '''
-    import volatility.conf as volconf
-    import volatility.registry as registry
-    import volatility.commands as commands
-    import volatility.addrspace as addrspace
-    import volatility.constants as constants
-    import volatility.exceptions as exceptions
-    import volatility.obj as obj
-    import volatility.scan as scan
-    import volatility.plugins.kdbgscan as kdbg
-    import volatility.win32.tasks as tasks
-    import volatility.utils as utils
     import api
     from utils import get_addr_space
     from vmi import modules
-    from vmi import symbols
-    from vmi import Module
-    from vmi import PseudoLDRDATA
 
     if pgd != 0:
         addr_space = get_addr_space(pgd)
     else:
-        addr_space = get_addr_space() 
+        addr_space = get_addr_space()
 
     if addr_space is None:
         pp_error("Volatility address space not loaded\n")
         return
-    #Get EPROC directly from its offset
+    # Get EPROC directly from its offset
     procs = api.get_process_list()
     inserted_bases = []
-    #Parse/update kernel modules:
+    # Parse/update kernel modules:
     if last_kdbg is not None:
-        kdbg = obj.Object("_KDDEBUGGER_DATA64", offset = last_kdbg, vm = addr_space)
+        kdbg = obj.Object(
+            "_KDDEBUGGER_DATA64",
+            offset=last_kdbg,
+            vm=addr_space)
         for module in kdbg.modules():
-            if not module.DllBase in inserted_bases:
+            if module.DllBase not in inserted_bases:
                 inserted_bases.append(module.DllBase)
-                windows_insert_module(0,0,module,update_symbols)
+                windows_insert_module(0, 0, module, update_symbols)
     for proc in procs:
         p_pid = proc["pid"]
         p_pgd = proc["pgd"]
-        p_name = proc["name"]
+        # p_name = proc["name"]
         p_kernel_addr = proc["kaddr"]
         if p_pgd == pgd:
-            task = obj.Object("_EPROCESS", offset = p_kernel_addr, vm = addr_space)
-            #Note: we do not erase the modules we have information for from the list,
+            task = obj.Object("_EPROCESS", offset=p_kernel_addr, vm=addr_space)
+            # Note: we do not erase the modules we have information for from the list,
             # unless we have a different module loaded at the same base address.
             # In this way, if at some point the module gets unmapped from the PEB list
             # but it is still in memory, we do not loose the information.
-            if (p_pid,p_pgd) not in modules:
-                modules[(p_pid,p_pgd)] = {}
+            if (p_pid, p_pgd) not in modules:
+                modules[(p_pid, p_pgd)] = {}
             for module in task.get_init_modules():
-                if not module.DllBase in inserted_bases:
+                if module.DllBase not in inserted_bases:
                     inserted_bases.append(module.DllBase)
-                    windows_insert_module(p_pid,p_pgd,module,update_symbols)
+                    windows_insert_module(p_pid, p_pgd, module, update_symbols)
             for module in task.get_mem_modules():
-                if not module.DllBase in inserted_bases:
+                if module.DllBase not in inserted_bases:
                     inserted_bases.append(module.DllBase)
-                    windows_insert_module(p_pid,p_pgd,module,update_symbols)
+                    windows_insert_module(p_pid, p_pgd, module, update_symbols)
             for module in task.get_load_modules():
-                if not module.DllBase in inserted_bases:
+                if module.DllBase not in inserted_bases:
                     inserted_bases.append(module.DllBase)
-                    windows_insert_module(p_pid,p_pgd,module,update_symbols) 
+                    windows_insert_module(p_pid, p_pgd, module, update_symbols)
             return
 
-def windows_kdbgscan_fast(dtb):
-    import volatility.conf as volconf
-    import volatility.registry as registry
-    import volatility.commands as commands
-    import volatility.addrspace as addrspace
-    import volatility.constants as constants
-    import volatility.exceptions as exceptions
-    import volatility.obj as obj
-    import volatility.scan as scan
-    import volatility.plugins.kdbgscan as kdbg
-    import volatility.win32.tasks as tasks
-    import volatility.utils as utils
-    from utils import ConfigurationManager as conf_m
-    from utils import get_addr_space
-    from vmi import modules
-    from vmi import symbols
-    from vmi import Module
-    from vmi import PseudoLDRDATA
 
+def windows_kdbgscan_fast(dtb):
+    from utils import ConfigurationManager as conf_m
 
     try:
         config = conf_m.vol_conf
         config.DTB = dtb
         try:
             addr_space = utils.load_as(config)
-        except:
-            #Return silently
+        except BaseException:
+            # Return silently
             conf_m.addr_space = None
             return 0
         conf_m.addr_space = addr_space
 
         if obj.VolMagic(addr_space).KPCR.value:
-            kpcr = obj.Object("_KPCR", offset = obj.VolMagic(addr_space).KPCR.value, vm = addr_space)
+            kpcr = obj.Object("_KPCR", offset=obj.VolMagic(
+                addr_space).KPCR.value, vm=addr_space)
             kdbg = kpcr.get_kdbg()
             if kdbg.is_valid():
                 last_kdbg = kdbg.obj_offset
-                return last_kdbg 
+                return last_kdbg
 
         kdbg = obj.VolMagic(addr_space).KDBG.v()
 
         if kdbg.is_valid():
             last_kdbg = kdbg.obj_offset
-            return last_kdbg 
+            return last_kdbg
 
-
-        # skip the KPCR backup method for x64 
+        # skip the KPCR backup method for x64
         memmode = addr_space.profile.metadata.get('memory_model', '32bit')
 
-        version = (addr_space.profile.metadata.get('major', 0), 
+        version = (addr_space.profile.metadata.get('major', 0),
                    addr_space.profile.metadata.get('minor', 0))
 
         if memmode == '32bit' or version <= (6, 1):
-            
+
             # Fall back to finding it via the KPCR. We cannot
             # accept the first/best suggestion, because only
             # the KPCR for the first CPU allows us to find KDBG.
             for kpcr_off in obj.VolMagic(addr_space).KPCR.get_suggestions():
 
-                kpcr = obj.Object("_KPCR", offset = kpcr_off, vm = addr_space)
+                kpcr = obj.Object("_KPCR", offset=kpcr_off, vm=addr_space)
 
                 kdbg = kpcr.get_kdbg()
-        
+
                 if kdbg.is_valid():
                     last_kdbg = kdbg.obj_offset
-                    return last_kdbg 
+                    return last_kdbg
         return 0
-    except:
+    except BaseException:
         traceback.print_exc()

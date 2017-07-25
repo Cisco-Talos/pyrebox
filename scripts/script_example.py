@@ -1,14 +1,14 @@
-#-------------------------------------------------------------------------------
+# -------------------------------------------------------------------------------
 #
 #   Copyright (C) 2017 Cisco Talos Security Intelligence and Research Group
 #
-#   PyREBox: Python scriptable Reverse Engineering Sandbox 
-#   Author: Xabier Ugarte-Pedrero 
-#   
+#   PyREBox: Python scriptable Reverse Engineering Sandbox
+#   Author: Xabier Ugarte-Pedrero
+#
 #   This program is free software; you can redistribute it and/or modify
 #   it under the terms of the GNU General Public License version 2 as
 #   published by the Free Software Foundation.
-#   
+#
 #   This program is distributed in the hope that it will be useful,
 #   but WITHOUT ANY WARRANTY; without even the implied warranty of
 #   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
@@ -18,8 +18,8 @@
 #   along with this program; if not, write to the Free Software
 #   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston,
 #   MA 02110-1301, USA.
-#   
-#-------------------------------------------------------------------------------
+#
+# -------------------------------------------------------------------------------
 
 
 # PyREBox sample script - Monitor process creation and break on entry point
@@ -36,70 +36,70 @@
 #   3) Start a shell from a PyREBox script
 #   4) Set a breakpoint from a PyREBox script using the BP class
 #   5) Using partial function application to pass additional parameters to a callback
-#   6) Using the PyREBox printer function that will prepend the script name to every line you print 
-#   7) Defining custom commands that can be used from the ipython shell 
+#   6) Using the PyREBox printer function that will prepend the script name to every line you print
+#   7) Defining custom commands that can be used from the ipython shell
 
 from __future__ import print_function
-import sys
-import api
 from ipython_shell import start_shell
 from api import CallbackManager
 from api import BP
 import pefile
 import functools
 
-#Callback manager
+# Callback manager
 cm = None
-#Printer
+# Printer
 pyrebox_print = None
 
-#Global variables
-#If we want to keep some global var shared between different callback
-#functions that is preserved from call to call, we must define
-#it as a global
+# Global variables
+# If we want to keep some global var shared between different callback
+# functions that is preserved from call to call, we must define
+# it as a global
 procs_created = 0
 target_procname = ""
 
-def initialize_callbacks(module_hdl,printer):
+
+def initialize_callbacks(module_hdl, printer):
     '''
-    Initilize callbacks for this module. 
-    
-    This function will be triggered whenever 
-    the script is loaded for the first time, 
+    Initilize callbacks for this module.
+
+    This function will be triggered whenever
+    the script is loaded for the first time,
     either with the import_module command,
     or when loaded at startup.
     '''
-    #We keep a callback manager as a global var.
-    # --> To access it from any function.
-    # --> Necessary to call cm.clean() from clean() function
+    # We keep a callback manager as a global var.
+    #  --> To access it from any function.
+    #  --> Necessary to call cm.clean() from clean() function
     global cm
     global pyrebox_print
-    #Initialize printer function (global var), that we can use to print
-    #text that is associated to our script
+    # Initialize printer function (global var), that we can use to print
+    # text that is associated to our script
     pyrebox_print = printer
     pyrebox_print("[*]    Initializing callbacks")
-    #Initialize the callback manager, and register a couple of named
-    #callbacks.
+    # Initialize the callback manager, and register a couple of named
+    # callbacks.
     cm = CallbackManager(module_hdl)
-    new_proc_cb = cm.add_callback(CallbackManager.CREATEPROC_CB,new_proc,name="vmi_new_proc")
-    remove_proc_cb = cm.add_callback(CallbackManager.REMOVEPROC_CB,remove_proc,name="vmi_remove_proc")
+    cm.add_callback(CallbackManager.CREATEPROC_CB, new_proc, name="vmi_new_proc")
+    cm.add_callback(CallbackManager.REMOVEPROC_CB, remove_proc, name="vmi_remove_proc")
     pyrebox_print("[*]    Initialized callbacks")
+
 
 def clean():
     '''
-    Clean up everything. 
+    Clean up everything.
 
-    This function is called when the script is 
+    This function is called when the script is
     unloaded.
-    
-    It is necessary to call the clean() function 
-    in  the callback manager, that will unregister 
-    all the registered callbacks. Otherwise, the 
-    next time the callback is triggered, it will 
-    try to call to a non existent function and 
-    PyREbox will crash. 
 
-    Here you may clean or log whatever you consider 
+    It is necessary to call the clean() function
+    in  the callback manager, that will unregister
+    all the registered callbacks. Otherwise, the
+    next time the callback is triggered, it will
+    try to call to a non existent function and
+    PyREbox will crash.
+
+    Here you may clean or log whatever you consider
     necessary.
     '''
     global cm
@@ -108,7 +108,7 @@ def clean():
     print("[*]    Cleaned module")
 
 
-def find_ep(pgd,proc_name):
+def find_ep(pgd, proc_name):
     '''Given an address space and a process name, uses pefile module
        to get its entry point
     '''
@@ -118,15 +118,16 @@ def find_ep(pgd,proc_name):
     for m in api.get_module_list(pgd):
         name = m["name"]
         base = m["base"]
-        size = m["size"]
+        # size = m["size"]
         if name == proc_name:
             try:
-                pe_data = api.r_va(pgd,base,0x2000)
+                pe_data = api.r_va(pgd, base, 0x2000)
                 pe = pefile.PE(data=pe_data)
                 ep = pe.OPTIONAL_HEADER.AddressOfEntryPoint
                 return (base + ep)
             except:
                 pyrebox_print("Unable to run pefile on loaded module %s" % name)
+
 
 def do_custom_command_example(line):
     ''' Example of custom command. This first line will be shown as command description when %list_commands is called.
@@ -134,7 +135,7 @@ def do_custom_command_example(line):
         The rest of this docstring will be shown if we call
         help(**command**) from the ipython command line.
 
-        If we declare any function with the "do_" prefix, 
+        If we declare any function with the "do_" prefix,
         it will be added automagically as a shell command,
         ignoring the "do_" prefix.
 
@@ -142,9 +143,10 @@ def do_custom_command_example(line):
         receive the command line arguments as a string.
     '''
     global pyrebox_print
-    global procs_created 
+    global procs_created
     pyrebox_print("The arguments for this custom command are: %s" % line)
     pyrebox_print("I am a script, and the number of processes created is %d\n" % procs_created)
+
 
 def do_set_target(line):
     '''Set target process - Custom command
@@ -159,7 +161,8 @@ def do_set_target(line):
     target_procname = line.strip()
     pyrebox_print("Waiting for process %s to start\n" % target_procname)
 
-def context_change(target_pgd,target_mod_name,old_pgd,new_pgd):
+
+def context_change(target_pgd, target_mod_name, old_pgd, new_pgd):
     '''Callback triggered for every context change
         :param target_pgd: This parameter is inserted using functools.partial (see callback registration)
         :param target_mod_name: This parameter is inserted using functools.partial (see callback registration)
@@ -168,15 +171,16 @@ def context_change(target_pgd,target_mod_name,old_pgd,new_pgd):
     '''
     global cm
     if target_pgd == new_pgd:
-        ep = find_ep(target_pgd,target_mod_name)
+        ep = find_ep(target_pgd, target_mod_name)
         if ep is not None:
-            pyrebox_print("The entry point for %s is %x\n" % (target_mod_name,ep))
+            pyrebox_print("The entry point for %s is %x\n" % (target_mod_name, ep))
             cm.rm_callback("context_change")
-            #Set a breakpoint on the EP, that will start a shell
-            bp = BP(ep,target_pgd)
+            # Set a breakpoint on the EP, that will start a shell
+            bp = BP(ep, target_pgd)
             bp.enable()
 
-def new_proc(pid,pgd,name):
+
+def new_proc(pid, pgd, name):
     '''
     Process creation callback. Receives 3 parameters:
         :param pid: The pid of the process
@@ -191,21 +195,21 @@ def new_proc(pid,pgd,name):
     global target_procname
     global cm
 
-    pyrebox_print("New process created! pid: %x, pgd: %x, name: %s" % (pid,pgd,name))
+    pyrebox_print("New process created! pid: %x, pgd: %x, name: %s" % (pid, pgd, name))
     procs_created += 1
-    #For instance, we can start the shell whenever a process is created
+    # For instance, we can start the shell whenever a process is created
     if target_procname != "" and target_procname.lower() in name.lower():
-        #At this point, the process has been created, but 
-        #the main module (and dlls) have not been loaded yet.
-        #We put a callback on the context changes, and wait for
-        #the calc to start executing.
-        cm.add_callback(CallbackManager.CONTEXTCHANGE_CB,functools.partial(context_change,pgd,name),name="context_change")
-        #In order to start a shell, we just need to call start_shell()
+        # At this point, the process has been created, but
+        # the main module (and dlls) have not been loaded yet.
+        # We put a callback on the context changes, and wait for
+        # the calc to start executing.
+        cm.add_callback(CallbackManager.CONTEXTCHANGE_CB, functools.partial(context_change, pgd, name), name="context_change")
+        # In order to start a shell, we just need to call start_shell()
         pyrebox_print("Starting a shell after the %s process has been created" % name)
         start_shell()
 
 
-def remove_proc(pid,pgd,name):
+def remove_proc(pid, pgd, name):
     '''
     Process removal callback. Receives 3 parameters:
         :param pid: The pid of the process
@@ -215,9 +219,9 @@ def remove_proc(pid,pgd,name):
         :param name: The name of the process
         :type name: str
     '''
-    pyrebox_print("Process removed! pid: %x, pgd: %x, name: %s" % (pid,pgd,name))
+    pyrebox_print("Process removed! pid: %x, pgd: %x, name: %s" % (pid, pgd, name))
+
 
 if __name__ == "__main__":
-    #This message will be displayed when the script is loaded in memory
+    # This message will be displayed when the script is loaded in memory
     print("[*] Loading python module %s" % (__file__))
-
