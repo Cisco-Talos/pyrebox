@@ -135,55 +135,71 @@ def init_volatility(conf):
     import volatility.commands as commands
     import volatility.addrspace as addrspace
 
-    registry.PluginImporter()
-    vol_config = volconf.ConfObject()
-    registry.register_global_options(vol_config, commands.Command)
-    registry.register_global_options(vol_config, addrspace.BaseAddressSpace)
-    vol_config.PROFILE = conf.vol_profile
+    if hasattr(volconf, "PyREBoxVolatility"):
+        registry.PluginImporter()
+        vol_config = volconf.ConfObject()
+        registry.register_global_options(vol_config, commands.Command)
+        registry.register_global_options(vol_config, addrspace.BaseAddressSpace)
+        vol_config.PROFILE = conf.vol_profile
 
-    # Set global volatility configuration
-    conf_m.vol_conf = vol_config
+        # Set global volatility configuration
+        conf_m.vol_conf = vol_config
+        return True
+    else:
+        pp_error("""The imported volatility version is not appropriate for PyREBox:
+    * Your local volatility instalation may be in conflict with PyREBox's volatility installation...
+      ... set up a virtual env to avoid the conflict (see installation instructions).
+    * PyREBox's volatility version was not properly installed or configured...
+      ... you rebuild it running: $./build.sh --rebuild_volatility
+    * You have a virtual env for PyREBox's python dependencies, and you forgot to activate it!
+      ... you know what to do!\n""")
+        return False
 
 
 def init(platform, root_path, volatility_path):
     global conf
-    # Just configure basic logging
-    import logging
-    logging.basicConfig()
-    # Initialize stuff
-    pp_debug("[*] Platform: %s\n" % platform)
-    pp_debug("[*] Starting python module initialization\n")
-    pp_debug("[*] Reading configuration\n")
-    sys.settrace
-    config = ConfigParser.RawConfigParser()
-    if not os.path.isfile("pyrebox.conf"):
-        pp_error("[!] Could not initialize pyrebox, pyrebox.conf file missing!\n")
-        return None
-    config.read('pyrebox.conf')
-    vol_profile = config.get('VOL', 'profile')
-    conf = ConfigManager(
-        volatility_path=volatility_path,
-        vol_profile=vol_profile,
-        platform=platform)
-    sys.path.append(conf.volatility_path)
-    sys.path.append(root_path)
-    sys.path.append(os.getcwd())
-    # Set global configuration
-    conf_m.conf = conf
-    init_volatility(conf_m.conf)
+    try:
+        # Just configure basic logging
+        import logging
+        logging.basicConfig()
+        # Initialize stuff
+        pp_debug("[*] Platform: %s\n" % platform)
+        pp_debug("[*] Starting python module initialization\n")
+        pp_debug("[*] Reading configuration\n")
+        sys.settrace
+        config = ConfigParser.RawConfigParser()
+        if not os.path.isfile("pyrebox.conf"):
+            pp_error("[!] Could not initialize pyrebox, pyrebox.conf file missing!\n")
+            return None
+        config.read('pyrebox.conf')
+        vol_profile = config.get('VOL', 'profile')
+        conf = ConfigManager(
+            volatility_path=volatility_path,
+            vol_profile=vol_profile,
+            platform=platform)
+        sys.path.append(conf.volatility_path)
+        sys.path.append(root_path)
+        sys.path.append(os.getcwd())
+        # Set global configuration
+        conf_m.conf = conf
+        if not init_volatility(conf_m.conf):
+            return None
 
-    # Initialize the shell now
-    from ipython_shell import initialize_shell
-    initialize_shell()
+        # Initialize the shell now
+        from ipython_shell import initialize_shell
+        initialize_shell()
 
-    # Locate python modules that should be loaded by default
-    for (module, enable) in config.items("MODULES"):
-        if enable.strip().lower() == "true" or enable.strip().lower() == "yes":
-            import_module(module)
+        # Locate python modules that should be loaded by default
+        for (module, enable) in config.items("MODULES"):
+            if enable.strip().lower() == "true" or enable.strip().lower() == "yes":
+                import_module(module)
 
-    pp_debug("[*] Finished python module initialization\n")
-    return vol_profile
-
+        pp_debug("[*] Finished python module initialization\n")
+        return vol_profile
+    except Exception as e:
+        # Do this to make sure we print the stack trace to help trouble-shooting
+        traceback.print_exc()
+        raise e
 
 if __name__ == "__main__":
     pp_debug("\n[*] Loading python component initialization script\n")

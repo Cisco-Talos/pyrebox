@@ -1,7 +1,8 @@
-diff -ur volatility/volatility/conf.py volatility_py/volatility/conf.py
---- volatility/volatility/conf.py	2016-12-27 10:54:47.000000000 -0500
-+++ volatility_py/volatility/conf.py	2017-06-22 06:11:31.906056022 -0400
-@@ -89,7 +89,8 @@
+diff --git a/volatility/conf.py b/volatility/conf.py
+index 6c65d72..f29b663 100755
+--- a/volatility/conf.py
++++ b/volatility/conf.py
+@@ -89,7 +89,8 @@ class PyFlagOptionParser(optparse.OptionParser):
          ## We cant emit errors about missing parameters until we are
          ## sure that all modules have registered all their parameters
          if self.final:
@@ -11,7 +12,18 @@ diff -ur volatility/volatility/conf.py volatility_py/volatility/conf.py
          else:
              raise RuntimeError(msg)
  
-@@ -260,7 +261,7 @@
+@@ -99,6 +100,10 @@ class PyFlagOptionParser(optparse.OptionParser):
+         for cb in self.help_hooks:
+             file.write(cb())
+ 
++#Just add this member so that we can check if we are importing the
++#correct volatility installation
++PyREBoxVolatility = True
++
+ class ConfObject(object):
+     """ This is a singleton class to manage the configuration.
+ 
+@@ -260,7 +265,7 @@ class ConfObject(object):
                              pass
  
                      self.optparser.print_help()
@@ -20,7 +32,7 @@ diff -ur volatility/volatility/conf.py volatility_py/volatility/conf.py
              except AttributeError:
                  pass
  
-@@ -268,6 +269,7 @@
+@@ -268,6 +273,7 @@ class ConfObject(object):
              import volatility.cache as cache
              for k, v in self.cache_invalidators.items():
                  cache.CACHE.invalidate_on(k, v)

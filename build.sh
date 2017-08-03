@@ -90,12 +90,13 @@ then
         exit 1
     fi
     echo -e "\n${GREEN}[*] Patching qemu...${NC}\n"
-    cd $root_path
-    patch -p0 < $pyrebox_path/third_party/qemu/qemu.patch
+    cd $qemu_path
+    git apply $pyrebox_path/third_party/qemu/qemu.patch
     if [ $? -ne 0 ]; then
         echo -e "\n${RED}[!] Could not patch QEMU${NC}\n"
         exit 1
     fi
+    cd ${root_path}
     ln -s ../pyrebox qemu/pyrebox
 
     echo -e "\n${GREEN}[*] Configuring qemu...${NC}\n"
@@ -148,8 +149,8 @@ then
         exit 1 
     fi
     echo -e "\n${GREEN}[*] Patching volatility...${NC}\n"
-    cd $root_path
-    patch -p0 < $pyrebox_path/third_party/volatility/conf.py.patch
+    cd $volatility_path
+    git apply $pyrebox_path/third_party/volatility/conf.py.patch
     if [ $? -ne 0 ]; then
         echo -e "\n${RED}[!] Could not patch volatility${NC}\n"
         exit 1

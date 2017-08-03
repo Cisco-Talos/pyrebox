@@ -1,6 +1,19 @@
-diff -Naur qemu/chardev/char-fd.c qemu-2.9.0-pyrebox/chardev/char-fd.c
---- qemu/chardev/char-fd.c	2017-07-10 15:01:43.185509825 +0100
-+++ qemu-2.9.0-pyrebox/chardev/char-fd.c	2017-07-10 19:55:59.101875232 +0100
+diff --git a/Makefile.target b/Makefile.target
+index 7df2b8c..8846d6f 100644
+--- a/Makefile.target
++++ b/Makefile.target
+@@ -142,6 +142,7 @@ ifdef CONFIG_SOFTMMU
+ obj-y += arch_init.o cpus.o monitor.o gdbstub.o balloon.o ioport.o numa.o
+ obj-y += qtest.o bootdevice.o
+ obj-y += hw/
++obj-y += pyrebox/
+ obj-$(CONFIG_KVM) += kvm-all.o
+ obj-y += memory.o cputlb.o
+ obj-y += memory_mapping.o
+diff --git a/chardev/char-fd.c b/chardev/char-fd.c
+index 548dd4c..67ea537 100644
+--- a/chardev/char-fd.c
++++ b/chardev/char-fd.c
 @@ -30,6 +30,7 @@
  
  #include "char-fd.h"
@@ -9,7 +22,7 @@ diff -Naur qemu/chardev/char-fd.c qemu-2.9.0-pyrebox/chardev/char-fd.c
  
  /* Called with chr_write_lock held.  */
  static int fd_chr_write(Chardev *chr, const uint8_t *buf, int len)
-@@ -41,6 +42,10 @@
+@@ -41,6 +42,10 @@ static int fd_chr_write(Chardev *chr, const uint8_t *buf, int len)
  
  static gboolean fd_chr_read(QIOChannel *chan, GIOCondition cond, void *opaque)
  {
@@ -20,7 +33,7 @@ diff -Naur qemu/chardev/char-fd.c qemu-2.9.0-pyrebox/chardev/char-fd.c
      Chardev *chr = CHARDEV(opaque);
      FDChardev *s = FD_CHARDEV(opaque);
      int len;
-@@ -52,6 +57,9 @@
+@@ -52,6 +57,9 @@ static gboolean fd_chr_read(QIOChannel *chan, GIOCondition cond, void *opaque)
          len = s->max_size;
      }
      if (len == 0) {
@@ -30,7 +43,7 @@ diff -Naur qemu/chardev/char-fd.c qemu-2.9.0-pyrebox/chardev/char-fd.c
          return TRUE;
      }
  
-@@ -60,13 +68,22 @@
+@@ -60,13 +68,22 @@ static gboolean fd_chr_read(QIOChannel *chan, GIOCondition cond, void *opaque)
      if (ret == 0) {
          remove_fd_in_watch(chr, NULL);
          qemu_chr_be_event(chr, CHR_EVENT_CLOSED);
@@ -53,9 +66,10 @@ diff -Naur qemu/chardev/char-fd.c qemu-2.9.0-pyrebox/chardev/char-fd.c
  }
  
  static int fd_chr_read_poll(void *opaque)
-diff -Naur qemu/cpu-exec.c qemu-2.9.0-pyrebox/cpu-exec.c
---- qemu/cpu-exec.c	2017-07-10 15:01:43.193509825 +0100
-+++ qemu-2.9.0-pyrebox/cpu-exec.c	2017-07-10 19:55:58.941875229 +0100
+diff --git a/cpu-exec.c b/cpu-exec.c
+index 63a56d0..e2bbf9f 100644
+--- a/cpu-exec.c
++++ b/cpu-exec.c
 @@ -35,6 +35,7 @@
  #endif
  #include "sysemu/cpus.h"
@@ -64,7 +78,7 @@ diff -Naur qemu/cpu-exec.c qemu-2.9.0-pyrebox/cpu-exec.c
  
  /* -icount align implementation. */
  
-@@ -670,6 +671,13 @@
+@@ -670,6 +671,13 @@ int cpu_exec(CPUState *cpu)
          int tb_exit = 0;
  
          while (!cpu_handle_interrupt(cpu, &last_tb)) {
@@ -78,9 +92,10 @@ diff -Naur qemu/cpu-exec.c qemu-2.9.0-pyrebox/cpu-exec.c
              TranslationBlock *tb = tb_find(cpu, last_tb, tb_exit);
              cpu_loop_exec_tb(cpu, tb, &last_tb, &tb_exit);
              /* Try to align the host and virtual clocks
-diff -Naur qemu/cputlb.c qemu-2.9.0-pyrebox/cputlb.c
---- qemu/cputlb.c	2017-07-10 15:01:43.193509825 +0100
-+++ qemu-2.9.0-pyrebox/cputlb.c	2017-07-10 19:55:58.945875229 +0100
+diff --git a/cputlb.c b/cputlb.c
+index f5d056c..bcd6e10 100644
+--- a/cputlb.c
++++ b/cputlb.c
 @@ -33,6 +33,8 @@
  #include "exec/helper-proto.h"
  #include "qemu/atomic.h"
@@ -90,7 +105,7 @@ diff -Naur qemu/cputlb.c qemu-2.9.0-pyrebox/cputlb.c
  /* DEBUG defines, enable DEBUG_TLB_LOG to log to the CPU_LOG_MMU target */
  /* #define DEBUG_TLB */
  /* #define DEBUG_TLB_LOG */
-@@ -603,6 +605,7 @@
+@@ -603,6 +605,7 @@ void tlb_set_page_with_attrs(CPUState *cpu, target_ulong vaddr,
                               hwaddr paddr, MemTxAttrs attrs, int prot,
                               int mmu_idx, target_ulong size)
  {
@@ -98,18 +113,20 @@ diff -Naur qemu/cputlb.c qemu-2.9.0-pyrebox/cputlb.c
      CPUArchState *env = cpu->env_ptr;
      MemoryRegionSection *section;
      unsigned int index;
-diff -Naur qemu/hmp-commands.hx qemu-2.9.0-pyrebox/hmp-commands.hx
---- qemu/hmp-commands.hx	2017-07-10 15:01:43.205509825 +0100
-+++ qemu-2.9.0-pyrebox/hmp-commands.hx	2017-07-10 19:55:58.945875229 +0100
-@@ -1777,3 +1777,5 @@
+diff --git a/hmp-commands.hx b/hmp-commands.hx
+index 8819281..012695a 100644
+--- a/hmp-commands.hx
++++ b/hmp-commands.hx
+@@ -1777,3 +1777,5 @@ ETEXI
  STEXI
  @end table
  ETEXI
 +
 +#include "pyrebox/qemu_commands_defs.h"
-diff -Naur qemu/hw/input/ps2.c qemu-2.9.0-pyrebox/hw/input/ps2.c
---- qemu/hw/input/ps2.c	2017-07-10 15:01:43.245509826 +0100
-+++ qemu-2.9.0-pyrebox/hw/input/ps2.c	2017-07-10 19:55:59.129875233 +0100
+diff --git a/hw/input/ps2.c b/hw/input/ps2.c
+index 1d3a440..ee7e568 100644
+--- a/hw/input/ps2.c
++++ b/hw/input/ps2.c
 @@ -31,6 +31,8 @@
  
  #include "trace.h"
@@ -119,7 +136,7 @@ diff -Naur qemu/hw/input/ps2.c qemu-2.9.0-pyrebox/hw/input/ps2.c
  /* debug PC keyboard */
  //#define DEBUG_KBD
  
-@@ -570,6 +572,11 @@
+@@ -570,6 +572,11 @@ static void ps2_put_keycode(void *opaque, int keycode)
  {
      PS2KbdState *s = opaque;
  
@@ -131,9 +148,10 @@ diff -Naur qemu/hw/input/ps2.c qemu-2.9.0-pyrebox/hw/input/ps2.c
      trace_ps2_put_keycode(opaque, keycode);
      qemu_system_wakeup_request(QEMU_WAKEUP_REASON_OTHER);
  
-diff -Naur qemu/hw/net/ne2000.c qemu-2.9.0-pyrebox/hw/net/ne2000.c
---- qemu/hw/net/ne2000.c	2017-07-10 15:01:32.465509603 +0100
-+++ qemu-2.9.0-pyrebox/hw/net/ne2000.c	2017-07-10 19:55:59.133875233 +0100
+diff --git a/hw/net/ne2000.c b/hw/net/ne2000.c
+index 798d681..66e9c16 100644
+--- a/hw/net/ne2000.c
++++ b/hw/net/ne2000.c
 @@ -29,6 +29,8 @@
  #include "hw/loader.h"
  #include "sysemu/sysemu.h"
@@ -143,7 +161,7 @@ diff -Naur qemu/hw/net/ne2000.c qemu-2.9.0-pyrebox/hw/net/ne2000.c
  /* debug NE2000 card */
  //#define DEBUG_NE2000
  
-@@ -247,6 +249,11 @@
+@@ -247,6 +249,11 @@ ssize_t ne2000_receive(NetClientState *nc, const uint8_t *buf, size_t size_)
      p[3] = total_len >> 8;
      index += 4;
  
@@ -155,7 +173,7 @@ diff -Naur qemu/hw/net/ne2000.c qemu-2.9.0-pyrebox/hw/net/ne2000.c
      /* write packet data */
      while (size > 0) {
          if (index <= s->stop)
-@@ -297,8 +304,14 @@
+@@ -297,8 +304,14 @@ static void ne2000_ioport_write(void *opaque, uint32_t addr, uint32_t val)
                  /* XXX: next 2 lines are a hack to make netware 3.11 work */
                  if (index >= NE2000_PMEM_END)
                      index -= NE2000_PMEM_SIZE;
@@ -170,9 +188,10 @@ diff -Naur qemu/hw/net/ne2000.c qemu-2.9.0-pyrebox/hw/net/ne2000.c
                      qemu_send_packet(qemu_get_queue(s->nic), s->mem + index,
                                       s->tcnt);
                  }
-diff -Naur qemu/include/monitor/monitor.h qemu-2.9.0-pyrebox/include/monitor/monitor.h
---- qemu/include/monitor/monitor.h	2017-07-10 15:01:32.545509605 +0100
-+++ qemu-2.9.0-pyrebox/include/monitor/monitor.h	2017-07-10 19:55:59.161875234 +0100
+diff --git a/include/monitor/monitor.h b/include/monitor/monitor.h
+index d2b3aaf..dd3b78b 100644
+--- a/include/monitor/monitor.h
++++ b/include/monitor/monitor.h
 @@ -6,6 +6,8 @@
  #include "block/block.h"
  #include "qemu/readline.h"
@@ -182,21 +201,11 @@ diff -Naur qemu/include/monitor/monitor.h qemu-2.9.0-pyrebox/include/monitor/mon
  extern Monitor *cur_mon;
  
  /* flags for monitor_init */
-diff -Naur qemu/Makefile.target qemu-2.9.0-pyrebox/Makefile.target
---- qemu/Makefile.target	2017-07-10 15:01:43.153509824 +0100
-+++ qemu-2.9.0-pyrebox/Makefile.target	2017-07-10 19:55:58.945875229 +0100
-@@ -142,6 +142,7 @@
- obj-y += arch_init.o cpus.o monitor.o gdbstub.o balloon.o ioport.o numa.o
- obj-y += qtest.o bootdevice.o
- obj-y += hw/
-+obj-y += pyrebox/
- obj-$(CONFIG_KVM) += kvm-all.o
- obj-y += memory.o cputlb.o
- obj-y += memory_mapping.o
-diff -Naur qemu/softmmu_template.h qemu-2.9.0-pyrebox/softmmu_template.h
---- qemu/softmmu_template.h	2017-07-10 15:01:32.697509608 +0100
-+++ qemu-2.9.0-pyrebox/softmmu_template.h	2017-07-10 19:55:58.941875229 +0100
-@@ -165,8 +165,17 @@
+diff --git a/softmmu_template.h b/softmmu_template.h
+index 4a2b665..4088f9e 100644
+--- a/softmmu_template.h
++++ b/softmmu_template.h
+@@ -165,8 +165,17 @@ WORD_TYPE helper_le_ld_name(CPUArchState *env, target_ulong addr,
      haddr = addr + env->tlb_table[mmu_idx][index].addend;
  #if DATA_SIZE == 1
      res = glue(glue(ld, LSUFFIX), _p)((uint8_t *)haddr);
@@ -214,7 +223,7 @@ diff -Naur qemu/softmmu_template.h qemu-2.9.0-pyrebox/softmmu_template.h
  #endif
      return res;
  }
-@@ -231,6 +240,11 @@
+@@ -231,6 +240,11 @@ WORD_TYPE helper_be_ld_name(CPUArchState *env, target_ulong addr,
  
      haddr = addr + env->tlb_table[mmu_idx][index].addend;
      res = glue(glue(ld, LSUFFIX), _be_p)((uint8_t *)haddr);
@@ -226,7 +235,7 @@ diff -Naur qemu/softmmu_template.h qemu-2.9.0-pyrebox/softmmu_template.h
      return res;
  }
  #endif /* DATA_SIZE > 1 */
-@@ -335,8 +349,18 @@
+@@ -335,8 +349,18 @@ void helper_le_st_name(CPUArchState *env, target_ulong addr, DATA_TYPE val,
      haddr = addr + env->tlb_table[mmu_idx][index].addend;
  #if DATA_SIZE == 1
      glue(glue(st, SUFFIX), _p)((uint8_t *)haddr, val);
@@ -245,7 +254,7 @@ diff -Naur qemu/softmmu_template.h qemu-2.9.0-pyrebox/softmmu_template.h
  #endif
  }
  
-@@ -410,6 +434,11 @@
+@@ -410,6 +434,11 @@ void helper_be_st_name(CPUArchState *env, target_ulong addr, DATA_TYPE val,
  
      haddr = addr + env->tlb_table[mmu_idx][index].addend;
      glue(glue(st, SUFFIX), _be_p)((uint8_t *)haddr, val);
@@ -257,9 +266,10 @@ diff -Naur qemu/softmmu_template.h qemu-2.9.0-pyrebox/softmmu_template.h
  }
  #endif /* DATA_SIZE > 1 */
  #endif /* !defined(SOFTMMU_CODE_ACCESS) */
-diff -Naur qemu/target/i386/helper.h qemu-2.9.0-pyrebox/target/i386/helper.h
---- qemu/target/i386/helper.h	2017-07-10 15:01:32.713509608 +0100
-+++ qemu-2.9.0-pyrebox/target/i386/helper.h	2017-07-10 19:55:59.205875235 +0100
+diff --git a/target/i386/helper.h b/target/i386/helper.h
+index 6fb8fb9..708db15 100644
+--- a/target/i386/helper.h
++++ b/target/i386/helper.h
 @@ -1,6 +1,21 @@
  DEF_HELPER_FLAGS_4(cc_compute_all, TCG_CALL_NO_RWG_SE, tl, tl, tl, tl, int)
  DEF_HELPER_FLAGS_4(cc_compute_c, TCG_CALL_NO_RWG_SE, tl, tl, tl, tl, int)
@@ -282,9 +292,10 @@ diff -Naur qemu/target/i386/helper.h qemu-2.9.0-pyrebox/target/i386/helper.h
  DEF_HELPER_3(write_eflags, void, env, tl, i32)
  DEF_HELPER_1(read_eflags, tl, env)
  DEF_HELPER_2(divb_AL, void, env, tl)
-diff -Naur qemu/target/i386/translate.c qemu-2.9.0-pyrebox/target/i386/translate.c
---- qemu/target/i386/translate.c	2017-07-10 15:01:43.369509829 +0100
-+++ qemu-2.9.0-pyrebox/target/i386/translate.c	2017-07-10 19:55:59.205875235 +0100
+diff --git a/target/i386/translate.c b/target/i386/translate.c
+index 1d1372f..aac0677 100644
+--- a/target/i386/translate.c
++++ b/target/i386/translate.c
 @@ -31,6 +31,8 @@
  #include "trace-tcg.h"
  #include "exec/log.h"
@@ -294,7 +305,7 @@ diff -Naur qemu/target/i386/translate.c qemu-2.9.0-pyrebox/target/i386/translate
  
  #define PREFIX_REPZ   0x01
  #define PREFIX_REPNZ  0x02
-@@ -102,6 +104,24 @@
+@@ -102,6 +104,24 @@ typedef struct DisasContext {
      TCGMemOp dflag;
      target_ulong pc_start;
      target_ulong pc; /* pc = eip + cs_base */
@@ -319,7 +330,7 @@ diff -Naur qemu/target/i386/translate.c qemu-2.9.0-pyrebox/target/i386/translate
      int is_jmp; /* 1 = means jump (stop translation), 2 means CPU
                     static state change (stop translation) */
      /* current block context */
-@@ -2151,6 +2171,51 @@
+@@ -2151,6 +2171,51 @@ static inline void gen_goto_tb(DisasContext *s, int tb_num, target_ulong eip)
          /* jump to same page: we can use a direct jump */
          tcg_gen_goto_tb(tb_num);
          gen_jmp_im(eip);
@@ -371,7 +382,7 @@ diff -Naur qemu/target/i386/translate.c qemu-2.9.0-pyrebox/target/i386/translate
          tcg_gen_exit_tb((uintptr_t)s->tb + tb_num);
      } else {
          /* jump to another page: currently not optimized */
-@@ -2531,6 +2596,50 @@
+@@ -2531,6 +2596,50 @@ static void gen_eob_worker(DisasContext *s, bool inhibit, bool recheck_tf)
      } else if (s->tf) {
          gen_helper_single_step(cpu_env);
      } else {
@@ -422,7 +433,7 @@ diff -Naur qemu/target/i386/translate.c qemu-2.9.0-pyrebox/target/i386/translate
          tcg_gen_exit_tb(0);
      }
      s->is_jmp = DISAS_TB_JUMP;
-@@ -4425,7 +4534,7 @@
+@@ -4425,7 +4534,7 @@ static target_ulong disas_insn(CPUX86State *env, DisasContext *s,
      if (s->pc - pc_start > 14) {
          goto illegal_op;
      }
@@ -431,7 +442,7 @@ diff -Naur qemu/target/i386/translate.c qemu-2.9.0-pyrebox/target/i386/translate
      s->pc++;
      /* Collect prefixes.  */
      switch (b) {
-@@ -4505,7 +4614,7 @@
+@@ -4505,7 +4614,7 @@ static target_ulong disas_insn(CPUX86State *env, DisasContext *s,
              rex_r = (~vex2 >> 4) & 8;
              if (b == 0xc5) {
                  vex3 = vex2;
@@ -440,7 +451,7 @@ diff -Naur qemu/target/i386/translate.c qemu-2.9.0-pyrebox/target/i386/translate
              } else {
  #ifdef TARGET_X86_64
                  s->rex_x = (~vex2 >> 3) & 8;
-@@ -4515,13 +4624,13 @@
+@@ -4515,13 +4624,13 @@ static target_ulong disas_insn(CPUX86State *env, DisasContext *s,
                  rex_w = (vex3 >> 7) & 1;
                  switch (vex2 & 0x1f) {
                  case 0x01: /* Implied 0f leading opcode bytes.  */
@@ -457,7 +468,7 @@ diff -Naur qemu/target/i386/translate.c qemu-2.9.0-pyrebox/target/i386/translate
                      break;
                  default:   /* Reserved for future use.  */
                      goto unknown_op;
-@@ -4567,7 +4676,7 @@
+@@ -4567,7 +4676,7 @@ static target_ulong disas_insn(CPUX86State *env, DisasContext *s,
      case 0x0f:
          /**************************/
          /* extended op code */
@@ -466,7 +477,7 @@ diff -Naur qemu/target/i386/translate.c qemu-2.9.0-pyrebox/target/i386/translate
          goto reswitch;
  
          /**************************/
-@@ -6929,10 +7038,48 @@
+@@ -6929,10 +7038,48 @@ static target_ulong disas_insn(CPUX86State *env, DisasContext *s,
          }
          break;
      case 0xcc: /* int3 */
@@ -515,7 +526,7 @@ diff -Naur qemu/target/i386/translate.c qemu-2.9.0-pyrebox/target/i386/translate
          if (s->vm86 && s->iopl != 3) {
              gen_exception(s, EXCP0D_GPF, pc_start - s->cs_base);
          } else {
-@@ -8242,6 +8389,42 @@
+@@ -8242,6 +8389,42 @@ static target_ulong disas_insn(CPUX86State *env, DisasContext *s,
      default:
          goto unknown_op;
      }
@@ -558,7 +569,7 @@ diff -Naur qemu/target/i386/translate.c qemu-2.9.0-pyrebox/target/i386/translate
      return s->pc;
   illegal_op:
      gen_illegal_opcode(s);
-@@ -8358,6 +8541,10 @@
+@@ -8358,6 +8541,10 @@ void gen_intermediate_code(CPUX86State *env, TranslationBlock *tb)
      cs_base = tb->cs_base;
      flags = tb->flags;
  
@@ -569,7 +580,7 @@ diff -Naur qemu/target/i386/translate.c qemu-2.9.0-pyrebox/target/i386/translate
      dc->pe = (flags >> HF_PE_SHIFT) & 1;
      dc->code32 = (flags >> HF_CS32_SHIFT) & 1;
      dc->ss32 = (flags >> HF_SS32_SHIFT) & 1;
-@@ -8432,6 +8619,17 @@
+@@ -8432,6 +8619,17 @@ void gen_intermediate_code(CPUX86State *env, TranslationBlock *tb)
          max_insns = TCG_MAX_INSNS;
      }
  
@@ -587,7 +598,7 @@ diff -Naur qemu/target/i386/translate.c qemu-2.9.0-pyrebox/target/i386/translate
      gen_tb_start(tb);
      for(;;) {
          tcg_gen_insn_start(pc_ptr, dc->cc_op);
-@@ -8453,6 +8651,17 @@
+@@ -8453,6 +8651,17 @@ void gen_intermediate_code(CPUX86State *env, TranslationBlock *tb)
              gen_io_start();
          }
  
@@ -605,9 +616,10 @@ diff -Naur qemu/target/i386/translate.c qemu-2.9.0-pyrebox/target/i386/translate
          pc_ptr = disas_insn(env, dc, pc_ptr);
          /* stop translation if indicated */
          if (dc->is_jmp)
-diff -Naur qemu/tcg/i386/tcg-target.inc.c qemu-2.9.0-pyrebox/tcg/i386/tcg-target.inc.c
---- qemu/tcg/i386/tcg-target.inc.c	2017-07-10 15:01:43.389509829 +0100
-+++ qemu-2.9.0-pyrebox/tcg/i386/tcg-target.inc.c	2017-07-10 19:55:59.189875234 +0100
+diff --git a/tcg/i386/tcg-target.inc.c b/tcg/i386/tcg-target.inc.c
+index 5918008..e20b0ae 100644
+--- a/tcg/i386/tcg-target.inc.c
++++ b/tcg/i386/tcg-target.inc.c
 @@ -24,6 +24,8 @@
  
  #include "tcg-be-ldst.h"
@@ -617,7 +629,7 @@ diff -Naur qemu/tcg/i386/tcg-target.inc.c qemu-2.9.0-pyrebox/tcg/i386/tcg-target
  #ifdef CONFIG_DEBUG_TCG
  static const char * const tcg_target_reg_names[TCG_TARGET_NB_REGS] = {
  #if TCG_TARGET_REG_BITS == 64
-@@ -148,6 +150,17 @@
+@@ -148,6 +150,17 @@ static bool have_lzcnt;
  
  static tcg_insn_unit *tb_ret_addr;
  
@@ -635,7 +647,7 @@ diff -Naur qemu/tcg/i386/tcg-target.inc.c qemu-2.9.0-pyrebox/tcg/i386/tcg-target
  static void patch_reloc(tcg_insn_unit *code_ptr, int type,
                          intptr_t value, intptr_t addend)
  {
-@@ -1385,6 +1398,9 @@
+@@ -1385,6 +1398,9 @@ static void add_qemu_ldst_label(TCGContext *s, bool is_ld, TCGMemOpIdx oi,
   */
  static void tcg_out_qemu_ld_slow_path(TCGContext *s, TCGLabelQemuLdst *l)
  {
@@ -645,7 +657,7 @@ diff -Naur qemu/tcg/i386/tcg-target.inc.c qemu-2.9.0-pyrebox/tcg/i386/tcg-target
      TCGMemOpIdx oi = l->oi;
      TCGMemOp opc = get_memop(oi);
      TCGReg data_reg;
-@@ -1468,6 +1484,10 @@
+@@ -1468,6 +1484,10 @@ static void tcg_out_qemu_ld_slow_path(TCGContext *s, TCGLabelQemuLdst *l)
   */
  static void tcg_out_qemu_st_slow_path(TCGContext *s, TCGLabelQemuLdst *l)
  {
@@ -656,7 +668,7 @@ diff -Naur qemu/tcg/i386/tcg-target.inc.c qemu-2.9.0-pyrebox/tcg/i386/tcg-target
      TCGMemOpIdx oi = l->oi;
      TCGMemOp opc = get_memop(oi);
      TCGMemOp s_bits = opc & MO_SIZE;
-@@ -1673,9 +1693,93 @@
+@@ -1673,9 +1693,93 @@ static void tcg_out_qemu_ld(TCGContext *s, const TCGArg *args, bool is64)
  #if defined(CONFIG_SOFTMMU)
      mem_index = get_mmuidx(oi);
  
@@ -750,7 +762,7 @@ diff -Naur qemu/tcg/i386/tcg-target.inc.c qemu-2.9.0-pyrebox/tcg/i386/tcg-target
      /* TLB Hit.  */
      tcg_out_qemu_ld_direct(s, datalo, datahi, TCG_REG_L1, -1, 0, 0, opc);
  
-@@ -1816,6 +1920,82 @@
+@@ -1816,6 +1920,82 @@ static void tcg_out_qemu_st(TCGContext *s, const TCGArg *args, bool is64)
      tcg_out_tlb_load(s, addrlo, addrhi, mem_index, opc,
                       label_ptr, offsetof(CPUTLBEntry, addr_write));
  
@@ -833,10 +845,11 @@ diff -Naur qemu/tcg/i386/tcg-target.inc.c qemu-2.9.0-pyrebox/tcg/i386/tcg-target
      /* TLB Hit.  */
      tcg_out_qemu_st_direct(s, datalo, datahi, TCG_REG_L1, 0, 0, opc);
  
-diff -Naur qemu/translate-all.c qemu-2.9.0-pyrebox/translate-all.c
---- qemu/translate-all.c	2017-07-10 15:01:43.409509829 +0100
-+++ qemu-2.9.0-pyrebox/translate-all.c	2017-07-10 19:55:58.949875229 +0100
-@@ -1293,7 +1293,6 @@
+diff --git a/translate-all.c b/translate-all.c
+index b3ee876..1fff72f 100644
+--- a/translate-all.c
++++ b/translate-all.c
+@@ -1293,7 +1293,6 @@ TranslationBlock *tb_gen_code(CPUState *cpu,
  
      tcg_ctx.cpu = ENV_GET_CPU(env);
      gen_intermediate_code(env, tb);
@@ -844,7 +857,7 @@ diff -Naur qemu/translate-all.c qemu-2.9.0-pyrebox/translate-all.c
  
      trace_translate_block(tb, tb->pc, tb->tc_ptr);
  
-@@ -1321,6 +1320,9 @@
+@@ -1321,6 +1320,9 @@ TranslationBlock *tb_gen_code(CPUState *cpu,
         that should be required is to flush the TBs, allocate a new TB,
         re-initialize it per above, and re-do the actual code generation.  */
      gen_code_size = tcg_gen_code(&tcg_ctx, tb);
@@ -854,10 +867,11 @@ diff -Naur qemu/translate-all.c qemu-2.9.0-pyrebox/translate-all.c
      if (unlikely(gen_code_size < 0)) {
          goto buffer_overflow;
      }
-diff -Naur qemu/vl.c qemu-2.9.0-pyrebox/vl.c
---- qemu/vl.c	2017-07-10 15:01:43.421509830 +0100
-+++ qemu-2.9.0-pyrebox/vl.c	2017-07-10 19:55:58.949875229 +0100
-@@ -130,6 +130,8 @@
+diff --git a/vl.c b/vl.c
+index 0b4ed52..dbb5245 100644
+--- a/vl.c
++++ b/vl.c
+@@ -130,6 +130,8 @@ int main(int argc, char **argv)
  #include "qapi/qmp/qerror.h"
  #include "sysemu/iothread.h"
  
@@ -866,11 +880,13 @@ diff -Naur qemu/vl.c qemu-2.9.0-pyrebox/vl.c
  #define MAX_VIRTIO_CONSOLES 1
  #define MAX_SCLP_CONSOLES 1
  
-@@ -2941,6 +2943,7 @@
+@@ -2941,6 +2943,9 @@ static int qemu_read_default_config_file(void)
  
  int main(int argc, char **argv, char **envp)
  {
-+    pyrebox_init();
++    if (pyrebox_init()){
++        return 1;
++    }
      int i;
      int snapshot, linux_boot;
      const char *initrd_filename;

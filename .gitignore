@@ -10,3 +10,4 @@ docs/build
 /volatility
 pyrebox-i386
 pyrebox-x86_64
+pyrebox_venv
