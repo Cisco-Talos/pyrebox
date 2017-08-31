@@ -5,7 +5,7 @@ Building PyREBox
 
   * For Debian based distributions: 
       
-    ``apt-get install build-essential zlib1g-dev pkg-config libglib2.0-dev binutils-dev libboost-all-dev autoconf libtool libssl-dev libpixman-1-dev libpython-dev python-pip``
+    ``apt-get install build-essential zlib1g-dev pkg-config libglib2.0-dev binutils-dev libboost-all-dev autoconf libtool libssl-dev libpixman-1-dev libpython-dev python-pip virtualenv python-capstone``
 
   * Required python packages (see the next paragraph for installation instructions):
       
