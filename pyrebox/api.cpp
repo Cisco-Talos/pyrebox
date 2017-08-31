@@ -431,7 +431,7 @@ PyObject* va_to_pa(PyObject *dummy, PyObject *args)
     if (PyArg_ParseTuple(args, "II",&pgd, &addr)){
         result = Py_BuildValue("I",qemu_virtual_to_physical_with_pgd(pgd,addr));
 #elif TARGET_LONG_SIZE == 8
-    if (PyArg_ParseTuple(args, "K",&pgd, &addr)){
+    if (PyArg_ParseTuple(args, "KK",&pgd, &addr)){
         result = Py_BuildValue("K",qemu_virtual_to_physical_with_pgd(pgd,addr));
 #else
 #error TARGET_LONG_SIZE undefined
