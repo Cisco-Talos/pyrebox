@@ -653,8 +653,8 @@ class ShellMagics(Magics):
                 t.add_row([pname,
                            running_str,
                            "*" if api.is_monitored_process(pgd) else "",
-                           "%8x" % pid,
-                           "%08x" % pgd])
+                           "%016x" % pid,
+                           "%016x" % pgd])
         pp_print(str(t) + "\n")
 
     @line_magic
@@ -675,7 +675,7 @@ class ShellMagics(Magics):
             t.align["Base"] = "r"
             t.align["Size"] = "r"
             for m in api.get_module_list(pgd):
-                t.add_row([m["name"], "%08x" % m["base"], "%08x" % m["size"]])
+                t.add_row([m["name"], "%016x" % m["base"], "%016x" % m["size"]])
             pp_print(str(t) + "\n")
         else:
             pp_warning(
@@ -749,7 +749,7 @@ class ShellMagics(Magics):
         t = PrettyTable(["Module", "Function", "Address"])
         t.align["Address"] = "r"
         for sym in self.find_syms(param):
-            t.add_row([sym["mod"], sym["name"], "%08x" % (sym["addr"] if sym["mod"].lower(
+            t.add_row([sym["mod"], sym["name"], "%016x" % (sym["addr"] if sym["mod"].lower(
             ) not in mods else sym["addr"] + mods[sym["mod"].lower()])])
         pp_print(str(t) + "\n")
 
@@ -773,7 +773,7 @@ class ShellMagics(Magics):
                 "===> %s:%s (-0x%x)\n" %
                 (nearest_high[0], nearest_high[1], (nearest_high[2] - addr)))
         if nearest_low is None and nearest_high is None:
-            pp_print("No symbols found near addr 0x%08x\n" % (addr))
+            pp_print("No symbols found near addr 0x%016x\n" % (addr))
 
     # ===================================================== Memory/Reg read/wri
 
@@ -819,7 +819,7 @@ class ShellMagics(Magics):
                     pp_warning(reg + "\n")
             else:
                 cpu = api.r_cpu(self.cpu_index)
-                pp_print("CPU: %d %s:   %16x\n" %
+                pp_print("CPU: %d %s:   %016x\n" %
                          (self.cpu_index, found[0], getattr(cpu, found[0])))
 
     @line_magic
@@ -903,7 +903,7 @@ class ShellMagics(Magics):
             return
         size = 4
         val = api.r_ioport(addr, size)
-        pp_print("Port [0x%04x] = 0x%08x" % (addr, val))
+        pp_print("Port [0x%04x] = 0x%016x" % (addr, val))
 
     @line_magic
     def iowb(self, line):
@@ -972,7 +972,7 @@ class ShellMagics(Magics):
         val = struct.unpack("<I", buf)[0]
 
         api.w_ioport(addr, size, val)
-        pp_print("Port [0x%04x] = 0x%08x" % (addr, val))
+        pp_print("Port [0x%04x] = 0x%016x" % (addr, val))
 
     @line_magic
     def dd(self, line):
@@ -1262,7 +1262,7 @@ class ShellMagics(Magics):
 
         for item in found.values():
             pp_print(
-                "%s0x%08x: %s %s\n" %
+                "%s0x%016x: %s %s\n" %
                 ("p" if physical else "",
                  item.pos,
                  "[HOST]" if item.is_host else "",
@@ -1316,7 +1316,7 @@ class ShellMagics(Magics):
                 m = re.search(pattern, block)
         for entry in found:
             pp_print(
-                "Pattern found: %s0x%08x\n" %
+                "Pattern found: %s0x%016x\n" %
                 ("p" if physical else "", entry))
 
     # ===================================================== Breakpoints =======
@@ -1453,9 +1453,9 @@ class ShellMagics(Magics):
                                          (bp.get_addr() - nearest_low[2]))
             addr_txt = ""
             if bp.get_size <= 1:
-                addr_txt = "%08x" % bp.get_addr()
+                addr_txt = "%016x" % bp.get_addr()
             else:
-                addr_txt = "%08x:%x" % (bp.get_addr(), bp.get_size())
+                addr_txt = "%016x:%x" % (bp.get_addr(), bp.get_size())
             t.add_row([str(bp_nb), addr_txt, procname, str(bp.enabled()), sym])
         pp_print(str(t) + "\n")
 
@@ -1515,6 +1515,7 @@ class ShellMagics(Magics):
                 pp_warning("Please, specify breakpoint number\n")
 
     # ===================================================== Misc commands  ====
+
     @line_magic
     def savevm(self, line):
         '''

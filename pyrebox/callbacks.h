@@ -27,6 +27,8 @@
 #define INV_ADDR -1
 #define INV_PGD -1
 
+#define MAX_INTERNAL_CALLBACKS 16
+
 #ifdef __cplusplus
 extern "C" {
 #endif//__cplusplus
@@ -220,6 +222,20 @@ void* get_trigger_var(callback_handle_t callback_handle, const char* var);
 void InitCallbacks(void);
 void FinalizeCallbacks(void);
 
+typedef unsigned int internal_callback_handle_t;
+
+//Internal callbacks, we can place up to a MAX number of internal callbacks
+//that are delivered as OptimizedInsn callbacks, for VMI related actions.
+typedef struct internal_callback{
+    pyrebox_target_ulong pgd;
+    pyrebox_target_ulong pc;
+    callback_t callback_function; 
+} internal_callbacks_t;
+
+internal_callback_handle_t add_internal_callback(pyrebox_target_ulong pgd, pyrebox_target_ulong pc, callback_t callback_function);
+// We do not implement an internal callback removal, since these callbacks are supposed to be static for VMI related
+// actions, so there is no need to handle callback removal.
+//void remove_internal_callback(internal_callback_handle_t callback_handle);
 
 #ifdef __cplusplus
 };

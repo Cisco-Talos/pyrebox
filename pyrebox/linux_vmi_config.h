@@ -21,29 +21,10 @@
    
 -------------------------------------------------------------------------------*/
 
-#ifndef WINDOWS_VMI_H
-#define WINDOWS_VMI_H
+#ifndef LINUX_VMI_CONFIG_H
+#define LINUX_VMI_CONFIG_H
 
-#define SELFPCR_OFFSET_32 0x1c
-#define SELFPCR_OFFSET_64 0x18
-#define PS_ACTIVE_PROCESS_HEAD_OFFSET 0x50
-#define PROCESS_NAME_SIZE 15
-#define EXIT_TIME_SIZE 0x8
+#define LINUX_PROCESS_NAME_SIZE 15
+#define THREAD_SIZE (8192)
 
-typedef enum eprocess_offset_index{
-    PS_ACTIVE_LIST = 0,
-    PID,
-    PPID,
-    NAME,
-    PGD,
-    EXIT_TIME,
-    LastOffset
-} offset_index_t;
-
-extern unsigned int eprocess_offsets[LimitWindows][LastOffset];
-
-void windows_vmi_init(os_index_t os_index);
-void windows_vmi_tlb_callback(pyrebox_target_ulong pgd, os_index_t os_index);
-void windows_vmi_context_change_callback(pyrebox_target_ulong old_pgd,pyrebox_target_ulong new_pgd, os_index_t os_index);
-
-#endif //WINDOWS_VMI_H
+#endif //LINUX_VMI_CONFIG_H

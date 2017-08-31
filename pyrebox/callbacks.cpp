@@ -45,6 +45,10 @@ extern "C" {
 //Handle counter. Starts at 1. 0 is the invalid handle
 callback_handle_t callback_handle_counter = 1;
 
+//Array of internal callbacks
+internal_callbacks_t internal_callbacks[MAX_INTERNAL_CALLBACKS];
+internal_callback_handle_t current_internal_callback_handle = 0;
+
 //CallbackManager class initialization 
 
 //Reference to callback manager
@@ -52,6 +56,11 @@ CallbackManager* cb_manager = 0;
 
 void InitCallbacks(){
     cb_manager = new CallbackManager();
+    for (int i = 0; i < MAX_INTERNAL_CALLBACKS; ++i){
+        internal_callbacks[i] = {.pgd = 0,
+                                 .pc = 0,
+                                 .callback_function = 0};
+    }
 }
 
 void FinalizeCallbacks(){
@@ -125,6 +134,21 @@ callback_handle_t add_callback(callback_type_t type, module_handle_t module_hand
     else{
         return 0;
     }
+}
+
+//----------------------------------------------------------------------------------
+// Internal callback management functions
+//----------------------------------------------------------------------------------
+
+internal_callback_handle_t add_internal_callback(pyrebox_target_ulong pgd, pyrebox_target_ulong pc, callback_t callback_function){
+    //We already reached the maximum number of internal callbacks
+    if (current_internal_callback_handle < MAX_INTERNAL_CALLBACKS){
+        internal_callbacks[current_internal_callback_handle++] = {.pgd = pgd,
+                                                                .pc = pc,
+                                                                .callback_function = callback_function};
+        return (current_internal_callback_handle-1);
+    }
+    return (internal_callback_handle_t) -1;
 }
 
 //----------------------------------------------------------------------------------
@@ -534,7 +558,22 @@ callback_handle_t CallbackManager::add_callback(callback_type_t type, module_han
 
 void CallbackManager::deliver_callback(callback_type_t type, callback_params_t params){
 
+    if (type == OP_INSN_BEGIN_CB || type == INSN_BEGIN_CB){
+        memory_address_t addr;
+        addr.address = get_cpu_addr(params.insn_begin_params.cpu);
+        addr.pgd = get_pgd(params.insn_begin_params.cpu);
+        //Deliver inmediately the internal callbacks 
+        for (int i = 0; i < MAX_INTERNAL_CALLBACKS && internal_callbacks[i].callback_function != 0; ++i){
+            if (internal_callbacks[i].pc == addr.address && (internal_callbacks[i].pgd == 0 || internal_callbacks[i].pgd == addr.pgd)){
+                internal_callbacks[i].callback_function(params);
+            }
+        }
+    }
     //Lock the python mutex
+    //We use trylock, because in some cases we might have recursive callback delivery
+    //For instance, an instruction callback may trigger a vmi process removal
+    //that may itself trigger a python callback. If it is already locked, we just 
+    //continue
     pthread_mutex_lock(&pyrebox_mutex);
     fflush(stdout);
     fflush(stderr);
@@ -572,6 +611,11 @@ void CallbackManager::deliver_callback(callback_type_t type, callback_params_t p
     //Optimized and general versions are joined together
     else if (type == OP_INSN_BEGIN_CB || type == INSN_BEGIN_CB){
 
+        memory_address_t addr;
+        addr.address = get_cpu_addr(params.insn_begin_params.cpu);
+        addr.pgd = get_pgd(params.insn_begin_params.cpu);
+
+        //Defer the python callbacks
         for (multiset<Callback*,CompareCallbackP>::iterator it = this->callbacks[INSN_BEGIN_CB].begin(); it != this->callbacks[INSN_BEGIN_CB].end(); ++it){
             if ((*it)->get_trigger() == 0 || (*it)->get_trigger()((*it)->get_handle(),params)){
                 callbacks_needed.push_back((*it));
@@ -579,9 +623,6 @@ void CallbackManager::deliver_callback(callback_type_t type, callback_params_t p
         }
 
         OptimizedInsBeginCallback *cb = new OptimizedInsBeginCallback();
-        memory_address_t addr;
-        addr.address = get_cpu_addr(params.insn_begin_params.cpu);
-        addr.pgd = get_pgd(params.insn_begin_params.cpu);
         cb->set_target_address(addr);
         multiset<Callback*,CompareCallbackP>::iterator it = this->callbacks[OP_INSN_BEGIN_CB].find((Callback*)cb);
         delete cb;
@@ -627,8 +668,6 @@ void CallbackManager::deliver_callback(callback_type_t type, callback_params_t p
         fflush(stdout);
         fflush(stderr);
         pthread_mutex_unlock(&pyrebox_mutex);
-
-
         return; 
     }
 
@@ -802,7 +841,6 @@ void CallbackManager::deliver_callback(callback_type_t type, callback_params_t p
     fflush(stdout);
     fflush(stderr);
     pthread_mutex_unlock(&pyrebox_mutex);
-
 }
 
 void CallbackManager::clean_callbacks(){
@@ -955,6 +993,12 @@ int CallbackManager::is_callback_needed(callback_type_t callback_type, pyrebox_t
         //Unified insn begin callback. Only INSN_BEGIN_CB should be queried, anyway
         case OP_INSN_BEGIN_CB:
         case INSN_BEGIN_CB:
+            //First, do a fast check over our internal callbacks
+            for (int i = 0; i < MAX_INTERNAL_CALLBACKS && internal_callbacks[i].callback_function != 0; ++i){
+                if (internal_callbacks[i].pc == address && (internal_callbacks[i].pgd == 0 || internal_callbacks[i].pgd == pgd)){
+                    return 1;
+                }
+            }
             //First, check if we have callbacks for the generic version 
             if (this->callbacks[INSN_BEGIN_CB].size() > 0 && is_monitored_process(pgd)){
                 return 1;

@@ -34,6 +34,7 @@ obj-y += callbacks.o
 obj-y += qemu_glue_callbacks.o
 obj-y += vmi.o
 obj-y += windows_vmi.o
+obj-y += linux_vmi.o
 
 pyrebox.o-libs := $(PYTHON_LIBS)
 
@@ -47,3 +48,4 @@ api.o-cflags := -std=c++11 $(PYTHON_CFLAGS)
 qemu_commands.o-cflags := $(PYTHON_CFLAGS)
 vmi.o-cflags := -std=c++11 $(PYTHON_CFLAGS)
 windows_vmi.o-cflags := -std=c++11 $(PYTHON_CFLAGS)
+linux_vmi.o-cflags := -std=c++11 $(PYTHON_CFLAGS)

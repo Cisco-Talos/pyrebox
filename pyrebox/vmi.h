@@ -29,8 +29,7 @@
 
 //PROC_PRESENT must be the last option, so < PROC_PRESENT means we must not skip it
 #define PROC_NOT_PRESENT 0
-#define PROC_UNDEFINED 1
-#define PROC_PRESENT 2
+#define PROC_PRESENT 1
 
 #ifdef __cplusplus
 
@@ -64,16 +63,20 @@ class Process{
        }
 
        void set_pgd(pyrebox_target_ulong pgd) {this->pgd = pgd;}
+       void set_pid(pyrebox_target_ulong pid) {this->pid = pid;}
        pyrebox_target_ulong get_pgd() const {return this->pgd;}
        pyrebox_target_ulong get_pid() const {return this->pid;}
        pyrebox_target_ulong get_ppid() const {return this->ppid;}
        pyrebox_target_ulong get_kernel_addr() const {return this->kernel_addr;}
        pyrebox_target_ulong get_exittime_offset() const {return this->exittime_offset;}
        char* get_name() const {return (char*) this->name;}
-       bool operator< (const Process& rhs) const {return this->pgd < rhs.pgd;}
+       //Order and uniqueness based on PID, because there can be several processes
+       //with the same address space (case for kernel threads in linux)
+       bool operator< (const Process& rhs) const {return (this->pid < rhs.pid);}
 };
 
 extern std::set<Process> processes;
+extern std::set<pyrebox_target_ulong> pgds_in_list;
 
 #endif//__cplusplus
 
@@ -117,8 +120,8 @@ typedef enum os_index{
     WinXPSP2x86,
     WinXPSP3x86,
     LimitWindows,
-    Linux32,
-    Linux64,
+    Linuxx86,
+    Linuxx64,
     OsX32,
     OsX64,
     LastIndex
@@ -132,8 +135,12 @@ void vmi_tlb_callback(pyrebox_target_ulong new_pgd);
 void vmi_context_change(pyrebox_target_ulong old_pgd,pyrebox_target_ulong new_pgd);
 void vmi_init(const char* prof);
 void vmi_add_process(pyrebox_target_ulong pgd, pyrebox_target_ulong pid, pyrebox_target_ulong ppid, pyrebox_target_ulong kernel_addr, pyrebox_target_ulong exittime_offset, char* name);
-void vmi_remove_process(pyrebox_target_ulong pgd);
-int is_process_in_list(pyrebox_target_ulong pgd);
+void vmi_remove_process(pyrebox_target_ulong pid);
+int is_process_pgd_in_list(pyrebox_target_ulong pgd);
+int is_process_pid_in_list(pyrebox_target_ulong pid);
+void vmi_set_process_pid_present(pyrebox_target_ulong pid);
+void vmi_reset_process_present(void);
+void vmi_remove_not_present_processes(void);
 
 #ifdef __cplusplus
 };

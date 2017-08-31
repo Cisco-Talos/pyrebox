@@ -195,6 +195,7 @@ pyrebox_target_ulong get_pgd(qemu_cpu_opaque_t cpu_opaque);
 pyrebox_target_ulong get_cpu_addr(qemu_cpu_opaque_t cpu_opaque);
 pyrebox_target_ulong get_tb_addr(qemu_tb_opaque_t tb_opaque);
 pyrebox_target_ulong get_tb_size(qemu_tb_opaque_t tb_opaque);
+pyrebox_target_ulong get_stack_pointer(qemu_tb_opaque_t tb_opaque);
 #if defined(TARGET_I386) || defined(TARGET_X86_64)
 pyrebox_target_ulong get_gs_base(qemu_cpu_opaque_t cpu_opaque);
 pyrebox_target_ulong get_fs_base(qemu_cpu_opaque_t cpu_opaque);
@@ -217,9 +218,5 @@ void pyrebox_load_vm(char* name);
 uint64_t connection_write_memory(uint64_t user_paddr, void *buf, uint64_t user_len);
 uint64_t connection_read_memory(uint64_t user_paddr, char *buf, uint64_t user_len);
 uint64_t get_memory_size(void);
-
-void pyrebox_mutex_lock_iothread(void);
-void pyrebox_mutex_unlock_iothread(void);
-int pyrebox_mutex_iothread_locked(void);
 
 #endif

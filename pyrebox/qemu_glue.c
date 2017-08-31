@@ -724,6 +724,17 @@ pyrebox_target_ulong get_pgd(qemu_cpu_opaque_t cpu_opaque){
 #endif
 }
 
+pyrebox_target_ulong get_stack_pointer(qemu_cpu_opaque_t cpu_opaque){
+#if defined(TARGET_I386) || defined(TARGET_X86_64)
+    CPUX86State* env = &(X86_CPU((CPUState*)cpu_opaque)->env);
+    return (pyrebox_target_ulong) env->regs[R_ESP];
+#elif defined(TARGET_AARCH64)
+#error "Architecture not supported yet"
+#elif defined(TARGET_ARM) && !defined(TARGET_AARCH64)
+#error "Architecture not supported yet"
+#endif
+}
+
 #if defined(TARGET_I386) || defined(TARGET_X86_64)
 pyrebox_target_ulong get_fs_base(qemu_cpu_opaque_t cpu_opaque){
     CPUX86State* env = &(X86_CPU((CPUState*)cpu_opaque)->env);
@@ -922,18 +933,3 @@ uint64_t get_memory_size(void)
     return 0;
 }
 /* End of - Extracted from Panda: memory-access.c. See third_party/panda/ */
-
-void pyrebox_mutex_lock_iothread(void){
-    qemu_mutex_lock_iothread();
-}
-void pyrebox_mutex_unlock_iothread(void){
-    qemu_mutex_unlock_iothread();
-}
-int pyrebox_mutex_iothread_locked(void){
-    if (qemu_mutex_iothread_locked()){
-        return 1;
-    } else {
-        return 0;
-    }
-}
-
