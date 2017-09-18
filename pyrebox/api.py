@@ -542,6 +542,14 @@ def sym_to_va(pgd, mod_name, func_name):
         :rtype: str
     """
     import vmi
+    #First, check if the process exists
+    process_found = False
+    for proc in get_process_list():
+        if pgd == proc["pgd"]:
+            process_found = True
+            break
+    if not process_found:
+        raise ValueError("Process with PGD %x not found" % pgd)
     mod_name = mod_name.lower()
     func_name = func_name.lower()
     for proc_pid, proc_pgd in vmi.modules:
@@ -552,8 +560,7 @@ def sym_to_va(pgd, mod_name, func_name):
                     for ordinal, symbol_offset, name in syms:
                         if func_name == name.lower():
                             return (module.get_base() + symbol_offset)
-        else:
-            raise ValueError("Process with PGD %x not found" % pgd)
+    #Finally, return None if the symbol is not found
     return None
 
 
@@ -570,6 +577,15 @@ def va_to_sym(pgd, addr):
         :rtype: tuple
     """
     import vmi
+    #First, check if the process exists
+    process_found = False
+    for proc in get_process_list():
+        if pgd == proc["pgd"]:
+            process_found = True
+            break
+    if not process_found:
+        raise ValueError("Process with PGD %x not found" % pgd)
+
     for proc_pid, proc_pgd in vmi.modules:
         if proc_pgd == pgd:
             for module in vmi.modules[proc_pid, proc_pgd].values():
@@ -579,9 +595,7 @@ def va_to_sym(pgd, addr):
                     for (ordinal, symbol_offset, name) in syms:
                         if offset == symbol_offset:
                             return (module.get_name(), name)
-        else:
-            raise ValueError("Process with PGD %x not found" % pgd)
-
+    #Finally, return None if the symbol is not found
     return None
 
 # ================================================== CLASSES  =============
