@@ -512,16 +512,19 @@ PyObject* py_get_num_cpus(PyObject *dummy, PyObject *args){
 PyObject* is_kernel_running(PyObject *dummy, PyObject *args){
     int cpu_index;
     if (PyArg_ParseTuple(args, "i", &cpu_index)){
-        if (qemu_is_kernel_running(cpu_index)){
-            Py_INCREF(Py_True);
-            return Py_True;
-        } else{
-            Py_INCREF(Py_False);
-            return Py_False;
+        int result = qemu_is_kernel_running(cpu_index);
+        switch(result){
+            case 0:
+                Py_INCREF(Py_False);
+                return Py_False;
+            case 1:
+                Py_INCREF(Py_True);
+                return Py_True;
+            case -1:
+                PyErr_SetString(PyExc_ValueError, "Incorrect cpu index specified");
+                return 0;
         }
-    }
-    else
-    {
+    } else {
         PyErr_SetString(PyExc_ValueError, "Incorrect function parameters: cpu_index");
     }
     return 0;

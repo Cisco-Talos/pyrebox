@@ -201,5 +201,6 @@ def init(platform, root_path, volatility_path):
         traceback.print_exc()
         raise e
 
+
 if __name__ == "__main__":
     pp_debug("\n[*] Loading python component initialization script\n")

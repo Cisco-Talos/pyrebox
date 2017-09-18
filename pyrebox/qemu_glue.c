@@ -749,10 +749,17 @@ int get_qemu_cpu_protected_mode(qemu_cpu_opaque_t cpu_opaque){
     CPUX86State* env = &(X86_CPU((CPUState*)cpu_opaque)->env);
     return (env->cr[0] & 0x1);
 };
+
+//Returns 0 if not running in kernel mode, 1 if running in kernel mode,
+//-1 if the cpu index is incorrect
 int qemu_is_kernel_running(int cpu_index){
     qemu_cpu_opaque_t cpu = get_qemu_cpu(cpu_index);
-    CPUX86State* env = &(X86_CPU((CPUState*)cpu)->env);
-    return((env->hflags & HF_CPL_MASK) == 0);
+    if(cpu != NULL){
+        CPUX86State* env = &(X86_CPU((CPUState*)cpu)->env);
+        return((env->hflags & HF_CPL_MASK) == 0);
+    } else {
+        return -1;
+    }
 }
 #endif
 

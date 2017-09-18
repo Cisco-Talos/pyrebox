@@ -22,32 +22,29 @@
 # -------------------------------------------------------------------------
 
 from utils import pp_error
-import traceback
+
 
 def linux_get_offsets():
     from utils import ConfigurationManager as conf_m
     import volatility.obj as obj
-    import volatility.utils as volutils
     import volatility.registry as registry
     try:
-        config = conf_m.vol_conf
         profs = registry.get_plugin_classes(obj.Profile)
         profile = profs[conf_m.conf.vol_profile]()
-        
         init_task_offset = profile.get_symbol("init_task")
         comm_offset = profile.get_obj_offset("task_struct", "comm")
-        pid_offset  = profile.get_obj_offset("task_struct", "pid")
-        tasks_offset = profile.get_obj_offset("task_struct","tasks")
-        mm_offset = profile.get_obj_offset("task_struct","mm")
-        pgd_offset = profile.get_obj_offset("mm_struct","pgd")
-        parent_offset = profile.get_obj_offset("task_struct","parent")
-        exit_state_offset = profile.get_obj_offset("task_struct","exit_state")
+        pid_offset = profile.get_obj_offset("task_struct", "pid")
+        tasks_offset = profile.get_obj_offset("task_struct", "tasks")
+        mm_offset = profile.get_obj_offset("task_struct", "mm")
+        pgd_offset = profile.get_obj_offset("mm_struct", "pgd")
+        parent_offset = profile.get_obj_offset("task_struct", "parent")
+        exit_state_offset = profile.get_obj_offset("task_struct", "exit_state")
 
-        #new process
+        # new process
         proc_exec_connector_offset = profile.get_symbol("proc_exec_connector")
-        #new kernel module
+        # new kernel module
         trim_init_extable_offset = profile.get_symbol("trim_init_extable")
-        #process exit
+        # process exit
         proc_exit_connector_offset = profile.get_symbol("proc_exit_connector")
 
         return (long(init_task_offset),
@@ -65,6 +62,7 @@ def linux_get_offsets():
     except Exception as e:
         pp_error("Could not retrieve symbols for profile initialization %s" % str(e))
         return None
+
 
 def linux_init_address_space():
     from utils import ConfigurationManager as conf_m

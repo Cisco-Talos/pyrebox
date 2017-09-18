@@ -49,6 +49,19 @@ import functools
 # functionality such as module/symbol info retrieval
 
 
+def get_num_cpus():
+    """ Returns the number of CPUs on the emulated system
+
+        :return: The number of CPUs on the emulated system
+        :rtype: int
+    """
+    import c_api
+    # If this function call fails, it will raise an exception.
+    # Given that the exception is self explanatory, we just let it propagate
+    # upwards
+    return c_api.get_num_cpus()
+
+
 def r_pa(addr, length):
     """ Read physical address
 
@@ -102,10 +115,13 @@ def r_cpu(cpu_index=0):
     # If this function call fails, it will raise an exception.
     # Given that the exception is self explanatory, we just let it propagate
     # upwards
+    if cpu_index >= get_num_cpus():
+        raise ValueError("Incorrect cpu index specified")
+
     return c_api.r_cpu(cpu_index)
 
 
-def w_pa(addr, buff, length):
+def w_pa(addr, buff, length=None):
     """Write physical address
 
         :param addr: The address to write
@@ -114,14 +130,13 @@ def w_pa(addr, buff, length):
         :param buff: The buffer to write, between 0 and 0x2000 bytes
         :type buffer: str
 
-        :param length: The length to write, between 0 and 0x2000 bytes
-        :type length: int
-
         :return: None
         :rtype: None
     """
     import c_api
-    if len(buff) != length:
+    # The length parameter is not used at this moment,
+    # but is kept to avoid breaking old scripts.
+    if length is not None and len(buff) != length:
         raise ValueError(
             "Length of the buffer does not match the declared length")
     else:
@@ -131,7 +146,7 @@ def w_pa(addr, buff, length):
         return c_api.w_pa(addr, buff)
 
 
-def w_va(pgd, addr, buff, length):
+def w_va(pgd, addr, buff, length=None):
     """Write virtual address
 
         :param pgd: The PGD (address space) to write to.
@@ -143,14 +158,13 @@ def w_va(pgd, addr, buff, length):
         :param buff: The buffer to write, between 0 and 0x2000 bytes
         :type buffer: str
 
-        :param length: The length to write, between 0 and 0x2000 bytes
-        :type length: int
-
         :return: None
         :rtype: None
     """
     import c_api
-    if len(buff) != length:
+    # The length parameter is not used at this moment,
+    # but is kept to avoid breaking old scripts.
+    if length is not None and len(buff) != length:
         raise ValueError(
             "Length of the buffer does not match the declared length")
     else:
@@ -218,6 +232,9 @@ def w_r(cpu_index, regname, val):
     from utils import ConfigurationManager as conf_m
     import c_api
 
+    if cpu_index >= get_num_cpus():
+        raise ValueError("Incorrect cpu index specified")
+
     if conf_m.conf.platform == "i386-softmmu":
         if regname in X86CPU.reg_nums:
             # If this function call fails, it will raise an exception.
@@ -261,6 +278,9 @@ def w_sr(cpu_index, regname, selector, base, limit, flags):
     """
     from utils import ConfigurationManager as conf_m
     import c_api
+
+    if cpu_index >= get_num_cpus():
+        raise ValueError("Incorrect cpu index specified")
 
     if conf_m.conf.platform == "i386-softmmu":
         if regname in X86CPU.reg_nums:
@@ -375,23 +395,12 @@ def get_running_process(cpu_index=0):
     # If this function call fails, it will raise an exception.
     # Given that the exception is self explanatory, we just let it propagate
     # upwards
+    if cpu_index >= get_num_cpus():
+        raise ValueError("Incorrect cpu index specified")
     return c_api.get_running_process(cpu_index)
 
 
-def get_num_cpus():
-    """ Returns the number of CPUs on the emulated system
-
-        :return: The number of CPUs on the emulated system
-        :rtype: int
-    """
-    import c_api
-    # If this function call fails, it will raise an exception.
-    # Given that the exception is self explanatory, we just let it propagate
-    # upwards
-    return c_api.get_num_cpus()
-
-
-def is_kernel_running(cpu_index):
+def is_kernel_running(cpu_index=0):
     """ Returns True if the corresponding CPU is executing in Ring 0
 
         :param cpu_index: CPU index that we want to query. Each CPU might be executing a different address space
@@ -404,6 +413,9 @@ def is_kernel_running(cpu_index):
     # If this function call fails, it will raise an exception.
     # Given that the exception is self explanatory, we just let it propagate
     # upwards
+    if cpu_index >= get_num_cpus():
+        raise ValueError("Incorrect cpu index specified")
+
     return c_api.is_kernel_running(cpu_index)
 
 
@@ -542,7 +554,7 @@ def sym_to_va(pgd, mod_name, func_name):
         :rtype: str
     """
     import vmi
-    #First, check if the process exists
+    # First, check if the process exists
     process_found = False
     for proc in get_process_list():
         if pgd == proc["pgd"]:
@@ -560,7 +572,7 @@ def sym_to_va(pgd, mod_name, func_name):
                     for ordinal, symbol_offset, name in syms:
                         if func_name == name.lower():
                             return (module.get_base() + symbol_offset)
-    #Finally, return None if the symbol is not found
+    # Finally, return None if the symbol is not found
     return None
 
 
@@ -577,7 +589,7 @@ def va_to_sym(pgd, addr):
         :rtype: tuple
     """
     import vmi
-    #First, check if the process exists
+    # First, check if the process exists
     process_found = False
     for proc in get_process_list():
         if pgd == proc["pgd"]:
@@ -595,7 +607,7 @@ def va_to_sym(pgd, addr):
                     for (ordinal, symbol_offset, name) in syms:
                         if offset == symbol_offset:
                             return (module.get_name(), name)
-    #Finally, return None if the symbol is not found
+    # Finally, return None if the symbol is not found
     return None
 
 # ================================================== CLASSES  =============

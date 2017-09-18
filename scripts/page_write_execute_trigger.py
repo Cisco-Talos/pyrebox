@@ -117,5 +117,6 @@ def initialize_callbacks(module_hdl, printer):
     cm.add_callback(CallbackManager.BLOCK_BEGIN_CB, block_exec, name="block_begin")
     pyrebox_print("[*]    Initialized callbacks")
 
+
 if __name__ == "__main__":
     print("[*] Loading python module %s" % (__file__))
