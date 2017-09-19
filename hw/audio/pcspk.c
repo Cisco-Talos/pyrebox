@@ -26,7 +26,7 @@
 #include "hw/hw.h"
 #include "hw/i386/pc.h"
 #include "hw/isa/isa.h"
-#include "hw/audio/audio.h"
+#include "hw/audio/soundhw.h"
 #include "audio/audio.h"
 #include "qemu/timer.h"
 #include "hw/timer/i8254.h"
@@ -223,7 +223,7 @@ static void pcspk_class_initfn(ObjectClass *klass, void *data)
     dc->vmsd = &vmstate_spk;
     dc->props = pcspk_properties;
     /* Reason: realize sets global pcspk_state */
-    dc->cannot_instantiate_with_device_add_yet = true;
+    dc->user_creatable = false;
 }
 
 static const TypeInfo pcspk_info = {

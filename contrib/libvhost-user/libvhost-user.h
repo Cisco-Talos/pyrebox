@@ -17,6 +17,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>
+#include <sys/poll.h>
 #include <linux/vhost.h>
 #include "standard-headers/linux/virtio_ring.h"
 
@@ -192,11 +193,11 @@ typedef struct VuVirtq {
 } VuVirtq;
 
 enum VuWatchCondtion {
-    VU_WATCH_IN = 1 << 0,
-    VU_WATCH_OUT = 1 << 1,
-    VU_WATCH_PRI = 1 << 2,
-    VU_WATCH_ERR = 1 << 3,
-    VU_WATCH_HUP = 1 << 4,
+    VU_WATCH_IN = POLLIN,
+    VU_WATCH_OUT = POLLOUT,
+    VU_WATCH_PRI = POLLPRI,
+    VU_WATCH_ERR = POLLERR,
+    VU_WATCH_HUP = POLLHUP,
 };
 
 typedef void (*vu_panic_cb) (VuDev *dev, const char *err);
@@ -327,13 +328,13 @@ void vu_queue_set_notification(VuDev *dev, VuVirtq *vq, int enable);
 bool vu_queue_enabled(VuDev *dev, VuVirtq *vq);
 
 /**
- * vu_queue_enabled:
+ * vu_queue_empty:
  * @dev: a VuDev context
  * @vq: a VuVirtq queue
  *
- * Returns: whether the queue is empty.
+ * Returns: true if the queue is empty or not ready.
  */
-int vu_queue_empty(VuDev *dev, VuVirtq *vq);
+bool vu_queue_empty(VuDev *dev, VuVirtq *vq);
 
 /**
  * vu_queue_notify:

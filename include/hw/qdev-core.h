@@ -103,29 +103,17 @@ typedef struct DeviceClass {
     Property *props;
 
     /*
-     * Shall we hide this device model from -device / device_add?
+     * Can this device be instantiated with -device / device_add?
      * All devices should support instantiation with device_add, and
      * this flag should not exist.  But we're not there, yet.  Some
      * devices fail to instantiate with cryptic error messages.
      * Others instantiate, but don't work.  Exposing users to such
-     * behavior would be cruel; this flag serves to protect them.  It
-     * should never be set without a comment explaining why it is set.
+     * behavior would be cruel; clearing this flag will protect them.
+     * It should never be cleared without a comment explaining why it
+     * is cleared.
      * TODO remove once we're there
      */
-    bool cannot_instantiate_with_device_add_yet;
-    /*
-     * Does this device model survive object_unref(object_new(TNAME))?
-     * All device models should, and this flag shouldn't exist.  Some
-     * devices crash in object_new(), some crash or hang in
-     * object_unref().  Makes introspecting properties with
-     * qmp_device_list_properties() dangerous.  Bad, because it's used
-     * by -device FOO,help.  This flag serves to protect that code.
-     * It should never be set without a comment explaining why it is
-     * set.
-     * TODO remove once we're there
-     */
-    bool cannot_destroy_with_object_finalize_yet;
-
+    bool user_creatable;
     bool hotpluggable;
 
     /* callbacks */
@@ -233,16 +221,29 @@ struct BusState {
     QLIST_ENTRY(BusState) sibling;
 };
 
+/**
+ * Property:
+ * @set_default: true if the default value should be set from @defval,
+ *    in which case @info->set_default_value must not be NULL
+ *    (if false then no default value is set by the property system
+ *     and the field retains whatever value it was given by instance_init).
+ * @defval: default value for the property. This is used only if @set_default
+ *     is true.
+ */
 struct Property {
     const char   *name;
-    PropertyInfo *info;
+    const PropertyInfo *info;
     ptrdiff_t    offset;
     uint8_t      bitnr;
-    QType        qtype;
-    int64_t      defval;
+    bool         set_default;
+    union {
+        int64_t i;
+        uint64_t u;
+    } defval;
     int          arrayoffset;
-    PropertyInfo *arrayinfo;
+    const PropertyInfo *arrayinfo;
     int          arrayfieldsize;
+    const char   *link_type;
 };
 
 struct PropertyInfo {
@@ -250,6 +251,8 @@ struct PropertyInfo {
     const char *description;
     const char * const *enum_table;
     int (*print)(DeviceState *dev, Property *prop, char *dest, size_t len);
+    void (*set_default_value)(Object *obj, const Property *prop);
+    void (*create)(Object *obj, Property *prop, Error **errp);
     ObjectPropertyAccessor *get;
     ObjectPropertyAccessor *set;
     ObjectPropertyRelease *release;
@@ -386,7 +389,8 @@ Object *qdev_get_machine(void);
 /* FIXME: make this a link<> */
 void qdev_set_parent_bus(DeviceState *dev, BusState *bus);
 
-extern int qdev_hotplug;
+extern bool qdev_hotplug;
+extern bool qdev_hot_removed;
 
 char *qdev_get_dev_path(DeviceState *dev);
 

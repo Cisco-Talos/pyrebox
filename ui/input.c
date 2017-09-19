@@ -1,5 +1,4 @@
 #include "qemu/osdep.h"
-#include "hw/qdev.h"
 #include "sysemu/sysemu.h"
 #include "qapi-types.h"
 #include "qemu/error-report.h"
@@ -41,6 +40,8 @@ static QTAILQ_HEAD(QemuInputEventQueueHead, QemuInputEventQueue) kbd_queue =
     QTAILQ_HEAD_INITIALIZER(kbd_queue);
 static QEMUTimer *kbd_timer;
 static uint32_t kbd_default_delay_ms = 10;
+static uint32_t queue_count;
+static uint32_t queue_limit = 1024;
 
 QemuInputHandlerState *qemu_input_handler_register(DeviceState *dev,
                                                    QemuInputHandler *handler)
@@ -164,6 +165,11 @@ void qmp_input_send_event(bool has_device, const char *device,
     qemu_input_event_sync();
 }
 
+static int qemu_input_transform_invert_abs_value(int value)
+{
+  return (int64_t)INPUT_EVENT_ABS_MAX - value + INPUT_EVENT_ABS_MIN;
+}
+
 static void qemu_input_transform_abs_rotate(InputEvent *evt)
 {
     InputMoveEvent *move = evt->u.abs.data;
@@ -173,16 +179,16 @@ static void qemu_input_transform_abs_rotate(InputEvent *evt)
             move->axis = INPUT_AXIS_Y;
         } else if (move->axis == INPUT_AXIS_Y) {
             move->axis = INPUT_AXIS_X;
-            move->value = INPUT_EVENT_ABS_SIZE - 1 - move->value;
+            move->value = qemu_input_transform_invert_abs_value(move->value);
         }
         break;
     case 180:
-        move->value = INPUT_EVENT_ABS_SIZE - 1 - move->value;
+        move->value = qemu_input_transform_invert_abs_value(move->value);
         break;
     case 270:
         if (move->axis == INPUT_AXIS_X) {
             move->axis = INPUT_AXIS_Y;
-            move->value = INPUT_EVENT_ABS_SIZE - 1 - move->value;
+            move->value = qemu_input_transform_invert_abs_value(move->value);
         } else if (move->axis == INPUT_AXIS_Y) {
             move->axis = INPUT_AXIS_X;
         }
@@ -250,6 +256,7 @@ static void qemu_input_queue_process(void *opaque)
     item = QTAILQ_FIRST(queue);
     g_assert(item->type == QEMU_INPUT_QUEUE_DELAY);
     QTAILQ_REMOVE(queue, item, node);
+    queue_count--;
     g_free(item);
 
     while (!QTAILQ_EMPTY(queue)) {
@@ -268,6 +275,7 @@ static void qemu_input_queue_process(void *opaque)
             break;
         }
         QTAILQ_REMOVE(queue, item, node);
+        queue_count--;
         g_free(item);
     }
 }
@@ -282,6 +290,7 @@ static void qemu_input_queue_delay(struct QemuInputEventQueueHead *queue,
     item->delay_ms = delay_ms;
     item->timer = timer;
     QTAILQ_INSERT_TAIL(queue, item, node);
+    queue_count++;
 
     if (start_timer) {
         timer_mod(item->timer, qemu_clock_get_ms(QEMU_CLOCK_VIRTUAL)
@@ -298,6 +307,7 @@ static void qemu_input_queue_event(struct QemuInputEventQueueHead *queue,
     item->src = src;
     item->evt = evt;
     QTAILQ_INSERT_TAIL(queue, item, node);
+    queue_count++;
 }
 
 static void qemu_input_queue_sync(struct QemuInputEventQueueHead *queue)
@@ -306,6 +316,7 @@ static void qemu_input_queue_sync(struct QemuInputEventQueueHead *queue)
 
     item->type = QEMU_INPUT_QUEUE_SYNC;
     QTAILQ_INSERT_TAIL(queue, item, node);
+    queue_count++;
 }
 
 void qemu_input_event_send_impl(QemuConsole *src, InputEvent *evt)
@@ -381,7 +392,7 @@ void qemu_input_event_send_key(QemuConsole *src, KeyValue *key, bool down)
         qemu_input_event_send(src, evt);
         qemu_input_event_sync();
         qapi_free_InputEvent(evt);
-    } else {
+    } else if (queue_count < queue_limit) {
         qemu_input_queue_event(&kbd_queue, src, evt);
         qemu_input_queue_sync(&kbd_queue);
     }
@@ -405,12 +416,18 @@ void qemu_input_event_send_key_qcode(QemuConsole *src, QKeyCode q, bool down)
 
 void qemu_input_event_send_key_delay(uint32_t delay_ms)
 {
+    if (!runstate_is_running() && !runstate_check(RUN_STATE_SUSPENDED)) {
+        return;
+    }
+
     if (!kbd_timer) {
         kbd_timer = timer_new_ms(QEMU_CLOCK_VIRTUAL, qemu_input_queue_process,
                                  &kbd_queue);
     }
-    qemu_input_queue_delay(&kbd_queue, kbd_timer,
-                           delay_ms ? delay_ms : kbd_default_delay_ms);
+    if (queue_count < queue_limit) {
+        qemu_input_queue_delay(&kbd_queue, kbd_timer,
+                               delay_ms ? delay_ms : kbd_default_delay_ms);
+    }
 }
 
 InputEvent *qemu_input_event_new_btn(InputButton btn, bool down)
@@ -455,12 +472,17 @@ bool qemu_input_is_absolute(void)
     return (s != NULL) && (s->handler->mask & INPUT_EVENT_MASK_ABS);
 }
 
-int qemu_input_scale_axis(int value, int size_in, int size_out)
+int qemu_input_scale_axis(int value,
+                          int min_in, int max_in,
+                          int min_out, int max_out)
 {
-    if (size_in < 2) {
-        return size_out / 2;
+    int64_t range_in = (int64_t)max_in - min_in;
+    int64_t range_out = (int64_t)max_out - min_out;
+
+    if (range_in < 1) {
+        return min_out + range_out / 2;
     }
-    return (int64_t)value * (size_out - 1) / (size_in - 1);
+    return ((int64_t)value - min_in) * range_out / range_in + min_out;
 }
 
 InputEvent *qemu_input_event_new_move(InputEventKind kind,
@@ -484,10 +506,13 @@ void qemu_input_queue_rel(QemuConsole *src, InputAxis axis, int value)
     qapi_free_InputEvent(evt);
 }
 
-void qemu_input_queue_abs(QemuConsole *src, InputAxis axis, int value, int size)
+void qemu_input_queue_abs(QemuConsole *src, InputAxis axis, int value,
+                          int min_in, int max_in)
 {
     InputEvent *evt;
-    int scaled = qemu_input_scale_axis(value, size, INPUT_EVENT_ABS_SIZE);
+    int scaled = qemu_input_scale_axis(value, min_in, max_in,
+                                       INPUT_EVENT_ABS_MIN,
+                                       INPUT_EVENT_ABS_MAX);
     evt = qemu_input_event_new_move(INPUT_EVENT_KIND_ABS, axis, scaled);
     qemu_input_event_send(src, evt);
     qapi_free_InputEvent(evt);

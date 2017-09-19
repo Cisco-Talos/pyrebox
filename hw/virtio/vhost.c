@@ -25,7 +25,7 @@
 #include "exec/address-spaces.h"
 #include "hw/virtio/virtio-bus.h"
 #include "hw/virtio/virtio-access.h"
-#include "migration/migration.h"
+#include "migration/blocker.h"
 #include "sysemu/dma.h"
 
 /* enabled until disconnected backend stabilizes */
@@ -724,8 +724,8 @@ static void vhost_iommu_unmap_notify(IOMMUNotifier *n, IOMMUTLBEntry *iotlb)
     struct vhost_dev *hdev = iommu->hdev;
     hwaddr iova = iotlb->iova + iommu->iommu_offset;
 
-    if (hdev->vhost_ops->vhost_invalidate_device_iotlb(hdev, iova,
-                                                       iotlb->addr_mask + 1)) {
+    if (vhost_backend_invalidate_device_iotlb(hdev, iova,
+                                              iotlb->addr_mask + 1)) {
         error_report("Fail to invalidate device iotlb");
     }
 }
@@ -736,14 +736,20 @@ static void vhost_iommu_region_add(MemoryListener *listener,
     struct vhost_dev *dev = container_of(listener, struct vhost_dev,
                                          iommu_listener);
     struct vhost_iommu *iommu;
+    Int128 end;
 
     if (!memory_region_is_iommu(section->mr)) {
         return;
     }
 
     iommu = g_malloc0(sizeof(*iommu));
-    iommu->n.notify = vhost_iommu_unmap_notify;
-    iommu->n.notifier_flags = IOMMU_NOTIFIER_UNMAP;
+    end = int128_add(int128_make64(section->offset_within_region),
+                     section->size);
+    end = int128_sub(end, int128_one());
+    iommu_notifier_init(&iommu->n, vhost_iommu_unmap_notify,
+                        IOMMU_NOTIFIER_UNMAP,
+                        section->offset_within_region,
+                        int128_get64(end));
     iommu->mr = section->mr;
     iommu->iommu_offset = section->offset_within_address_space -
                           section->offset_within_region;
@@ -765,7 +771,8 @@ static void vhost_iommu_region_del(MemoryListener *listener,
     }
 
     QLIST_FOREACH(iommu, &dev->iommu_list, iommu_next) {
-        if (iommu->mr == section->mr) {
+        if (iommu->mr == section->mr &&
+            iommu->n.start == section->offset_within_region) {
             memory_region_unregister_iommu_notifier(iommu->mr,
                                                     &iommu->n);
             QLIST_REMOVE(iommu, iommu_next);
@@ -964,18 +971,20 @@ static int vhost_memory_region_lookup(struct vhost_dev *hdev,
     return -EFAULT;
 }
 
-void vhost_device_iotlb_miss(struct vhost_dev *dev, uint64_t iova, int write)
+int vhost_device_iotlb_miss(struct vhost_dev *dev, uint64_t iova, int write)
 {
     IOMMUTLBEntry iotlb;
     uint64_t uaddr, len;
+    int ret = -EFAULT;
 
     rcu_read_lock();
 
     iotlb = address_space_get_iotlb_entry(dev->vdev->dma_as,
                                           iova, write);
     if (iotlb.target_as != NULL) {
-        if (vhost_memory_region_lookup(dev, iotlb.translated_addr,
-                                       &uaddr, &len)) {
+        ret = vhost_memory_region_lookup(dev, iotlb.translated_addr,
+                                         &uaddr, &len);
+        if (ret) {
             error_report("Fail to lookup the translated address "
                          "%"PRIx64, iotlb.translated_addr);
             goto out;
@@ -984,14 +993,17 @@ void vhost_device_iotlb_miss(struct vhost_dev *dev, uint64_t iova, int write)
         len = MIN(iotlb.addr_mask + 1, len);
         iova = iova & ~iotlb.addr_mask;
 
-        if (dev->vhost_ops->vhost_update_device_iotlb(dev, iova, uaddr,
-                                                      len, iotlb.perm)) {
+        ret = vhost_backend_update_device_iotlb(dev, iova, uaddr,
+                                                len, iotlb.perm);
+        if (ret) {
             error_report("Fail to update device iotlb");
             goto out;
         }
     }
 out:
     rcu_read_unlock();
+
+    return ret;
 }
 
 static int vhost_virtqueue_start(struct vhost_dev *dev,

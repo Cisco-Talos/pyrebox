@@ -284,6 +284,19 @@ void qemu_anon_ram_free(void *ptr, size_t size);
 
 #endif
 
+#ifdef _WIN32
+#define HAVE_CHARDEV_SERIAL 1
+#elif defined(__linux__) || defined(__sun__) || defined(__FreeBSD__)    \
+    || defined(__NetBSD__) || defined(__OpenBSD__) || defined(__DragonFly__) \
+    || defined(__GLIBC__)
+#define HAVE_CHARDEV_SERIAL 1
+#endif
+
+#if defined(__linux__) || defined(__FreeBSD__) ||               \
+    defined(__FreeBSD_kernel__) || defined(__DragonFly__)
+#define HAVE_CHARDEV_PARPORT 1
+#endif
+
 #if defined(CONFIG_LINUX)
 #ifndef BUS_MCEERR_AR
 #define BUS_MCEERR_AR 4
@@ -341,6 +354,10 @@ int qemu_close(int fd);
 #ifndef _WIN32
 int qemu_dup(int fd);
 #endif
+int qemu_lock_fd(int fd, int64_t start, int64_t len, bool exclusive);
+int qemu_unlock_fd(int fd, int64_t start, int64_t len);
+int qemu_lock_fd_test(int fd, int64_t start, int64_t len, bool exclusive);
+bool qemu_has_ofd_lock(void);
 
 #if defined(__HAIKU__) && defined(__i386__)
 #define FMT_pid "%ld"
@@ -441,8 +458,6 @@ void qemu_set_tty_echo(int fd, bool echo);
 void os_mem_prealloc(int fd, char *area, size_t sz, int smp_cpus,
                      Error **errp);
 
-int qemu_read_password(char *buf, int buf_size);
-
 /**
  * qemu_get_pid_name:
  * @pid: pid of a process
@@ -466,5 +481,8 @@ char *qemu_get_pid_name(pid_t pid);
  * or -1 on failure.
  */
 pid_t qemu_fork(Error **errp);
+
+extern int qemu_icache_linesize;
+extern int qemu_dcache_linesize;
 
 #endif
