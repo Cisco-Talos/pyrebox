@@ -1,0 +1,38 @@
+#!/bin/sh
+#
+# Common routines for docker test scripts.
+#
+# Copyright (c) 2016 Red Hat Inc.
+#
+# Authors:
+#  Fam Zheng <famz@redhat.com>
+#
+# This work is licensed under the terms of the GNU GPL, version 2
+# or (at your option) any later version. See the COPYING file in
+# the top-level directory.
+
+BUILD_DIR=/var/tmp/qemu-build
+mkdir $BUILD_DIR
+
+requires()
+{
+    for c in $@; do
+        if ! echo "$FEATURES" | grep -wq -e "$c"; then
+            echo "Prerequisite '$c' not present, skip"
+            exit 0
+        fi
+    done
+}
+
+build_qemu()
+{
+    config_opts="--enable-werror \
+                 ${TARGET_LIST:+--target-list=${TARGET_LIST}} \
+                 --prefix=$PWD/install \
+                 $QEMU_CONFIGURE_OPTS $EXTRA_CONFIGURE_OPTS \
+                 $@"
+    echo "Configure options:"
+    echo $config_opts
+    $QEMU_SRC/configure $config_opts
+    make $MAKEFLAGS
+}
