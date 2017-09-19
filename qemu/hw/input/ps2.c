@@ -31,6 +31,8 @@
 
 #include "trace.h"
 
+#include "pyrebox/qemu_glue_callbacks_target_independent.h"
+
 /* debug PC keyboard */
 //#define DEBUG_KBD
 
@@ -569,6 +571,11 @@ void ps2_queue(void *opaque, int b)
 static void ps2_put_keycode(void *opaque, int keycode)
 {
     PS2KbdState *s = opaque;
+
+    //Pyrebox
+    if (is_keystroke_callback_needed()){
+        qemu_keystroke_callback(keycode);
+    }
 
     trace_ps2_put_keycode(opaque, keycode);
     qemu_system_wakeup_request(QEMU_WAKEUP_REASON_OTHER);

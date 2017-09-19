@@ -24,6 +24,8 @@
 
 #include "tcg-be-ldst.h"
 
+#include "pyrebox/qemu_glue_callbacks_memory.h"
+
 #ifdef CONFIG_DEBUG_TCG
 static const char * const tcg_target_reg_names[TCG_TARGET_NB_REGS] = {
 #if TCG_TARGET_REG_BITS == 64
@@ -147,6 +149,17 @@ static bool have_lzcnt;
 #endif
 
 static tcg_insn_unit *tb_ret_addr;
+
+#if TCG_TARGET_REG_BITS == 64 
+static void load_operation(target_ulong vaddr, target_ulong size, CPUState* cpu) {
+    helper_qemu_mem_read_callback(cpu, vaddr, size);
+}
+static void store_operation(target_ulong vaddr, target_ulong size, CPUState* cpu) {
+    helper_qemu_mem_write_callback(cpu, vaddr, size);
+}
+
+#endif
+
 
 static void patch_reloc(tcg_insn_unit *code_ptr, int type,
                         intptr_t value, intptr_t addend)
@@ -1385,6 +1398,9 @@ static void add_qemu_ldst_label(TCGContext *s, bool is_ld, TCGMemOpIdx oi,
  */
 static void tcg_out_qemu_ld_slow_path(TCGContext *s, TCGLabelQemuLdst *l)
 {
+    //Pyrebox: This slow path has a tail call to the ld helper, 
+    //which contains the memory read instrumentation.
+
     TCGMemOpIdx oi = l->oi;
     TCGMemOp opc = get_memop(oi);
     TCGReg data_reg;
@@ -1468,6 +1484,10 @@ static void tcg_out_qemu_ld_slow_path(TCGContext *s, TCGLabelQemuLdst *l)
  */
 static void tcg_out_qemu_st_slow_path(TCGContext *s, TCGLabelQemuLdst *l)
 {
+
+    //Pyrebox: This slow path has a tail call to the ld helper, 
+    //which contains the memory write instrumentation.
+
     TCGMemOpIdx oi = l->oi;
     TCGMemOp opc = get_memop(oi);
     TCGMemOp s_bits = opc & MO_SIZE;
@@ -1673,8 +1693,92 @@ static void tcg_out_qemu_ld(TCGContext *s, const TCGArg *args, bool is64)
 #if defined(CONFIG_SOFTMMU)
     mem_index = get_mmuidx(oi);
 
+/* Pyrebox: Taken from the doc for the function tcg_out_tlb_load: 
+ *
+ * Second argument register is loaded with the low part of the address.
+   In the TLB hit case, it has been adjusted as indicated by the TLB
+   and so is a host address.  In the TLB miss case, it continues to
+   hold a guest address.
+
+   First argument register is clobbered.  */
+
+
     tcg_out_tlb_load(s, addrlo, addrhi, mem_index, opc,
                      label_ptr, offsetof(CPUTLBEntry, addr_read));
+
+#if TCG_TARGET_REG_BITS == 64 
+
+    CPUX86State* env = &(X86_CPU((CPUState*)s->cpu)->env);
+    if (is_mem_read_callback_needed(env->cr[3])){
+        //For simplicity, only insert Pyrebox callbacks when the target platform (host system)
+        //is a 64 bit platform
+        //--------------------------------- Pyrebox added ----------------------------------
+        //
+        // 1) This path corresponds to TLB HIT.
+        // 2) We saveguard reg0, reg1, and reg2 because we will be using them in our call.
+        
+        //Save the arg 0 -> This one should have been clobbered by tcg_out_tlb_load,
+        //                  but we save it just in case.
+        tcg_out_push(s, tcg_target_call_iarg_regs[0]);
+        //Save the arg 1 -> This one contains the physical address or the guest address in
+        //                  case of TLB miss, it is populated by tcg_out_tlb_load. SAVE IT.
+        tcg_out_push(s, tcg_target_call_iarg_regs[1]);
+        //Push the arg
+        tcg_out_push(s, tcg_target_call_iarg_regs[2]);
+
+        //Saveguard datalo, datahi, addrlo, addrhi
+        tcg_out_push(s, datalo);
+        tcg_out_push(s, datahi);
+        tcg_out_push(s, addrlo);
+        tcg_out_push(s, addrhi);
+
+        //Push 8 bytes to ensure stack alignment to 16 bytes are required by GCC.w
+        tcg_out_push(s, 0);
+
+        //In 64 bit targets, the address is contained in addrlo
+        tcg_out_mov(s, TCG_TYPE_I64,tcg_target_call_iarg_regs[0], addrlo);
+
+        tcg_out_movi(s, TCG_TYPE_I64,tcg_target_call_iarg_regs[2], (tcg_target_long)s->cpu);
+
+        switch (opc & MO_SIZE) {
+          case MO_8:
+            tcg_out_movi(s, TCG_TYPE_I64,tcg_target_call_iarg_regs[1], 1);
+            break;
+          case MO_16:
+            tcg_out_movi(s, TCG_TYPE_I64,tcg_target_call_iarg_regs[1], 2);
+            break;
+          case MO_32:
+            tcg_out_movi(s, TCG_TYPE_I64,tcg_target_call_iarg_regs[1], 4);
+            break;
+          case MO_64:
+            tcg_out_movi(s, TCG_TYPE_I64,tcg_target_call_iarg_regs[1], 8);
+            break;
+          default:
+            tcg_abort();
+        }
+        tcg_out_call(s, (tcg_insn_unit*)load_operation);
+
+        //Undo stack alignment
+        TCGReg tmp = 0;
+        tcg_out_pop(s, tmp);
+
+        //Pop the rest
+        tcg_out_pop(s, addrhi);
+        tcg_out_pop(s, addrlo);
+        tcg_out_pop(s, datahi);
+        tcg_out_pop(s, datalo);
+
+        //Pop the arg
+        tcg_out_pop(s, tcg_target_call_iarg_regs[2]);
+        //Pop the arg 0
+        tcg_out_pop(s, tcg_target_call_iarg_regs[1]);
+        //Pop the arg 1
+        tcg_out_pop(s, tcg_target_call_iarg_regs[0]);
+    }
+
+    //---------------------------------End Pyrebox added ---------------------------------
+#endif
+
 
     /* TLB Hit.  */
     tcg_out_qemu_ld_direct(s, datalo, datahi, TCG_REG_L1, -1, 0, 0, opc);
@@ -1815,6 +1919,82 @@ static void tcg_out_qemu_st(TCGContext *s, const TCGArg *args, bool is64)
 
     tcg_out_tlb_load(s, addrlo, addrhi, mem_index, opc,
                      label_ptr, offsetof(CPUTLBEntry, addr_write));
+
+#if TCG_TARGET_REG_BITS == 64 
+
+    CPUX86State* env = &(X86_CPU((CPUState*)s->cpu)->env);
+    if (is_mem_write_callback_needed(env->cr[3])){
+
+        //For simplicity, only insert Pyrebox callbacks when the target platform (host system)
+        //is a 64 bit platform
+        //--------------------------------- Pyrebox added ----------------------------------
+        //
+        // 1) This path corresponds to TLB HIT.
+        // 2) We saveguard reg0, reg1, and reg2 because we will be using them in our call.
+
+        //Save the arg 0 -> This one should have been clobbered by tcg_out_tlb_load,
+        //                  but we save it just in case.
+        tcg_out_push(s, tcg_target_call_iarg_regs[0]);
+        //Save the arg 1 -> This one contains the physical address or the guest address in
+        //                  case of TLB miss, it is populated by tcg_out_tlb_load. SAVE IT.
+        tcg_out_push(s, tcg_target_call_iarg_regs[1]);
+        //Push the arg
+        tcg_out_push(s, tcg_target_call_iarg_regs[2]);
+
+        //Saveguard datalo, datahi, addrlo, addrhi
+        tcg_out_push(s, datalo);
+        tcg_out_push(s, datahi);
+        tcg_out_push(s, addrlo);
+        tcg_out_push(s, addrhi);
+
+
+        //Stack alignment
+        tcg_out_push(s, 0);
+
+        //In 64 bit targets, the address is contained in addrlo
+        tcg_out_mov(s, TCG_TYPE_I64,tcg_target_call_iarg_regs[0], addrlo);
+
+        tcg_out_movi(s, TCG_TYPE_I64,tcg_target_call_iarg_regs[2], (tcg_target_long)s->cpu);
+
+        switch (opc & MO_SIZE) {
+          case MO_8:
+            tcg_out_movi(s, TCG_TYPE_I64,tcg_target_call_iarg_regs[1], 1);
+            break;
+          case MO_16:
+            tcg_out_movi(s, TCG_TYPE_I64,tcg_target_call_iarg_regs[1], 2);
+            break;
+          case MO_32:
+            tcg_out_movi(s, TCG_TYPE_I64,tcg_target_call_iarg_regs[1], 4);
+            break;
+          case MO_64:
+            tcg_out_movi(s, TCG_TYPE_I64,tcg_target_call_iarg_regs[1], 8);
+            break;
+          default:
+            tcg_abort();
+        }
+        tcg_out_call(s, (tcg_insn_unit*)store_operation);
+
+        //Undo stack alignment
+        TCGReg tmp = 0;
+        tcg_out_pop(s, tmp);
+
+        //Pop the rest
+        tcg_out_pop(s, addrhi);
+        tcg_out_pop(s, addrlo);
+        tcg_out_pop(s, datahi);
+        tcg_out_pop(s, datalo);
+
+        //Pop the arg
+        tcg_out_pop(s, tcg_target_call_iarg_regs[2]);
+        //Pop the arg 0
+        tcg_out_pop(s, tcg_target_call_iarg_regs[1]);
+        //Pop the arg 1
+        tcg_out_pop(s, tcg_target_call_iarg_regs[0]);
+    }
+
+    //---------------------------------End Pyrebox added ---------------------------------
+#endif
+
 
     /* TLB Hit.  */
     tcg_out_qemu_st_direct(s, datalo, datahi, TCG_REG_L1, 0, 0, opc);

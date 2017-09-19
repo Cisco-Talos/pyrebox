@@ -130,6 +130,8 @@ int main(int argc, char **argv)
 #include "qapi/qmp/qerror.h"
 #include "sysemu/iothread.h"
 
+#include "pyrebox/pyrebox.h"
+
 #define MAX_VIRTIO_CONSOLES 1
 #define MAX_SCLP_CONSOLES 1
 
@@ -2941,6 +2943,9 @@ static int qemu_read_default_config_file(void)
 
 int main(int argc, char **argv, char **envp)
 {
+    if (pyrebox_init()){
+        return 1;
+    }
     int i;
     int snapshot, linux_boot;
     const char *initrd_filename;

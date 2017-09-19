@@ -1293,7 +1293,6 @@ TranslationBlock *tb_gen_code(CPUState *cpu,
 
     tcg_ctx.cpu = ENV_GET_CPU(env);
     gen_intermediate_code(env, tb);
-    tcg_ctx.cpu = NULL;
 
     trace_translate_block(tb, tb->pc, tb->tc_ptr);
 
@@ -1321,6 +1320,9 @@ TranslationBlock *tb_gen_code(CPUState *cpu,
        that should be required is to flush the TBs, allocate a new TB,
        re-initialize it per above, and re-do the actual code generation.  */
     gen_code_size = tcg_gen_code(&tcg_ctx, tb);
+    //Pyrebox, Null out here, so we have the correct context cpu inside TCG code generation
+    tcg_ctx.cpu = NULL;
+
     if (unlikely(gen_code_size < 0)) {
         goto buffer_overflow;
     }

@@ -1,6 +1,21 @@
 DEF_HELPER_FLAGS_4(cc_compute_all, TCG_CALL_NO_RWG_SE, tl, tl, tl, tl, int)
 DEF_HELPER_FLAGS_4(cc_compute_c, TCG_CALL_NO_RWG_SE, tl, tl, tl, tl, int)
 
+//void qemu_block_begin_callback(CPUState* cpu,TranslationBlock* tb);
+DEF_HELPER_2(qemu_block_begin_callback, void, ptr, ptr)
+//void qemu_op_block_begin_callback(CPUState* cpu,TranslationBlock* tb);
+//DEF_HELPER_2(qemu_op_block_begin_callback, void, ptr, ptr)
+//void qemu_op_insn_begin_callback(CPUState* cpu);
+//DEF_HELPER_1(qemu_op_insn_begin_callback, void, ptr)
+//void qemu_block_end_callback(CPUState* cpu,TranslationBlock* next_tb, target_ulong from);
+DEF_HELPER_4(qemu_block_end_callback, void, ptr,ptr,tl,tl)
+//void qemu_insn_begin_callback(CPUState* cpu);
+DEF_HELPER_1(qemu_insn_begin_callback, void, ptr)
+//void qemu_insn_end_callback(CPUState* cpu);
+DEF_HELPER_1(qemu_insn_end_callback, void, ptr)
+//void qemu_opcode_range_callback(CPUState* cpu, target_ulong from, target_ulong to, uint32_t opcode);
+DEF_HELPER_4(qemu_opcode_range_callback, void, ptr,tl,tl,i32)
+
 DEF_HELPER_3(write_eflags, void, env, tl, i32)
 DEF_HELPER_1(read_eflags, tl, env)
 DEF_HELPER_2(divb_AL, void, env, tl)

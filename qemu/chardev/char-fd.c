@@ -30,6 +30,7 @@
 
 #include "char-fd.h"
 #include "char-io.h"
+#include "pyrebox/pyrebox.h"
 
 /* Called with chr_write_lock held.  */
 static int fd_chr_write(Chardev *chr, const uint8_t *buf, int len)
@@ -41,6 +42,10 @@ static int fd_chr_write(Chardev *chr, const uint8_t *buf, int len)
 
 static gboolean fd_chr_read(QIOChannel *chan, GIOCondition cond, void *opaque)
 {
+
+    //Lock the python mutex
+    pthread_mutex_lock(&pyrebox_mutex);
+
     Chardev *chr = CHARDEV(opaque);
     FDChardev *s = FD_CHARDEV(opaque);
     int len;
@@ -52,6 +57,9 @@ static gboolean fd_chr_read(QIOChannel *chan, GIOCondition cond, void *opaque)
         len = s->max_size;
     }
     if (len == 0) {
+        //Unlock the pyrebox mutex
+        pthread_mutex_unlock(&pyrebox_mutex);
+
         return TRUE;
     }
 
@@ -60,13 +68,22 @@ static gboolean fd_chr_read(QIOChannel *chan, GIOCondition cond, void *opaque)
     if (ret == 0) {
         remove_fd_in_watch(chr, NULL);
         qemu_chr_be_event(chr, CHR_EVENT_CLOSED);
+        //Unlock the pyrebox mutex
+        pthread_mutex_unlock(&pyrebox_mutex);
+
         return FALSE;
     }
     if (ret > 0) {
         qemu_chr_be_write(chr, buf, ret);
     }
 
+    //Unlock the pyrebox mutex
+    pthread_mutex_unlock(&pyrebox_mutex);
+
+
     return TRUE;
+
+
 }
 
 static int fd_chr_read_poll(void *opaque)

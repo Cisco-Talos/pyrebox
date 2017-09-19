@@ -29,6 +29,8 @@
 #include "hw/loader.h"
 #include "sysemu/sysemu.h"
 
+#include "pyrebox/qemu_glue_callbacks_target_independent.h"
+
 /* debug NE2000 card */
 //#define DEBUG_NE2000
 
@@ -247,6 +249,11 @@ ssize_t ne2000_receive(NetClientState *nc, const uint8_t *buf, size_t size_)
     p[3] = total_len >> 8;
     index += 4;
 
+    //Pyrebox: nic_receive
+    if (is_nic_rec_callback_needed()){
+        qemu_nic_rec_callback((unsigned char *)buf, size, index-NE2000_PMEM_START, s->start-NE2000_PMEM_START, s->stop-NE2000_PMEM_START);
+    }
+
     /* write packet data */
     while (size > 0) {
         if (index <= s->stop)
@@ -297,8 +304,14 @@ static void ne2000_ioport_write(void *opaque, uint32_t addr, uint32_t val)
                 /* XXX: next 2 lines are a hack to make netware 3.11 work */
                 if (index >= NE2000_PMEM_END)
                     index -= NE2000_PMEM_SIZE;
+
                 /* fail safe: check range on the transmitted length  */
                 if (index + s->tcnt <= NE2000_PMEM_END) {
+                    //Pyrebox: nic_send
+                    if (is_nic_send_callback_needed()){
+                        qemu_nic_send_callback((unsigned char*)s->mem+index, s->tcnt, index-NE2000_PMEM_START);
+                    }
+
                     qemu_send_packet(qemu_get_queue(s->nic), s->mem + index,
                                      s->tcnt);
                 }

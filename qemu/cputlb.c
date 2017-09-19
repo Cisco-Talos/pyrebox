@@ -33,6 +33,8 @@
 #include "exec/helper-proto.h"
 #include "qemu/atomic.h"
 
+#include "pyrebox/qemu_glue_callbacks_tlb.h"
+
 /* DEBUG defines, enable DEBUG_TLB_LOG to log to the CPU_LOG_MMU target */
 /* #define DEBUG_TLB */
 /* #define DEBUG_TLB_LOG */
@@ -603,6 +605,7 @@ void tlb_set_page_with_attrs(CPUState *cpu, target_ulong vaddr,
                              hwaddr paddr, MemTxAttrs attrs, int prot,
                              int mmu_idx, target_ulong size)
 {
+    qemu_tlb_exec_callback(cpu,vaddr);
     CPUArchState *env = cpu->env_ptr;
     MemoryRegionSection *section;
     unsigned int index;

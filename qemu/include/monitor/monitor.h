@@ -6,6 +6,8 @@
 #include "block/block.h"
 #include "qemu/readline.h"
 
+#include "pyrebox/qemu_commands.h"
+
 extern Monitor *cur_mon;
 
 /* flags for monitor_init */

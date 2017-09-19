@@ -1777,3 +1777,5 @@ ETEXI
 STEXI
 @end table
 ETEXI
+
+#include "pyrebox/qemu_commands_defs.h"

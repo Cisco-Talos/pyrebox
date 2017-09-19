@@ -35,6 +35,7 @@
 #endif
 #include "sysemu/cpus.h"
 #include "sysemu/replay.h"
+#include "pyrebox/qemu_glue_callbacks.h"
 
 /* -icount align implementation. */
 
@@ -670,6 +671,13 @@ int cpu_exec(CPUState *cpu)
         int tb_exit = 0;
 
         while (!cpu_handle_interrupt(cpu, &last_tb)) {
+            //Pyrebox: update the cpu which is executing
+            notify_cpu_executing(cpu);
+            //Pyrebox: perform flush if necessary
+            if (is_tb_flush_needed()){
+                tb_flush(cpu);
+            }
+
             TranslationBlock *tb = tb_find(cpu, last_tb, tb_exit);
             cpu_loop_exec_tb(cpu, tb, &last_tb, &tb_exit);
             /* Try to align the host and virtual clocks
