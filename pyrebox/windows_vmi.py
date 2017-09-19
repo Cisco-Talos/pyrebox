@@ -220,7 +220,7 @@ def windows_kdbgscan_fast(dtb):
         except BaseException:
             # Return silently
             conf_m.addr_space = None
-            return 0
+            return 0L
         conf_m.addr_space = addr_space
 
         if obj.VolMagic(addr_space).KPCR.value:
@@ -229,13 +229,13 @@ def windows_kdbgscan_fast(dtb):
             kdbg = kpcr.get_kdbg()
             if kdbg.is_valid():
                 last_kdbg = kdbg.obj_offset
-                return last_kdbg
+                return long(last_kdbg)
 
         kdbg = obj.VolMagic(addr_space).KDBG.v()
 
         if kdbg.is_valid():
             last_kdbg = kdbg.obj_offset
-            return last_kdbg
+            return long(last_kdbg)
 
         # skip the KPCR backup method for x64
         memmode = addr_space.profile.metadata.get('memory_model', '32bit')
@@ -256,7 +256,7 @@ def windows_kdbgscan_fast(dtb):
 
                 if kdbg.is_valid():
                     last_kdbg = kdbg.obj_offset
-                    return last_kdbg
-        return 0
+                    return long(last_kdbg)
+        return 0L
     except BaseException:
         traceback.print_exc()
