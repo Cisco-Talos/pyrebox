@@ -7,6 +7,7 @@ scripts.mem_write_test: False
 scripts.page_write_execute_trigger: False
 scripts.getset_var_example: False
 scripts.bp_range_test: False
+scripts.mem_write_breakpoint_test: False 
 pyrebox_test.test_0_vmi_create_proc: False
 pyrebox_test.test_1_block_begin: False
 pyrebox_test.test_2_opt_block_begin: False

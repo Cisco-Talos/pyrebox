@@ -68,7 +68,7 @@ def r_pa(addr, length):
         :param addr: The address to read
         :type addr: int
 
-        :param length: The length to read, between 0 and 0x2000 bytes
+        :param length: The length to read
         :type length: int
 
         :return: The read content
@@ -78,7 +78,13 @@ def r_pa(addr, length):
     # If this function call fails, it will raise an exception.
     # Given that the exception is self explanatory, we just let it propagate
     # upwards
-    return c_api.r_pa(addr, length)
+    offset = addr
+    ret_buffer = ""
+    while offset < (addr + length): 
+        read_length = 0x2000 if (addr + length - offset) > 0x2000 else (addr + length - offset)
+        ret_buffer += c_api.r_pa(offset, read_length)
+        offset += read_length
+    return ret_buffer
 
 
 def r_va(pgd, addr, length):
@@ -90,7 +96,7 @@ def r_va(pgd, addr, length):
         :param addr: The address to read
         :type addr: int
 
-        :param length: The length to read, between 0 and 0x2000 bytes
+        :param length: The length to read
         :type length: int
 
         :return: The read content
@@ -100,8 +106,13 @@ def r_va(pgd, addr, length):
     # If this function call fails, it will raise an exception.
     # Given that the exception is self explanatory, we just let it propagate
     # upwards
-    return c_api.r_va(pgd, addr, length)
-
+    offset = addr
+    ret_buffer = ""
+    while offset < (addr + length): 
+        read_length = 0x2000 if (addr + length - offset) > 0x2000 else (addr + length - offset)
+        ret_buffer += c_api.r_va(pgd, offset, read_length)
+        offset += read_length
+    return ret_buffer
 
 def r_cpu(cpu_index=0):
     """Read CPU register values
@@ -127,7 +138,7 @@ def w_pa(addr, buff, length=None):
         :param addr: The address to write
         :type addr: int
 
-        :param buff: The buffer to write, between 0 and 0x2000 bytes
+        :param buff: The buffer to write
         :type buffer: str
 
         :return: None
@@ -143,7 +154,13 @@ def w_pa(addr, buff, length=None):
         # If this function call fails, it will raise an exception.
         # Given that the exception is self explanatory, we just let it
         # propagate upwards
-        return c_api.w_pa(addr, buff)
+        offset = addr
+        length = len(buff)
+        while offset < (addr + length): 
+            write_length = 0x2000 if (addr + length - offset) > 0x2000 else (addr + length - offset)
+            c_api.w_pa(offset, buff[(offset - addr):(offset - addr + write_length)])
+            offset += write_length
+        return None 
 
 
 def w_va(pgd, addr, buff, length=None):
@@ -155,7 +172,7 @@ def w_va(pgd, addr, buff, length=None):
         :param addr: The address to write
         :type addr: int
 
-        :param buff: The buffer to write, between 0 and 0x2000 bytes
+        :param buff: The buffer to write
         :type buffer: str
 
         :return: None
@@ -171,7 +188,13 @@ def w_va(pgd, addr, buff, length=None):
         # If this function call fails, it will raise an exception.
         # Given that the exception is self explanatory, we just let it
         # propagate upwards
-        return c_api.w_va(pgd, addr, buff)
+        offset = addr
+        length = len(buff)
+        while offset < (addr + length): 
+            write_length = 0x2000 if (addr + length - offset) > 0x2000 else (addr + length - offset)
+            c_api.w_va(pgd, offset, buff[(offset - addr):(offset - addr + write_length)])
+            offset += write_length
+        return None 
 
 
 def r_ioport(address, size):
@@ -883,7 +906,7 @@ class BP:
     __cm = CallbackManager(0)
     __bp_num = 0
 
-    def __init__(self, addr, pgd, size=0, typ=0):
+    def __init__(self, addr, pgd, size=0, typ=0, func = None):
         """ Constructor for a BreakPoint
 
             :param addr: The (start) address where we want to put the breakpoint
@@ -898,6 +921,12 @@ class BP:
 
             :param typ: The type of breakpoint: BP.EXECUTION, BP.MEM_READ, BP.MEM_WRITE
             :type typ: int
+
+            :param func: The function that will be called as callback for the breakpoint. The
+                         parameters for the function should be the ones corresponding to the
+                         INSN_BEGIN_CB callback for execution breakpoints, and MEM_READ_CB or
+                         MEM_WRITE_CB for memory read/write breakpoints.
+            :type func: function
 
             :return: An instance of class BP for the inserted breakpoint
             :rtype: BP
@@ -915,7 +944,10 @@ class BP:
             self.size = 1
         else:
             self.size = size
-        self.func = functools.partial(bp_func, self.__bp_repr)
+        if func is not None:
+            self.func = func
+        else:
+            self.func = functools.partial(bp_func, self.__bp_repr)
 
     def __str__(self):
         """ String representation of the breakpoint
