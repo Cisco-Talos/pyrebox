@@ -922,10 +922,11 @@ class BP:
             :param typ: The type of breakpoint: BP.EXECUTION, BP.MEM_READ, BP.MEM_WRITE
             :type typ: int
 
-            :param func: The function that will be called as callback for the breakpoint. The
+            :param func: Optional. The function that will be called as callback for the breakpoint. The
                          parameters for the function should be the ones corresponding to the
                          INSN_BEGIN_CB callback for execution breakpoints, and MEM_READ_CB or
-                         MEM_WRITE_CB for memory read/write breakpoints.
+                         MEM_WRITE_CB for memory read/write breakpoints. If no function is specified,
+                         a shell is started when the breakpoint is hit.
             :type func: function
 
             :return: An instance of class BP for the inserted breakpoint
