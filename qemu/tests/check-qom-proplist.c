@@ -23,6 +23,9 @@
 #include "qapi/error.h"
 #include "qom/object.h"
 #include "qemu/module.h"
+#include "qemu/option.h"
+#include "qemu/config-file.h"
+#include "qom/object_interfaces.h"
 
 
 #define TYPE_DUMMY "qemu-dummy"
@@ -162,6 +165,10 @@ static const TypeInfo dummy_info = {
     .instance_finalize = dummy_finalize,
     .class_size = sizeof(DummyObjectClass),
     .class_init = dummy_class_init,
+    .interfaces = (InterfaceInfo[]) {
+        { TYPE_USER_CREATABLE },
+        { }
+    }
 };
 
 
@@ -320,6 +327,14 @@ static const TypeInfo dummy_backend_info = {
     .class_size = sizeof(DummyBackendClass),
 };
 
+static QemuOptsList qemu_object_opts = {
+    .name = "object",
+    .implied_opt_name = "qom-type",
+    .head = QTAILQ_HEAD_INITIALIZER(qemu_object_opts.head),
+    .desc = {
+        { }
+    },
+};
 
 
 static void test_dummy_createv(void)
@@ -386,6 +401,48 @@ static void test_dummy_createlist(void)
              == OBJECT(dobj));
 
     object_unparent(OBJECT(dobj));
+}
+
+static void test_dummy_createcmdl(void)
+{
+    QemuOpts *opts;
+    DummyObject *dobj;
+    Error *err = NULL;
+    const char *params = TYPE_DUMMY \
+                         ",id=dev0," \
+                         "bv=yes,sv=Hiss hiss hiss,av=platypus";
+
+    qemu_add_opts(&qemu_object_opts);
+    opts = qemu_opts_parse(&qemu_object_opts, params, true, &err);
+    g_assert(err == NULL);
+    g_assert(opts);
+
+    dobj = DUMMY_OBJECT(user_creatable_add_opts(opts, &err));
+    g_assert(err == NULL);
+    g_assert(dobj);
+    g_assert_cmpstr(dobj->sv, ==, "Hiss hiss hiss");
+    g_assert(dobj->bv == true);
+    g_assert(dobj->av == DUMMY_PLATYPUS);
+
+    user_creatable_del("dev0", &err);
+    g_assert(err == NULL);
+    error_free(err);
+
+    object_unref(OBJECT(dobj));
+
+    /*
+     * cmdline-parsing via qemu_opts_parse() results in a QemuOpts entry
+     * corresponding to the Object's ID to be added to the QemuOptsList
+     * for objects. To avoid having this entry conflict with future
+     * Objects using the same ID (which can happen in cases where
+     * qemu_opts_parse() is used to parse the object params, such as
+     * with hmp_object_add() at the time of this comment), we need to
+     * check for this in user_creatable_del() and remove the QemuOpts if
+     * it is present.
+     *
+     * The below check ensures this works as expected.
+     */
+    g_assert_null(qemu_opts_find(&qemu_object_opts, "dev0"));
 }
 
 static void test_dummy_badenum(void)
@@ -513,6 +570,47 @@ static void test_dummy_delchild(void)
     object_unparent(OBJECT(dev));
 }
 
+static void test_qom_partial_path(void)
+{
+    Object *root  = object_get_objects_root();
+    Object *cont1 = container_get(root, "/cont1");
+    Object *obj1  = object_new(TYPE_DUMMY);
+    Object *obj2a = object_new(TYPE_DUMMY);
+    Object *obj2b = object_new(TYPE_DUMMY);
+    bool ambiguous;
+
+    /* Objects created:
+     * /cont1
+     * /cont1/obj1
+     * /cont1/obj2 (obj2a)
+     * /obj2 (obj2b)
+     */
+    object_property_add_child(cont1, "obj1", obj1, &error_abort);
+    object_unref(obj1);
+    object_property_add_child(cont1, "obj2", obj2a, &error_abort);
+    object_unref(obj2a);
+    object_property_add_child(root,  "obj2", obj2b, &error_abort);
+    object_unref(obj2b);
+
+    ambiguous = false;
+    g_assert(!object_resolve_path_type("", TYPE_DUMMY, &ambiguous));
+    g_assert(ambiguous);
+    g_assert(!object_resolve_path_type("", TYPE_DUMMY, NULL));
+
+    ambiguous = false;
+    g_assert(!object_resolve_path("obj2", &ambiguous));
+    g_assert(ambiguous);
+    g_assert(!object_resolve_path("obj2", NULL));
+
+    ambiguous = false;
+    g_assert(object_resolve_path("obj1", &ambiguous) == obj1);
+    g_assert(!ambiguous);
+    g_assert(object_resolve_path("obj1", NULL) == obj1);
+
+    object_unparent(obj2b);
+    object_unparent(cont1);
+}
+
 int main(int argc, char **argv)
 {
     g_test_init(&argc, &argv, NULL);
@@ -525,10 +623,12 @@ int main(int argc, char **argv)
 
     g_test_add_func("/qom/proplist/createlist", test_dummy_createlist);
     g_test_add_func("/qom/proplist/createv", test_dummy_createv);
+    g_test_add_func("/qom/proplist/createcmdline", test_dummy_createcmdl);
     g_test_add_func("/qom/proplist/badenum", test_dummy_badenum);
     g_test_add_func("/qom/proplist/getenum", test_dummy_getenum);
     g_test_add_func("/qom/proplist/iterator", test_dummy_iterator);
     g_test_add_func("/qom/proplist/delchild", test_dummy_delchild);
+    g_test_add_func("/qom/resolve/partial", test_qom_partial_path);
 
     return g_test_run();
 }

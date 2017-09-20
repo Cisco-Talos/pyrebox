@@ -19,8 +19,8 @@
 
 #include "qemu/osdep.h"
 #include "qapi/error.h"
-#include "qemu-common.h"
-#include "migration/migration.h"
+#include "channel.h"
+#include "exec.h"
 #include "io/channel-command.h"
 #include "trace.h"
 
@@ -32,7 +32,7 @@ void exec_start_outgoing_migration(MigrationState *s, const char *command, Error
 
     trace_migration_exec_outgoing(command);
     ioc = QIO_CHANNEL(qio_channel_command_new_spawn(argv,
-                                                    O_WRONLY,
+                                                    O_RDWR,
                                                     errp));
     if (!ioc) {
         return;
@@ -47,7 +47,7 @@ static gboolean exec_accept_incoming_migration(QIOChannel *ioc,
                                                GIOCondition condition,
                                                gpointer opaque)
 {
-    migration_channel_process_incoming(migrate_get_current(), ioc);
+    migration_channel_process_incoming(ioc);
     object_unref(OBJECT(ioc));
     return FALSE; /* unregister */
 }
@@ -59,7 +59,7 @@ void exec_start_incoming_migration(const char *command, Error **errp)
 
     trace_migration_exec_incoming(command);
     ioc = QIO_CHANNEL(qio_channel_command_new_spawn(argv,
-                                                    O_RDONLY,
+                                                    O_RDWR,
                                                     errp));
     if (!ioc) {
         return;

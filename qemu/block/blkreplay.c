@@ -37,9 +37,6 @@ static int blkreplay_open(BlockDriverState *bs, QDict *options, int flags,
 
     ret = 0;
 fail:
-    if (ret < 0) {
-        bdrv_unref_child(bs, bs->file);
-    }
     return ret;
 }
 
@@ -99,10 +96,10 @@ static int coroutine_fn blkreplay_co_pwritev(BlockDriverState *bs,
 }
 
 static int coroutine_fn blkreplay_co_pwrite_zeroes(BlockDriverState *bs,
-    int64_t offset, int count, BdrvRequestFlags flags)
+    int64_t offset, int bytes, BdrvRequestFlags flags)
 {
     uint64_t reqid = blkreplay_next_id();
-    int ret = bdrv_co_pwrite_zeroes(bs->file, offset, count, flags);
+    int ret = bdrv_co_pwrite_zeroes(bs->file, offset, bytes, flags);
     block_request_create(reqid, bs, qemu_coroutine_self());
     qemu_coroutine_yield();
 
@@ -110,10 +107,10 @@ static int coroutine_fn blkreplay_co_pwrite_zeroes(BlockDriverState *bs,
 }
 
 static int coroutine_fn blkreplay_co_pdiscard(BlockDriverState *bs,
-                                              int64_t offset, int count)
+                                              int64_t offset, int bytes)
 {
     uint64_t reqid = blkreplay_next_id();
-    int ret = bdrv_co_pdiscard(bs->file->bs, offset, count);
+    int ret = bdrv_co_pdiscard(bs->file->bs, offset, bytes);
     block_request_create(reqid, bs, qemu_coroutine_self());
     qemu_coroutine_yield();
 

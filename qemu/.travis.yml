@@ -46,6 +46,7 @@ notifications:
 env:
   global:
     - TEST_CMD="make check"
+    - MAKEFLAGS="-j3"
   matrix:
     - CONFIG=""
     - CONFIG="--enable-debug --enable-debug-tcg --enable-trace-backends=log"
@@ -64,7 +65,7 @@ before_install:
 before_script:
   - ./configure ${CONFIG}
 script:
-  - make -j3 && ${TEST_CMD}
+  - make ${MAKEFLAGS} && ${TEST_CMD}
 matrix:
   include:
     # Test with CLang for compile portability
@@ -86,7 +87,7 @@ matrix:
     - env: CONFIG="--enable-trace-backends=ust"
            TEST_CMD=""
       compiler: gcc
-    - env: CONFIG="--with-coroutine=gthread"
+    - env: CONFIG="--disable-tcg"
            TEST_CMD=""
       compiler: gcc
     - env: CONFIG=""
@@ -191,7 +192,7 @@ matrix:
       compiler: none
       env:
         - COMPILER_NAME=gcc CXX=g++-5 CC=gcc-5
-        - CONFIG="--cc=gcc-5 --cxx=g++-5 --disable-pie --disable-linux-user --with-coroutine=gthread"
+        - CONFIG="--cc=gcc-5 --cxx=g++-5 --disable-pie --disable-linux-user"
         - TEST_CMD=""
       before_script:
         - ./configure ${CONFIG} --extra-cflags="-g3 -O0 -fsanitize=thread -fuse-ld=gold" || cat config.log

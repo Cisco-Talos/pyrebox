@@ -1257,7 +1257,7 @@ class ShellMagics(Magics):
             else:
                 pos += block_size
             # If we finished searching, just continue
-            if (last_item.pos + len(last_item)) >= (addr + size):
+            if last_item is None or (last_item.pos + len(last_item)) >= (addr + size):
                 break
 
         for item in found.values():

@@ -282,9 +282,9 @@ void scsi_bus_legacy_handle_cmdline(SCSIBus *bus, bool deprecated)
                 continue;       /* claimed */
             }
             if (!dinfo->is_default) {
-                error_report("warning: bus=%d,unit=%d is deprecated with this"
-                             " machine type",
-                             bus->busnr, unit);
+                warn_report("bus=%d,unit=%d is deprecated with this"
+                            " machine type",
+                            bus->busnr, unit);
             }
         }
         scsi_bus_legacy_add_drive(bus, blk_by_legacy_dinfo(dinfo),
@@ -517,6 +517,11 @@ static int32_t scsi_target_send_command(SCSIRequest *req, uint8_t *buf)
 {
     SCSITargetReq *r = DO_UPCAST(SCSITargetReq, req, req);
 
+    if (req->lun != 0) {
+        scsi_req_build_sense(req, SENSE_CODE(LUN_NOT_SUPPORTED));
+        scsi_req_complete(req, CHECK_CONDITION);
+        return 0;
+    }
     switch (buf[0]) {
     case REPORT_LUNS:
         if (!scsi_target_emulate_report_luns(r)) {
@@ -542,7 +547,7 @@ static int32_t scsi_target_send_command(SCSIRequest *req, uint8_t *buf)
     case TEST_UNIT_READY:
         break;
     default:
-        scsi_req_build_sense(req, SENSE_CODE(LUN_NOT_SUPPORTED));
+        scsi_req_build_sense(req, SENSE_CODE(INVALID_OPCODE));
         scsi_req_complete(req, CHECK_CONDITION);
         return 0;
     illegal_request:

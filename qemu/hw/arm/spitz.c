@@ -848,7 +848,7 @@ static void spitz_lcd_hsync_handler(void *opaque, int line, int level)
 static void spitz_reset(void *opaque, int line, int level)
 {
     if (level) {
-        qemu_system_reset_request();
+        qemu_system_reset_request(SHUTDOWN_CAUSE_GUEST_RESET);
     }
 }
 
@@ -920,7 +920,6 @@ static void spitz_common_init(MachineState *machine,
     sl_flash_register(mpu, (model == spitz) ? FLASH_128M : FLASH_1024M);
 
     memory_region_init_ram(rom, NULL, "spitz.rom", SPITZ_ROM, &error_fatal);
-    vmstate_register_ram_global(rom);
     memory_region_set_readonly(rom, true);
     memory_region_add_subregion(address_space_mem, 0, rom);
 
@@ -1076,7 +1075,7 @@ static void sl_nand_class_init(ObjectClass *klass, void *data)
     dc->vmsd = &vmstate_sl_nand_info;
     dc->props = sl_nand_properties;
     /* Reason: init() method uses drive_get() */
-    dc->cannot_instantiate_with_device_add_yet = true;
+    dc->user_creatable = false;
 }
 
 static const TypeInfo sl_nand_info = {

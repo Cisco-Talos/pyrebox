@@ -34,7 +34,6 @@
 #include "qemu/sockets.h"
 #include "qemu/uri.h"
 #include "qapi-visit.h"
-#include "qapi/qmp/qint.h"
 #include "qapi/qmp/qstring.h"
 #include "qapi/qobject-input-visitor.h"
 #include "qapi/qobject-output-visitor.h"
@@ -205,7 +204,7 @@ static int parse_uri(const char *filename, QDict *options, Error **errp)
         return -EINVAL;
     }
 
-    if (strcmp(uri->scheme, "ssh") != 0) {
+    if (g_strcmp0(uri->scheme, "ssh") != 0) {
         error_setg(errp, "URI scheme must be 'ssh'");
         goto err;
     }
@@ -227,24 +226,23 @@ static int parse_uri(const char *filename, QDict *options, Error **errp)
     }
 
     if(uri->user && strcmp(uri->user, "") != 0) {
-        qdict_put(options, "user", qstring_from_str(uri->user));
+        qdict_put_str(options, "user", uri->user);
     }
 
-    qdict_put(options, "server.host", qstring_from_str(uri->server));
+    qdict_put_str(options, "server.host", uri->server);
 
     port_str = g_strdup_printf("%d", uri->port ?: 22);
-    qdict_put(options, "server.port", qstring_from_str(port_str));
+    qdict_put_str(options, "server.port", port_str);
     g_free(port_str);
 
-    qdict_put(options, "path", qstring_from_str(uri->path));
+    qdict_put_str(options, "path", uri->path);
 
     /* Pick out any query parameters that we understand, and ignore
      * the rest.
      */
     for (i = 0; i < qp->n; ++i) {
         if (strcmp(qp->p[i].name, "host_key_check") == 0) {
-            qdict_put(options, "host_key_check",
-                      qstring_from_str(qp->p[i].value));
+            qdict_put_str(options, "host_key_check", qp->p[i].value);
         }
     }
 
@@ -574,9 +572,8 @@ static bool ssh_process_legacy_socket_options(QDict *output_opts,
     }
 
     if (host) {
-        qdict_put(output_opts, "server.host", qstring_from_str(host));
-        qdict_put(output_opts, "server.port",
-                  qstring_from_str(port ?: stringify(22)));
+        qdict_put_str(output_opts, "server.host", host);
+        qdict_put_str(output_opts, "server.port", port ?: stringify(22));
     }
 
     return true;
@@ -681,7 +678,7 @@ static int connect_to_ssh(BDRVSSHState *s, QDict *options,
     }
 
     /* Open the socket and connect. */
-    s->sock = inet_connect_saddr(s->inet, errp, NULL, NULL);
+    s->sock = inet_connect_saddr(s->inet, NULL, NULL, errp);
     if (s->sock < 0) {
         ret = -EIO;
         goto err;
@@ -891,13 +888,22 @@ static int ssh_has_zero_init(BlockDriverState *bs)
     return has_zero_init;
 }
 
+typedef struct BDRVSSHRestart {
+    BlockDriverState *bs;
+    Coroutine *co;
+} BDRVSSHRestart;
+
 static void restart_coroutine(void *opaque)
 {
-    Coroutine *co = opaque;
+    BDRVSSHRestart *restart = opaque;
+    BlockDriverState *bs = restart->bs;
+    BDRVSSHState *s = bs->opaque;
+    AioContext *ctx = bdrv_get_aio_context(bs);
 
-    DPRINTF("co=%p", co);
+    DPRINTF("co=%p", restart->co);
+    aio_set_fd_handler(ctx, s->sock, false, NULL, NULL, NULL, NULL);
 
-    aio_co_wake(co);
+    aio_co_wake(restart->co);
 }
 
 /* A non-blocking call returned EAGAIN, so yield, ensuring the
@@ -908,7 +914,10 @@ static coroutine_fn void co_yield(BDRVSSHState *s, BlockDriverState *bs)
 {
     int r;
     IOHandler *rd_handler = NULL, *wr_handler = NULL;
-    Coroutine *co = qemu_coroutine_self();
+    BDRVSSHRestart restart = {
+        .bs = bs,
+        .co = qemu_coroutine_self()
+    };
 
     r = libssh2_session_block_directions(s->session);
 
@@ -923,11 +932,9 @@ static coroutine_fn void co_yield(BDRVSSHState *s, BlockDriverState *bs)
             rd_handler, wr_handler);
 
     aio_set_fd_handler(bdrv_get_aio_context(bs), s->sock,
-                       false, rd_handler, wr_handler, NULL, co);
+                       false, rd_handler, wr_handler, NULL, &restart);
     qemu_coroutine_yield();
     DPRINTF("s->sock=%d - back", s->sock);
-    aio_set_fd_handler(bdrv_get_aio_context(bs), s->sock, false,
-                       NULL, NULL, NULL, NULL);
 }
 
 /* SFTP has a function `libssh2_sftp_seek64' which seeks to a position
@@ -1117,8 +1124,8 @@ static coroutine_fn int ssh_co_writev(BlockDriverState *bs,
 static void unsafe_flush_warning(BDRVSSHState *s, const char *what)
 {
     if (!s->unsafe_flush_warning) {
-        error_report("warning: ssh server %s does not support fsync",
-                     s->inet->host);
+        warn_report("ssh server %s does not support fsync",
+                    s->inet->host);
         if (what) {
             error_report("to support fsync, you need %s", what);
         }

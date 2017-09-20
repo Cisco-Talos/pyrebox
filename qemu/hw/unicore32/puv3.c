@@ -80,7 +80,6 @@ static void puv3_board_init(CPUUniCore32State *env, ram_addr_t ram_size)
     /* SDRAM at address zero.  */
     memory_region_init_ram(ram_memory, NULL, "puv3.ram", ram_size,
                            &error_fatal);
-    vmstate_register_ram_global(ram_memory);
     memory_region_add_subregion(get_system_memory(), 0, ram_memory);
 }
 
@@ -93,7 +92,10 @@ static void puv3_load_kernel(const char *kernel_filename)
     if (kernel_filename == NULL && qtest_enabled()) {
         return;
     }
-    assert(kernel_filename != NULL);
+    if (kernel_filename == NULL) {
+        error_report("kernel parameter cannot be empty");
+        exit(1);
+    }
 
     /* only zImage format supported */
     size = load_image_targphys(kernel_filename, KERNEL_LOAD_ADDR,

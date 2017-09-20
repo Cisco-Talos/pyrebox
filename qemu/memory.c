@@ -30,6 +30,9 @@
 #include "exec/ram_addr.h"
 #include "sysemu/kvm.h"
 #include "sysemu/sysemu.h"
+#include "hw/misc/mmio_interface.h"
+#include "hw/qdev-properties.h"
+#include "migration/vmstate.h"
 
 //#define DEBUG_UNASSIGNED
 
@@ -975,12 +978,11 @@ static char *memory_region_escape_name(const char *name)
     return escaped;
 }
 
-void memory_region_init(MemoryRegion *mr,
-                        Object *owner,
-                        const char *name,
-                        uint64_t size)
+static void memory_region_do_init(MemoryRegion *mr,
+                                  Object *owner,
+                                  const char *name,
+                                  uint64_t size)
 {
-    object_initialize(mr, sizeof(*mr), TYPE_MEMORY_REGION);
     mr->size = int128_make64(size);
     if (size == UINT64_MAX) {
         mr->size = int128_2_64();
@@ -1002,6 +1004,15 @@ void memory_region_init(MemoryRegion *mr,
         g_free(name_array);
         g_free(escaped_name);
     }
+}
+
+void memory_region_init(MemoryRegion *mr,
+                        Object *owner,
+                        const char *name,
+                        uint64_t size)
+{
+    object_initialize(mr, sizeof(*mr), TYPE_MEMORY_REGION);
+    memory_region_do_init(mr, owner, name, size);
 }
 
 static void memory_region_get_addr(Object *obj, Visitor *v, const char *name,
@@ -1088,6 +1099,13 @@ static void memory_region_initfn(Object *obj)
                         memory_region_get_size,
                         NULL, /* memory_region_set_size, */
                         NULL, NULL, &error_abort);
+}
+
+static void iommu_memory_region_initfn(Object *obj)
+{
+    MemoryRegion *mr = MEMORY_REGION(obj);
+
+    mr->is_iommu = true;
 }
 
 static uint64_t unassigned_mem_read(void *opaque, hwaddr addr,
@@ -1348,11 +1366,11 @@ void memory_region_init_io(MemoryRegion *mr,
     mr->terminates = true;
 }
 
-void memory_region_init_ram(MemoryRegion *mr,
-                            Object *owner,
-                            const char *name,
-                            uint64_t size,
-                            Error **errp)
+void memory_region_init_ram_nomigrate(MemoryRegion *mr,
+                                      Object *owner,
+                                      const char *name,
+                                      uint64_t size,
+                                      Error **errp)
 {
     memory_region_init(mr, owner, name, size);
     mr->ram = true;
@@ -1395,6 +1413,22 @@ void memory_region_init_ram_from_file(MemoryRegion *mr,
     mr->terminates = true;
     mr->destructor = memory_region_destructor_ram;
     mr->ram_block = qemu_ram_alloc_from_file(size, mr, share, path, errp);
+    mr->dirty_log_mask = tcg_enabled() ? (1 << DIRTY_MEMORY_CODE) : 0;
+}
+
+void memory_region_init_ram_from_fd(MemoryRegion *mr,
+                                    struct Object *owner,
+                                    const char *name,
+                                    uint64_t size,
+                                    bool share,
+                                    int fd,
+                                    Error **errp)
+{
+    memory_region_init(mr, owner, name, size);
+    mr->ram = true;
+    mr->terminates = true;
+    mr->destructor = memory_region_destructor_ram;
+    mr->ram_block = qemu_ram_alloc_from_fd(size, mr, share, fd, errp);
     mr->dirty_log_mask = tcg_enabled() ? (1 << DIRTY_MEMORY_CODE) : 0;
 }
 #endif
@@ -1440,11 +1474,11 @@ void memory_region_init_alias(MemoryRegion *mr,
     mr->alias_offset = offset;
 }
 
-void memory_region_init_rom(MemoryRegion *mr,
-                            struct Object *owner,
-                            const char *name,
-                            uint64_t size,
-                            Error **errp)
+void memory_region_init_rom_nomigrate(MemoryRegion *mr,
+                                      struct Object *owner,
+                                      const char *name,
+                                      uint64_t size,
+                                      Error **errp)
 {
     memory_region_init(mr, owner, name, size);
     mr->ram = true;
@@ -1455,13 +1489,13 @@ void memory_region_init_rom(MemoryRegion *mr,
     mr->dirty_log_mask = tcg_enabled() ? (1 << DIRTY_MEMORY_CODE) : 0;
 }
 
-void memory_region_init_rom_device(MemoryRegion *mr,
-                                   Object *owner,
-                                   const MemoryRegionOps *ops,
-                                   void *opaque,
-                                   const char *name,
-                                   uint64_t size,
-                                   Error **errp)
+void memory_region_init_rom_device_nomigrate(MemoryRegion *mr,
+                                             Object *owner,
+                                             const MemoryRegionOps *ops,
+                                             void *opaque,
+                                             const char *name,
+                                             uint64_t size,
+                                             Error **errp)
 {
     assert(ops);
     memory_region_init(mr, owner, name, size);
@@ -1473,17 +1507,23 @@ void memory_region_init_rom_device(MemoryRegion *mr,
     mr->ram_block = qemu_ram_alloc(size, mr, errp);
 }
 
-void memory_region_init_iommu(MemoryRegion *mr,
+void memory_region_init_iommu(void *_iommu_mr,
+                              size_t instance_size,
+                              const char *mrtypename,
                               Object *owner,
-                              const MemoryRegionIOMMUOps *ops,
                               const char *name,
                               uint64_t size)
 {
-    memory_region_init(mr, owner, name, size);
-    mr->iommu_ops = ops,
+    struct IOMMUMemoryRegion *iommu_mr;
+    struct MemoryRegion *mr;
+
+    object_initialize(_iommu_mr, instance_size, mrtypename);
+    mr = MEMORY_REGION(_iommu_mr);
+    memory_region_do_init(mr, owner, name, size);
+    iommu_mr = IOMMU_MEMORY_REGION(mr);
     mr->terminates = true;  /* then re-forwards */
-    QLIST_INIT(&mr->iommu_notify);
-    mr->iommu_notify_flags = IOMMU_NOTIFIER_NONE;
+    QLIST_INIT(&iommu_mr->iommu_notify);
+    iommu_mr->iommu_notify_flags = IOMMU_NOTIFIER_NONE;
 }
 
 static void memory_region_finalize(Object *obj)
@@ -1578,57 +1618,70 @@ bool memory_region_is_logging(MemoryRegion *mr, uint8_t client)
     return memory_region_get_dirty_log_mask(mr) & (1 << client);
 }
 
-static void memory_region_update_iommu_notify_flags(MemoryRegion *mr)
+static void memory_region_update_iommu_notify_flags(IOMMUMemoryRegion *iommu_mr)
 {
     IOMMUNotifierFlag flags = IOMMU_NOTIFIER_NONE;
     IOMMUNotifier *iommu_notifier;
+    IOMMUMemoryRegionClass *imrc = IOMMU_MEMORY_REGION_GET_CLASS(iommu_mr);
 
-    QLIST_FOREACH(iommu_notifier, &mr->iommu_notify, node) {
+    IOMMU_NOTIFIER_FOREACH(iommu_notifier, iommu_mr) {
         flags |= iommu_notifier->notifier_flags;
     }
 
-    if (flags != mr->iommu_notify_flags &&
-        mr->iommu_ops->notify_flag_changed) {
-        mr->iommu_ops->notify_flag_changed(mr, mr->iommu_notify_flags,
-                                           flags);
+    if (flags != iommu_mr->iommu_notify_flags && imrc->notify_flag_changed) {
+        imrc->notify_flag_changed(iommu_mr,
+                                  iommu_mr->iommu_notify_flags,
+                                  flags);
     }
 
-    mr->iommu_notify_flags = flags;
+    iommu_mr->iommu_notify_flags = flags;
 }
 
 void memory_region_register_iommu_notifier(MemoryRegion *mr,
                                            IOMMUNotifier *n)
 {
+    IOMMUMemoryRegion *iommu_mr;
+
     if (mr->alias) {
         memory_region_register_iommu_notifier(mr->alias, n);
         return;
     }
 
     /* We need to register for at least one bitfield */
+    iommu_mr = IOMMU_MEMORY_REGION(mr);
     assert(n->notifier_flags != IOMMU_NOTIFIER_NONE);
-    QLIST_INSERT_HEAD(&mr->iommu_notify, n, node);
-    memory_region_update_iommu_notify_flags(mr);
+    assert(n->start <= n->end);
+    QLIST_INSERT_HEAD(&iommu_mr->iommu_notify, n, node);
+    memory_region_update_iommu_notify_flags(iommu_mr);
 }
 
-uint64_t memory_region_iommu_get_min_page_size(MemoryRegion *mr)
+uint64_t memory_region_iommu_get_min_page_size(IOMMUMemoryRegion *iommu_mr)
 {
-    assert(memory_region_is_iommu(mr));
-    if (mr->iommu_ops && mr->iommu_ops->get_min_page_size) {
-        return mr->iommu_ops->get_min_page_size(mr);
+    IOMMUMemoryRegionClass *imrc = IOMMU_MEMORY_REGION_GET_CLASS(iommu_mr);
+
+    if (imrc->get_min_page_size) {
+        return imrc->get_min_page_size(iommu_mr);
     }
     return TARGET_PAGE_SIZE;
 }
 
-void memory_region_iommu_replay(MemoryRegion *mr, IOMMUNotifier *n,
-                                bool is_write)
+void memory_region_iommu_replay(IOMMUMemoryRegion *iommu_mr, IOMMUNotifier *n)
 {
+    MemoryRegion *mr = MEMORY_REGION(iommu_mr);
+    IOMMUMemoryRegionClass *imrc = IOMMU_MEMORY_REGION_GET_CLASS(iommu_mr);
     hwaddr addr, granularity;
     IOMMUTLBEntry iotlb;
 
-    granularity = memory_region_iommu_get_min_page_size(mr);
+    /* If the IOMMU has its own replay callback, override */
+    if (imrc->replay) {
+        imrc->replay(iommu_mr, n);
+        return;
+    }
+
+    granularity = memory_region_iommu_get_min_page_size(iommu_mr);
 
     for (addr = 0; addr < memory_region_size(mr); addr += granularity) {
-        iotlb = mr->iommu_ops->translate(mr, addr, is_write);
+        iotlb = imrc->translate(iommu_mr, addr, IOMMU_NONE);
         if (iotlb.perm != IOMMU_NONE) {
             n->notify(n, &iotlb);
         }
@@ -1641,35 +1694,63 @@ void memory_region_iommu_replay(MemoryRegion *mr, IOMMUNotifier *n,
     }
 }
 
+void memory_region_iommu_replay_all(IOMMUMemoryRegion *iommu_mr)
+{
+    IOMMUNotifier *notifier;
+
+    IOMMU_NOTIFIER_FOREACH(notifier, iommu_mr) {
+        memory_region_iommu_replay(iommu_mr, notifier);
+    }
+}
+
 void memory_region_unregister_iommu_notifier(MemoryRegion *mr,
                                              IOMMUNotifier *n)
 {
+    IOMMUMemoryRegion *iommu_mr;
+
     if (mr->alias) {
         memory_region_unregister_iommu_notifier(mr->alias, n);
         return;
     }
     QLIST_REMOVE(n, node);
-    memory_region_update_iommu_notify_flags(mr);
+    iommu_mr = IOMMU_MEMORY_REGION(mr);
+    memory_region_update_iommu_notify_flags(iommu_mr);
 }
 
-void memory_region_notify_iommu(MemoryRegion *mr,
-                                IOMMUTLBEntry entry)
+void memory_region_notify_one(IOMMUNotifier *notifier,
+                              IOMMUTLBEntry *entry)
 {
-    IOMMUNotifier *iommu_notifier;
     IOMMUNotifierFlag request_flags;
 
-    assert(memory_region_is_iommu(mr));
+    /*
+     * Skip the notification if the notification does not overlap
+     * with registered range.
+     */
+    if (notifier->start > entry->iova + entry->addr_mask + 1 ||
+        notifier->end < entry->iova) {
+        return;
+    }
 
-    if (entry.perm & IOMMU_RW) {
+    if (entry->perm & IOMMU_RW) {
         request_flags = IOMMU_NOTIFIER_MAP;
     } else {
         request_flags = IOMMU_NOTIFIER_UNMAP;
     }
 
-    QLIST_FOREACH(iommu_notifier, &mr->iommu_notify, node) {
-        if (iommu_notifier->notifier_flags & request_flags) {
-            iommu_notifier->notify(iommu_notifier, &entry);
-        }
+    if (notifier->notifier_flags & request_flags) {
+        notifier->notify(notifier, entry);
+    }
+}
+
+void memory_region_notify_iommu(IOMMUMemoryRegion *iommu_mr,
+                                IOMMUTLBEntry entry)
+{
+    IOMMUNotifier *iommu_notifier;
+
+    assert(memory_region_is_iommu(MEMORY_REGION(iommu_mr)));
+
+    IOMMU_NOTIFIER_FOREACH(iommu_notifier, iommu_mr) {
+        memory_region_notify_one(iommu_notifier, &entry);
     }
 }
 
@@ -1716,6 +1797,23 @@ bool memory_region_test_and_clear_dirty(MemoryRegion *mr, hwaddr addr,
                 memory_region_get_ram_addr(mr) + addr, size, client);
 }
 
+DirtyBitmapSnapshot *memory_region_snapshot_and_clear_dirty(MemoryRegion *mr,
+                                                            hwaddr addr,
+                                                            hwaddr size,
+                                                            unsigned client)
+{
+    assert(mr->ram_block);
+    return cpu_physical_memory_snapshot_and_clear_dirty(
+                memory_region_get_ram_addr(mr) + addr, size, client);
+}
+
+bool memory_region_snapshot_get_dirty(MemoryRegion *mr, DirtyBitmapSnapshot *snap,
+                                      hwaddr addr, hwaddr size)
+{
+    assert(mr->ram_block);
+    return cpu_physical_memory_snapshot_get_dirty(snap,
+                memory_region_get_ram_addr(mr) + addr, size);
+}
 
 void memory_region_sync_dirty_bitmap(MemoryRegion *mr)
 {
@@ -1785,16 +1883,6 @@ int memory_region_get_fd(MemoryRegion *mr)
     rcu_read_unlock();
 
     return fd;
-}
-
-void memory_region_set_fd(MemoryRegion *mr, int fd)
-{
-    rcu_read_lock();
-    while (mr->alias) {
-        mr = mr->alias;
-    }
-    mr->ram_block->fd = fd;
-    rcu_read_unlock();
 }
 
 void *memory_region_get_ram_ptr(MemoryRegion *mr)
@@ -2269,8 +2357,15 @@ void memory_global_dirty_log_sync(void)
     }
 }
 
+static VMChangeStateEntry *vmstate_change;
+
 void memory_global_dirty_log_start(void)
 {
+    if (vmstate_change) {
+        qemu_del_vm_change_state_handler(vmstate_change);
+        vmstate_change = NULL;
+    }
+
     global_dirty_log = true;
 
     MEMORY_LISTENER_CALL_GLOBAL(log_global_start, Forward);
@@ -2281,7 +2376,7 @@ void memory_global_dirty_log_start(void)
     memory_region_transaction_commit();
 }
 
-void memory_global_dirty_log_stop(void)
+static void memory_global_dirty_log_do_stop(void)
 {
     global_dirty_log = false;
 
@@ -2291,6 +2386,33 @@ void memory_global_dirty_log_stop(void)
     memory_region_transaction_commit();
 
     MEMORY_LISTENER_CALL_GLOBAL(log_global_stop, Reverse);
+}
+
+static void memory_vm_change_state_handler(void *opaque, int running,
+                                           RunState state)
+{
+    if (running) {
+        memory_global_dirty_log_do_stop();
+
+        if (vmstate_change) {
+            qemu_del_vm_change_state_handler(vmstate_change);
+            vmstate_change = NULL;
+        }
+    }
+}
+
+void memory_global_dirty_log_stop(void)
+{
+    if (!runstate_is_running()) {
+        if (vmstate_change) {
+            return;
+        }
+        vmstate_change = qemu_add_vm_change_state_handler(
+                                memory_vm_change_state_handler, NULL);
+        return;
+    }
+
+    memory_global_dirty_log_do_stop();
 }
 
 static void listener_add_address_space(MemoryListener *listener,
@@ -2374,6 +2496,115 @@ void memory_listener_unregister(MemoryListener *listener)
     QTAILQ_REMOVE(&memory_listeners, listener, link);
     QTAILQ_REMOVE(&listener->address_space->listeners, listener, link_as);
     listener->address_space = NULL;
+}
+
+bool memory_region_request_mmio_ptr(MemoryRegion *mr, hwaddr addr)
+{
+    void *host;
+    unsigned size = 0;
+    unsigned offset = 0;
+    Object *new_interface;
+
+    if (!mr || !mr->ops->request_ptr) {
+        return false;
+    }
+
+    /*
+     * Avoid an update if the request_ptr call
+     * memory_region_invalidate_mmio_ptr which seems to be likely when we use
+     * a cache.
+     */
+    memory_region_transaction_begin();
+
+    host = mr->ops->request_ptr(mr->opaque, addr - mr->addr, &size, &offset);
+
+    if (!host || !size) {
+        memory_region_transaction_commit();
+        return false;
+    }
+
+    new_interface = object_new("mmio_interface");
+    qdev_prop_set_uint64(DEVICE(new_interface), "start", offset);
+    qdev_prop_set_uint64(DEVICE(new_interface), "end", offset + size - 1);
+    qdev_prop_set_bit(DEVICE(new_interface), "ro", true);
+    qdev_prop_set_ptr(DEVICE(new_interface), "host_ptr", host);
+    qdev_prop_set_ptr(DEVICE(new_interface), "subregion", mr);
+    object_property_set_bool(OBJECT(new_interface), true, "realized", NULL);
+
+    memory_region_transaction_commit();
+    return true;
+}
+
+typedef struct MMIOPtrInvalidate {
+    MemoryRegion *mr;
+    hwaddr offset;
+    unsigned size;
+    int busy;
+    int allocated;
+} MMIOPtrInvalidate;
+
+#define MAX_MMIO_INVALIDATE 10
+static MMIOPtrInvalidate mmio_ptr_invalidate_list[MAX_MMIO_INVALIDATE];
+
+static void memory_region_do_invalidate_mmio_ptr(CPUState *cpu,
+                                                 run_on_cpu_data data)
+{
+    MMIOPtrInvalidate *invalidate_data = (MMIOPtrInvalidate *)data.host_ptr;
+    MemoryRegion *mr = invalidate_data->mr;
+    hwaddr offset = invalidate_data->offset;
+    unsigned size = invalidate_data->size;
+    MemoryRegionSection section = memory_region_find(mr, offset, size);
+
+    qemu_mutex_lock_iothread();
+
+    /* Reset dirty so this doesn't happen later. */
+    cpu_physical_memory_test_and_clear_dirty(offset, size, 1);
+
+    if (section.mr != mr) {
+        /* memory_region_find add a ref on section.mr */
+        memory_region_unref(section.mr);
+        if (MMIO_INTERFACE(section.mr->owner)) {
+            /* We found the interface just drop it. */
+            object_property_set_bool(section.mr->owner, false, "realized",
+                                     NULL);
+            object_unref(section.mr->owner);
+            object_unparent(section.mr->owner);
+        }
+    }
+
+    qemu_mutex_unlock_iothread();
+
+    if (invalidate_data->allocated) {
+        g_free(invalidate_data);
+    } else {
+        invalidate_data->busy = 0;
+    }
+}
+
+void memory_region_invalidate_mmio_ptr(MemoryRegion *mr, hwaddr offset,
+                                       unsigned size)
+{
+    size_t i;
+    MMIOPtrInvalidate *invalidate_data = NULL;
+
+    for (i = 0; i < MAX_MMIO_INVALIDATE; i++) {
+        if (atomic_cmpxchg(&(mmio_ptr_invalidate_list[i].busy), 0, 1) == 0) {
+            invalidate_data = &mmio_ptr_invalidate_list[i];
+            break;
+        }
+    }
+
+    if (!invalidate_data) {
+        invalidate_data = g_malloc0(sizeof(MMIOPtrInvalidate));
+        invalidate_data->allocated = 1;
+    }
+
+    invalidate_data->mr = mr;
+    invalidate_data->offset = offset;
+    invalidate_data->size = size;
+
+    async_safe_run_on_cpu(first_cpu, memory_region_do_invalidate_mmio_ptr,
+                          RUN_ON_CPU_HOST_PTR(invalidate_data));
 }
 
 void address_space_init(AddressSpace *as, MemoryRegion *root, const char *name)
@@ -2652,6 +2883,81 @@ void mtree_info(fprintf_function mon_printf, void *f, bool flatview)
     }
 }
 
+void memory_region_init_ram(MemoryRegion *mr,
+                            struct Object *owner,
+                            const char *name,
+                            uint64_t size,
+                            Error **errp)
+{
+    DeviceState *owner_dev;
+    Error *err = NULL;
+
+    memory_region_init_ram_nomigrate(mr, owner, name, size, &err);
+    if (err) {
+        error_propagate(errp, err);
+        return;
+    }
+    /* This will assert if owner is neither NULL nor a DeviceState.
+     * We only want the owner here for the purposes of defining a
+     * unique name for migration. TODO: Ideally we should implement
+     * a naming scheme for Objects which are not DeviceStates, in
+     * which case we can relax this restriction.
+     */
+    owner_dev = DEVICE(owner);
+    vmstate_register_ram(mr, owner_dev);
+}
+
+void memory_region_init_rom(MemoryRegion *mr,
+                            struct Object *owner,
+                            const char *name,
+                            uint64_t size,
+                            Error **errp)
+{
+    DeviceState *owner_dev;
+    Error *err = NULL;
+
+    memory_region_init_rom_nomigrate(mr, owner, name, size, &err);
+    if (err) {
+        error_propagate(errp, err);
+        return;
+    }
+    /* This will assert if owner is neither NULL nor a DeviceState.
+     * We only want the owner here for the purposes of defining a
+     * unique name for migration. TODO: Ideally we should implement
+     * a naming scheme for Objects which are not DeviceStates, in
+     * which case we can relax this restriction.
+     */
+    owner_dev = DEVICE(owner);
+    vmstate_register_ram(mr, owner_dev);
+}
+
+void memory_region_init_rom_device(MemoryRegion *mr,
+                                   struct Object *owner,
+                                   const MemoryRegionOps *ops,
+                                   void *opaque,
+                                   const char *name,
+                                   uint64_t size,
+                                   Error **errp)
+{
+    DeviceState *owner_dev;
+    Error *err = NULL;
+
+    memory_region_init_rom_device_nomigrate(mr, owner, ops, opaque,
+                                            name, size, &err);
+    if (err) {
+        error_propagate(errp, err);
+        return;
+    }
+    /* This will assert if owner is neither NULL nor a DeviceState.
+     * We only want the owner here for the purposes of defining a
+     * unique name for migration. TODO: Ideally we should implement
+     * a naming scheme for Objects which are not DeviceStates, in
+     * which case we can relax this restriction.
+     */
+    owner_dev = DEVICE(owner);
+    vmstate_register_ram(mr, owner_dev);
+}
+
 static const TypeInfo memory_region_info = {
     .parent             = TYPE_OBJECT,
     .name               = TYPE_MEMORY_REGION,
@@ -2660,9 +2966,19 @@ static const TypeInfo memory_region_info = {
     .instance_finalize  = memory_region_finalize,
 };
 
+static const TypeInfo iommu_memory_region_info = {
+    .parent             = TYPE_MEMORY_REGION,
+    .name               = TYPE_IOMMU_MEMORY_REGION,
+    .class_size         = sizeof(IOMMUMemoryRegionClass),
+    .instance_size      = sizeof(IOMMUMemoryRegion),
+    .instance_init      = iommu_memory_region_initfn,
+    .abstract           = true,
+};
+
 static void memory_register_types(void)
 {
     type_register_static(&memory_region_info);
+    type_register_static(&iommu_memory_region_info);
 }
 
 type_init(memory_register_types)

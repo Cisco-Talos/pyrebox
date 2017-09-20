@@ -884,7 +884,8 @@ void pyrebox_load_vm(char* name)
 {
     int saved_vm_running  = runstate_is_running();
     vm_stop(RUN_STATE_RESTORE_VM);
-    int load_result = load_vmstate(name); 
+    Error *err = NULL;
+    int load_result = load_snapshot(name, &err); 
     if (load_result == 0 && saved_vm_running) {
         vm_start();
     }

@@ -30,7 +30,7 @@ qemu_path=$root_path/qemu
 show_help="no"
 debug="no"
 rebuild_vol="no"
-rebuild_qemu="no"
+reconfigure="no"
 jobs=8
 
 RED='\033[0;31m'
@@ -44,7 +44,7 @@ for opt do
   ;;
   --debug) debug="yes"
   ;;
-  --rebuild_qemu) rebuild_qemu="yes"
+  --reconfigure) reconfigure="yes"
   ;;
   --rebuild_volatility) rebuild_vol="yes"
   ;;
@@ -64,41 +64,14 @@ echo "Standard options:"
 echo "  --help                       print this message"
 echo "  --debug                      compile for debug"
 echo "  --jobs=n                     build using n parallel processes"
-echo "  --rebuild_qemu               delete current qemu/ and rebuild it"
+echo "  --reconfigure                reconfigure pyrebox"
 echo "  --rebuild_volatility         delete current volatility/ and rebuild it"
 echo ""
 exit 1
 fi
 
 #----------------------- QEMU -----------------------
-if [ x"${rebuild_qemu}" = xyes ]; then
-    rm -rf $qemu_path
-fi
-
-if ! [ -d "${qemu_path}" ]
-then
-    echo -e "\n${GREEN}[*] Cloning qemu...${NC}\n"
-    git clone git://git.qemu.org/qemu.git
-    if ! [ -d "${qemu_path}" ]; then
-        echo -e "\n${RED}[!] QEMU could not be cloned from git.qemu.org!${NC}\n"
-        exit 1
-    fi
-    cd $qemu_path 
-    git checkout v2.9.0
-    if [ $? -ne 0 ]; then
-        echo -e "\n${RED}[!] Could not checkout the appropriate version of QEMU${NC}\n"
-        exit 1
-    fi
-    echo -e "\n${GREEN}[*] Patching qemu...${NC}\n"
-    cd $qemu_path
-    git apply $pyrebox_path/third_party/qemu/qemu.patch
-    if [ $? -ne 0 ]; then
-        echo -e "\n${RED}[!] Could not patch QEMU${NC}\n"
-        exit 1
-    fi
-    cd ${root_path}
-    ln -s ../pyrebox qemu/pyrebox
-
+if [ x"${reconfigure}" = xyes ] || [ ! -f ${qemu_path}/config-host.mak ]; then
     echo -e "\n${GREEN}[*] Configuring qemu...${NC}\n"
     cd ${qemu_path}
     qemu_configure_flags=""
@@ -124,7 +97,6 @@ then
     echo "#define ROOT_PATH \"$root_path\"" >> $config_h
 
 fi
-
 
 if [ x"${rebuild_vol}" = xyes ]; then
     rm -rf $volatility_path
