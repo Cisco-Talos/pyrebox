@@ -46,8 +46,6 @@ for opt do
   ;;
   --reconfigure) reconfigure="yes"
   ;;
-  --rebuild_volatility) rebuild_vol="yes"
-  ;;
   --jobs=*) jobs=$optarg
   ;;
   *) echo "ERROR: unknown option $opt"; show_help="yes"
@@ -65,7 +63,6 @@ echo "  --help                       print this message"
 echo "  --debug                      compile for debug"
 echo "  --jobs=n                     build using n parallel processes"
 echo "  --reconfigure                reconfigure pyrebox"
-echo "  --rebuild_volatility         delete current volatility/ and rebuild it"
 echo ""
 exit 1
 fi
@@ -96,42 +93,6 @@ if [ x"${reconfigure}" = xyes ] || [ ! -f ${qemu_path}/config-host.mak ]; then
     echo "#define PYREBOX_PATH \"$pyrebox_path\"" >> $config_h
     echo "#define ROOT_PATH \"$root_path\"" >> $config_h
 
-fi
-
-if [ x"${rebuild_vol}" = xyes ]; then
-    rm -rf $volatility_path
-fi
-
-#----------------------- VOLATILITY -----------------------
-
-cd ${root_path}
-
-if ! [ -d "${volatility_path}" ] 
-then
-    echo -e "\n${GREEN}[*] Cloning volatility...${NC}\n"
-    git clone https://github.com/volatilityfoundation/volatility volatility
-    if ! [ -d "${volatility_path}" ]; then
-        echo -e "\n${RED}[!] Volatility could not be cloned from github!${NC}\n"
-        exit 1
-    fi
-    cd $volatility_path
-    git checkout 2.6
-    if [ $? -ne 0 ]; then
-        echo -e "\n${RED}[!] Could not checkout the appropriate version of volatility${NC}\n"
-        exit 1 
-    fi
-    echo -e "\n${GREEN}[*] Patching volatility...${NC}\n"
-    cd $volatility_path
-    git apply $pyrebox_path/third_party/volatility/conf.py.patch
-    if [ $? -ne 0 ]; then
-        echo -e "\n${RED}[!] Could not patch volatility${NC}\n"
-        exit 1
-    fi
-    cp $pyrebox_path/third_party/panda/pmemaddressspace.py $volatility_path/volatility/plugins/addrspaces
-    if [ $? -ne 0 ]; then
-        echo -e "\n${RED}[!] Could not patch volatility${NC}\n"
-        exit 1 
-    fi
 fi
 
 #----------------------- PYREBOX -----------------------
