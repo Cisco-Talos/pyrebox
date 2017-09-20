@@ -1,0 +1,39 @@
+[submodule "qemu/roms/vgabios"]
+	path = qemu/roms/vgabios
+	url = git://git.qemu-project.org/vgabios.git/
+[submodule "qemu/roms/seabios"]
+	path = qemu/roms/seabios
+	url = git://git.qemu-project.org/seabios.git/
+[submodule "qemu/roms/SLOF"]
+	path = qemu/roms/SLOF
+	url = git://git.qemu-project.org/SLOF.git
+[submodule "qemu/roms/ipxe"]
+	path = qemu/roms/ipxe
+	url = git://git.qemu-project.org/ipxe.git
+[submodule "qemu/roms/openbios"]
+	path = qemu/roms/openbios
+	url = git://git.qemu-project.org/openbios.git
+[submodule "qemu/roms/openhackware"]
+	path = qemu/roms/openhackware
+	url = git://git.qemu-project.org/openhackware.git
+[submodule "qemu/roms/qemu-palcode"]
+	path = qemu/roms/qemu-palcode
+	url = git://github.com/rth7680/qemu-palcode.git
+[submodule "qemu/roms/sgabios"]
+	path = qemu/roms/sgabios
+	url = git://git.qemu-project.org/sgabios.git
+[submodule "qemu/pixman"]
+	path = qemu/pixman
+	url = git://anongit.freedesktop.org/pixman
+[submodule "qemu/dtc"]
+	path = qemu/dtc
+	url = git://git.qemu-project.org/dtc.git
+[submodule "qemu/roms/u-boot"]
+	path = qemu/roms/u-boot
+	url = git://git.qemu-project.org/u-boot.git
+[submodule "qemu/roms/skiboot"]
+	path = qemu/roms/skiboot
+	url = git://git.qemu.org/skiboot.git
+[submodule "qemu/roms/QemuMacDrivers"]
+	path = qemu/roms/QemuMacDrivers
+	url = git://git.qemu.org/QemuMacDrivers.git
