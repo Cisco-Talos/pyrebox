@@ -34,6 +34,7 @@ pyrebox_print = None
 memwrite_breakpoint = None
 target_procname = ""
 
+
 def mem_write(cpu_index, addr, size):
     global cm
     global counter
@@ -46,6 +47,7 @@ def mem_write(cpu_index, addr, size):
         memwrite_breakpoint.disable()
         start_shell()
 
+
 def clean():
     '''
     Clean up everything. At least you need to place this
@@ -56,6 +58,7 @@ def clean():
     pyrebox_print("[*]    Cleaning module\n")
     cm.clean()
     pyrebox_print("[*]    Cleaned module\n")
+
 
 def do_set_target(line):
     '''Set target process - Custom command
@@ -69,6 +72,7 @@ def do_set_target(line):
     global target_procname
     target_procname = line.strip()
     pyrebox_print("Waiting for process %s to start\n" % target_procname)
+
 
 def new_proc(pid, pgd, name):
     '''
@@ -89,7 +93,7 @@ def new_proc(pid, pgd, name):
     # For instance, we can start the shell whenever a process is created
     if target_procname != "" and target_procname.lower() in name.lower():
         pyrebox_print("Creating memory write callback for this process on user address space")
-        memwrite_breakpoint = BP(0x0,pgd,size=0x80000000,typ=BP.MEM_WRITE,func=mem_write)
+        memwrite_breakpoint = BP(0x0, pgd, size=0x80000000, typ=BP.MEM_WRITE, func=mem_write)
         memwrite_breakpoint.enable()
 
 
@@ -110,6 +114,7 @@ def initialize_callbacks(module_hdl, printer):
     cm = CallbackManager(module_hdl)
     cm.add_callback(CallbackManager.CREATEPROC_CB, new_proc, name="vmi_new_proc")
     pyrebox_print("[*]    Initialized callbacks")
+
 
 if __name__ == "__main__":
     print("[*] Loading python module %s" % (__file__))

@@ -80,7 +80,7 @@ def r_pa(addr, length):
     # upwards
     offset = addr
     ret_buffer = ""
-    while offset < (addr + length): 
+    while offset < (addr + length):
         read_length = 0x2000 if (addr + length - offset) > 0x2000 else (addr + length - offset)
         ret_buffer += c_api.r_pa(offset, read_length)
         offset += read_length
@@ -108,11 +108,12 @@ def r_va(pgd, addr, length):
     # upwards
     offset = addr
     ret_buffer = ""
-    while offset < (addr + length): 
+    while offset < (addr + length):
         read_length = 0x2000 if (addr + length - offset) > 0x2000 else (addr + length - offset)
         ret_buffer += c_api.r_va(pgd, offset, read_length)
         offset += read_length
     return ret_buffer
+
 
 def r_cpu(cpu_index=0):
     """Read CPU register values
@@ -156,11 +157,11 @@ def w_pa(addr, buff, length=None):
         # propagate upwards
         offset = addr
         length = len(buff)
-        while offset < (addr + length): 
+        while offset < (addr + length):
             write_length = 0x2000 if (addr + length - offset) > 0x2000 else (addr + length - offset)
             c_api.w_pa(offset, buff[(offset - addr):(offset - addr + write_length)])
             offset += write_length
-        return None 
+        return None
 
 
 def w_va(pgd, addr, buff, length=None):
@@ -190,11 +191,11 @@ def w_va(pgd, addr, buff, length=None):
         # propagate upwards
         offset = addr
         length = len(buff)
-        while offset < (addr + length): 
+        while offset < (addr + length):
             write_length = 0x2000 if (addr + length - offset) > 0x2000 else (addr + length - offset)
             c_api.w_va(pgd, offset, buff[(offset - addr):(offset - addr + write_length)])
             offset += write_length
-        return None 
+        return None
 
 
 def r_ioport(address, size):
@@ -906,7 +907,7 @@ class BP:
     __cm = CallbackManager(0)
     __bp_num = 0
 
-    def __init__(self, addr, pgd, size=0, typ=0, func = None):
+    def __init__(self, addr, pgd, size=0, typ=0, func=None):
         """ Constructor for a BreakPoint
 
             :param addr: The (start) address where we want to put the breakpoint
