@@ -36,6 +36,13 @@
 	.help		= "Unload a python module, by handle"
 },
 {
+	.name		= "reload_module",
+	.args_type	= "modulehandle:i?",
+	.cmd	= reload_module,
+	.params		= "[modulehandle]",
+	.help		= "Reload a python module, by handle"
+},
+{
 	.name		= "list_modules",
 	.args_type	= "",
 	.cmd	= list_modules,

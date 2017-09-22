@@ -45,63 +45,125 @@ MODULE_COUNTER = 0x1
 
 modules = {}
 
-
 class ConfigManager:
     def __init__(self, volatility_path, vol_profile, platform):
         self.volatility_path = volatility_path
         self.vol_profile = vol_profile
         self.platform = platform
 
+class Module:
+    def __init__(self,_id,module_name):
+        self.__module_name = module_name
+        self.__module = None
+        self.__loaded = False
+        self.__id = _id
+
+
+    def get_module_name(self):
+        return self.__module_name
+
+
+    def is_loaded(self):
+        return (self.__loaded)
+
+
+    def load(self):
+        import api_internal
+        from ipython_shell import add_command
+        pp_print("[*]  Loading python module %s\n" % self.__module_name)
+        self.__module = __import__(self.__module_name, fromlist=[''])
+        self.__loaded = True
+        self.__module.initialize_callbacks(
+                self.__id, functools.partial(
+                api_internal.print_internal, self.__module_name))
+        # Add commands declared by the module
+        for element in dir(self.__module):
+            if element.startswith("do_"):
+                add_command(element[3:], getattr(self.__module, element))
+
+
+    def reload(self):
+        import api_internal
+        from ipython_shell import add_command
+        if self.__module is not None:
+            pp_print("[*]  Reloading python module %s\n" % self.__module_name)
+            if self.__loaded is True:
+                self.unload()
+            reload(self.__module)
+            #Add again commands and call initialize_callbacks:
+            self.__module.initialize_callbacks(
+                    self.__id, functools.partial(
+                    api_internal.print_internal, self.__module_name))
+            # Add commands declared by the module
+            for element in dir(self.__module):
+                if element.startswith("do_"):
+                    add_command(element[3:], getattr(self.__module, element))
+            self.__loaded = True
+        else:
+            pp_warning("[!] The module was not correctly imported!\n")
+
+
+    def unload(self):
+        from ipython_shell import remove_command
+        if self.__loaded is True:
+            pp_print("[*]  Unloading %s\n" % self.__module_name)
+            # Add commands declared by the module
+            for element in dir(self.__module):
+                if element.startswith("do_"):
+                    remove_command(element[3:])
+            self.__module.clean()
+            self.__loaded = False
+        else:
+            pp_warning("[*]  Module %d is not loaded!\n" % self.__id)
+
 
 def import_module(module_name):
     global MODULE_COUNTER
-    import api_internal
-    from ipython_shell import add_command
     try:
         already_imported = False
         for mod in modules:
-            if module_name == modules[mod][0]:
+            if modules[mod].get_module_name() == module_name:
                 already_imported = True
                 break
         if not already_imported:
-            pp_print("[*]  Importing %s\n" % module_name)
-            mod = __import__(module_name, fromlist=[''])
-            mod.initialize_callbacks(
-                MODULE_COUNTER, functools.partial(
-                    api_internal.print_internal, module_name))
-            # Add commands declared by the module
-            for element in dir(mod):
-                if element.startswith("do_"):
-                    add_command(element[3:], getattr(mod, element))
-            modules[MODULE_COUNTER] = (module_name, mod)
+            modules[MODULE_COUNTER] = Module(MODULE_COUNTER,module_name)
+            modules[MODULE_COUNTER].load()
             MODULE_COUNTER += 1
         else:
-            pp_warning("[*]  Module %s already imported\n" % module_name)
+            pp_warning("[*]  Module %s already imported, did you want to reload it instead?\n" % module_name)
     except Exception as e:
         pp_error("[!] Could not initialize python module due to exception\n")
         pp_error("    %s\n" % str(e))
         return
 
 
-def unload_module(mod):
-    from ipython_shell import remove_command
-    if isinstance(mod, int) and mod in modules:
-        pp_print("[*]  Unloading %s\n" % modules[mod][0])
-        # Add commands declared by the module
-        for element in dir(modules[mod][1]):
-            if element.startswith("do_"):
-                remove_command(element[3:])
-        modules[mod][1].clean()
-        # Remove module from list
-        del modules[mod]
-    else:
-        pp_warning("[*]  Module not loaded!\n")
+def reload_module(_id):
+    try:
+        if _id in modules:
+            modules[_id].reload()
+        else:
+            pp_warning("[*]  The module number specified (%d) has not been imported\n" % _id)
+    except Exception as e:
+        pp_error("[!] Could not reload python module due to exception\n")
+        pp_error("    %s\n" % str(e))
+        return
 
+
+def unload_module(_id):
+    try:
+        if _id in modules:
+            modules[_id].unload()
+        else:
+            pp_warning("[*]  The module number specified (%d) has not been imported\n" % _id)
+    except Exception as e:
+        pp_error("[!] Could not reload python module due to exception\n")
+        pp_error("    %s\n" % str(e))
+        return
 
 def list_modules():
-    t = PrettyTable(["Hdl", "Module name"])
+    t = PrettyTable(["Hdl", "Module name", "Loaded"])
     for mod in modules:
-        t.add_row([mod, modules[mod][0]])
+        t.add_row([mod, modules[mod].get_module_name(),"Yes" if modules[mod].is_loaded() else "No"])
     pp_print(str(t) + "\n")
 
 
@@ -147,10 +209,8 @@ def init_volatility(conf):
         return True
     else:
         pp_error("""The imported volatility version is not appropriate for PyREBox:
-    * Your local volatility instalation may be in conflict with PyREBox's volatility installation...
+    * Your local volatility installation may be in conflict with PyREBox's volatility installation...
       ... set up a virtual env to avoid the conflict (see installation instructions).
-    * PyREBox's volatility version was not properly installed or configured...
-      ... you rebuild it running: $./build.sh --rebuild_volatility
     * You have a virtual env for PyREBox's python dependencies, and you forgot to activate it!
       ... you know what to do!\n""")
         return False

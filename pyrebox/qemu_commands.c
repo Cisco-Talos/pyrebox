@@ -84,6 +84,25 @@ void unload_module(Monitor* mon, const QDict* qdict)
 
 }
 
+void reload_module(Monitor* mon, const QDict* qdict)
+{
+  if ((qdict != NULL) && (qdict_haskey(qdict, "modulehandle")))
+  {
+    PyObject* py_main_module, *py_global_dict;
+    PyObject* py_import,*py_args_tuple;
+    PyObject *module_hdl = PyInt_FromLong(qdict_get_int(qdict, "modulehandle"));
+    // Get a reference to the main module and global dictionary
+    py_main_module = PyImport_AddModule("__main__");
+    py_global_dict = PyModule_GetDict(py_main_module);
+    //Call the module import function
+    py_import = PyDict_GetItemString(py_global_dict, "reload_module");
+    py_args_tuple = PyTuple_New(1);
+    PyTuple_SetItem(py_args_tuple, 0, module_hdl); 
+    PyObject_CallObject(py_import,py_args_tuple);
+    commit_deferred_callback_removes();
+  }
+}
+
 void list_modules(Monitor* mon, const QDict* qdict)
 {
 
