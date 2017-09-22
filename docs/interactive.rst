@@ -61,6 +61,7 @@ PyREBox adds four commands on top of QEMU:
 ``import_module`` Load a PyREBox script (module)
 ``list_modules``  List loaded PyREBox scripts (modules)
 ``unload_module`` Unload a PyREBox script (module)
+``reload_module`` Reload a PyREBox script (module)
 ================= ==================================================================================
 
 PyREBox shell commands
