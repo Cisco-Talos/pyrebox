@@ -507,7 +507,7 @@ def get_os_bits():
 def get_module_list(pgd):
     """ Return list of modules for a given PGD
 
-        :param pgd: The PGD of the process for which we want to extract the modules
+        :param pgd: The PGD of the process for which we want to extract the modules, or 0 to extract kernel modules
         :type pgd: int
 
         :return: List of modules, each element is a dictionary with keys: "name", "base", and "size"
