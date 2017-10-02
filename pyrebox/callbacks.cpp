@@ -570,10 +570,6 @@ void CallbackManager::deliver_callback(callback_type_t type, callback_params_t p
         }
     }
     //Lock the python mutex
-    //We use trylock, because in some cases we might have recursive callback delivery
-    //For instance, an instruction callback may trigger a vmi process removal
-    //that may itself trigger a python callback. If it is already locked, we just 
-    //continue
     pthread_mutex_lock(&pyrebox_mutex);
     fflush(stdout);
     fflush(stderr);

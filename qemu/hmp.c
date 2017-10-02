@@ -45,6 +45,8 @@
 #include "migration/snapshot.h"
 #include "migration/misc.h"
 
+#include "pyrebox/pyrebox.h"
+
 #ifdef CONFIG_SPICE
 #include <spice/enums.h>
 #endif
@@ -1304,6 +1306,11 @@ void hmp_snapshot_delete_blkdev_internal(Monitor *mon, const QDict *qdict)
 
 void hmp_loadvm(Monitor *mon, const QDict *qdict)
 {
+
+    fflush(stdout);
+    fflush(stderr);
+    pthread_mutex_unlock(&pyrebox_mutex);
+
     int saved_vm_running  = runstate_is_running();
     const char *name = qdict_get_str(qdict, "name");
     Error *err = NULL;
@@ -1314,14 +1321,28 @@ void hmp_loadvm(Monitor *mon, const QDict *qdict)
         vm_start();
     }
     hmp_handle_error(mon, &err);
+
+    //Lock the python mutex
+    pthread_mutex_lock(&pyrebox_mutex);
+    fflush(stdout);
+    fflush(stderr);
 }
 
 void hmp_savevm(Monitor *mon, const QDict *qdict)
 {
+    fflush(stdout);
+    fflush(stderr);
+    pthread_mutex_unlock(&pyrebox_mutex);
+
     Error *err = NULL;
 
     save_snapshot(qdict_get_try_str(qdict, "name"), &err);
     hmp_handle_error(mon, &err);
+
+    //Lock the python mutex
+    pthread_mutex_lock(&pyrebox_mutex);
+    fflush(stdout);
+    fflush(stderr);
 }
 
 void hmp_delvm(Monitor *mon, const QDict *qdict)
