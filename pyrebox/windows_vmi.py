@@ -29,7 +29,6 @@ import traceback
 
 last_kdbg = None
 
-
 def windows_insert_module_internal(
         p_pid,
         p_pgd,
@@ -156,6 +155,8 @@ def windows_update_modules(pgd, update_symbols=False):
         Use volatility to get the modules and symbols for a given process, and
         update the cache accordingly
     '''
+    global last_kdbg
+
     import api
     from utils import get_addr_space
     from vmi import modules
@@ -173,6 +174,9 @@ def windows_update_modules(pgd, update_symbols=False):
     inserted_bases = []
     # Parse/update kernel modules:
     if last_kdbg is not None:
+        if (0,0) not in modules:
+            modules[(0,0)] = {}
+
         kdbg = obj.Object(
             "_KDDEBUGGER_DATA64",
             offset=last_kdbg,
@@ -181,6 +185,7 @@ def windows_update_modules(pgd, update_symbols=False):
             if module.DllBase not in inserted_bases:
                 inserted_bases.append(module.DllBase)
                 windows_insert_module(0, 0, module, update_symbols)
+
     for proc in procs:
         p_pid = proc["pid"]
         p_pgd = proc["pgd"]
@@ -210,6 +215,7 @@ def windows_update_modules(pgd, update_symbols=False):
 
 
 def windows_kdbgscan_fast(dtb):
+    global last_kdbg
     from utils import ConfigurationManager as conf_m
 
     try:

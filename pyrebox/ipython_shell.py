@@ -663,25 +663,38 @@ class ShellMagics(Magics):
         List modules, specify name, pgd, or pid
         '''
         if line == "":
-            pp_warning("Please, specify pid, pgd, or process name\n")
+            pp_warning("Please, specify pid, pgd, or process name. Specify '0', 'System' or 'kernel' in order to list kernel modules\n")
             return
         param = line.split()[0]
-        found = self.find_procs(param)
-        if len(found) == 0:
-            pp_warning("Process %s not found\n" % param)
-        elif len(found) == 1:
-            pid, pgd, pname = found[0]
-            t = PrettyTable(["Name", "Base", "Size"])
-            t.align["Base"] = "r"
-            t.align["Size"] = "r"
-            for m in api.get_module_list(pgd):
-                t.add_row([m["name"], "%016x" % m["base"], "%016x" % m["size"]])
-            pp_print(str(t) + "\n")
+        if (param.isdigit() and int(param) == 0) or param == "System" or param == "kernel":
+            pid = 0
+            pgd = 0
+            pname = "kernel"
         else:
-            pp_warning(
-                "%d processes match, please select one...\n" %
-                len(found))
-            self.ps(line)
+            found = self.find_procs(param)
+            if len(found) == 0:
+                pp_warning("Process %s not found\n" % param)
+                return
+            elif len(found) == 1:
+                pid, pgd, pname = found[0]
+                if pname == "System":
+                    pid = 0
+                    pgd = 0
+                    pname = "kernel"
+            else:
+                pp_warning(
+                    "%d processes match, please select one...\n" %
+                    len(found))
+                self.ps(line)
+                return
+
+        t = PrettyTable(["Name", "Base", "Size"])
+        t.align["Base"] = "r"
+        t.align["Size"] = "r"
+        for m in api.get_module_list(pgd):
+            t.add_row([m["name"], "%016x" % m["base"], "%016x" % m["size"]])
+        pp_print(str(t) + "\n")
+
 
     # ===================================================== Process monitoring
 
@@ -742,6 +755,11 @@ class ShellMagics(Magics):
         param = line.split()[0]
 
         mods = {}
+
+        # Get the base address for all the kernel modules
+        for m in api.get_module_list(0):
+            mods[m["name"].lower()] = m["base"]
+
         # If process is set, get the base address for all the modules:
         if self.proc_context is not None:
             for m in api.get_module_list(self.proc_context.get_pgd()):

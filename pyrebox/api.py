@@ -518,17 +518,24 @@ def get_module_list(pgd):
     proc_list = get_process_list()
     mods = []
     found = False
-    for proc in proc_list:
-        proc_pid = proc["pid"]
-        proc_pgd = proc["pgd"]
-        if proc_pgd == pgd:
-            found = True
-            windows_vmi.windows_update_modules(proc_pgd, update_symbols=False)
-            for mod in vmi.modules[(proc_pid, proc_pgd)].values():
-                mods.append({"name": mod.get_name(),
-                             "base": mod.get_base(),
-                             "size": mod.get_size()})
+    if pgd == 0:
+        proc_pid = 0
+        proc_pgd = 0
+        found = True
+    else:
+        for proc in proc_list:
+            proc_pid = proc["pid"]
+            proc_pgd = proc["pgd"]
+            if proc_pgd == pgd:
+                found = True
+                break
+
     if found:
+        windows_vmi.windows_update_modules(proc_pgd, update_symbols=False)
+        for mod in vmi.modules[(proc_pid, proc_pgd)].values():
+            mods.append({"name": mod.get_name(),
+                         "base": mod.get_base(),
+                         "size": mod.get_size()})
         return mods
     else:
         raise ValueError("Process with PGD %x not found" % pgd)
@@ -556,6 +563,13 @@ def get_symbol_list():
             n = module.get_fullname()
             if (c, n) not in diff_modules:
                 diff_modules[(c, n)] = module
+        #Include kernel modules too
+        for module in vmi.modules[0,0].values():
+            c = module.get_checksum()
+            n = module.get_fullname()
+            if (c, n) not in diff_modules:
+                diff_modules[(c, n)] = module
+
     for mod in diff_modules.values():
         for ordinal, addr, name in mod.get_symbols():
             syms.append({"mod": mod.get_name(), "name": name, "addr": addr})
