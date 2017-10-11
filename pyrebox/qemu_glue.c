@@ -45,6 +45,7 @@
 #include "monitor/monitor.h"
 #include "qemu/thread.h"
 #include "exec/ioport.h"
+#include "hmp.h"
 
 #include "qemu_glue.h"
 
