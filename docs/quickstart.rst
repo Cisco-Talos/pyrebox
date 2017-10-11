@@ -131,15 +131,16 @@ Create a usb image template
 ::
   qemu-img create -f raw usb_image_template.img 256M
 
-Boot QEMU/PyREBox, with usb support ``-usb``, and run the following command:
+Boot QEMU/PyREBox, with usb support ``-usb``, and run the following commands:
 ::
-  (qemu) usb_add disk:/path/to/usb_image_template.img
+  (qemu) drive_add 0 if=none,id=stick,file=/path/to/usb_image.img,format=raw
+  (qemu) device_add usb-storage,id=stick,drive=stick
 
 On your guest system, partition and format the usb drive. Finally, umount it (safe extract).
 
 Remove the USB drive from QEMU/PyREBox
 ::
-  (qemu) usb_del 0.1
+  (qemu) device_del stick 
 
 If you are not sure about which USB drive to remove, you can use the command ``info usb``.
 
