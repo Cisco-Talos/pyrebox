@@ -882,7 +882,7 @@ class module_struct(obj.CType):
         attrs = obj.Object(theType = 'Array', offset = self.sect_attrs.attrs.obj_offset, vm = self.obj_vm, targetType = 'module_sect_attr', count = num_sects)
 
         for attr in attrs:
-            yield attr        
+            yield attr
 
     def get_param_val(self, param, _over = 0):
         ints = {
@@ -975,19 +975,29 @@ class module_struct(obj.CType):
 
         syms = obj.Object(theType = "Array", targetType = struct_name, offset = self.symtab, count = self.num_symtab + 1, vm = self.obj_vm)           
 
-        for sym_struct in syms:
-            sym_name_addr = self.strtab + sym_struct.st_name
+        strtab = None
 
-            sym_name = self.obj_vm.read(sym_name_addr, 64)
-            if not sym_name:
-                continue
-            
-            idx = sym_name.index("\x00")
-            if idx != -1:
-                sym_name = sym_name[:idx]
+        #Newer kernels
+        if hasattr(self,"kallsyms"):
+            strtab = self.kallsyms.strtab
+        #Older kernels
+        elif hasattr(self,"strtab"):
+            strtab = self.strtab
 
-            if sym_name != "":
-                ret_syms.append((str(sym_name), sym_struct.st_value.v()))
+        if strtab:
+            for sym_struct in syms:
+                sym_name_addr = strtab + sym_struct.st_name
+
+                sym_name = self.obj_vm.read(sym_name_addr, 64)
+                if not sym_name:
+                    continue
+                
+                idx = sym_name.index("\x00")
+                if idx != -1:
+                    sym_name = sym_name[:idx]
+
+                if sym_name != "":
+                    ret_syms.append((str(sym_name), sym_struct.st_value.v()))
 
         return ret_syms
 

@@ -48,6 +48,7 @@ pyrebox_target_ulong tasks_offset = 0;
 pyrebox_target_ulong mm_offset = 0;
 pyrebox_target_ulong parent_offset = 0;
 pyrebox_target_ulong exit_state_offset = 0;
+pyrebox_target_ulong thread_stack_size = 0;
 //Offsets inside mm_struct
 pyrebox_target_ulong pgd_offset = 0;
 
@@ -108,6 +109,28 @@ void linux_init_address_space(){
 
 void linux_vmi_init(os_index_t os_index){
    utils_print_debug("[*] Setting up Linux Profile...\n");
+
+   //Update the OS family in the Python VMI module
+   PyObject* py_module_name = PyString_FromString("vmi");
+   PyObject* py_vmi_module = PyImport_Import(py_module_name);
+   Py_DECREF(py_module_name);
+
+   if(py_vmi_module != NULL){
+       PyObject* py_setosfamily = PyObject_GetAttrString(py_vmi_module,"set_os_family_linux");
+       if (py_setosfamily){
+           if (PyCallable_Check(py_setosfamily)){
+                PyObject* py_args = PyTuple_New(0);
+                PyObject* ret = PyObject_CallObject(py_setosfamily,py_args);
+                Py_DECREF(py_args);
+                if (ret){
+                    Py_DECREF(ret);
+                }
+           }
+           Py_XDECREF(py_setosfamily);
+       }
+       Py_DECREF(py_vmi_module);
+   }
+
    if (init_task_offset == 0){
        PyObject* py_module_name = PyString_FromString("linux_vmi");
        PyObject* py_vmi_module = PyImport_Import(py_module_name);
@@ -127,9 +150,10 @@ void linux_vmi_init(os_index_t os_index){
                         PyObject* py_pgd_offset = PyTuple_GetItem(ret,5);
                         PyObject* py_parent_offset = PyTuple_GetItem(ret,6);
                         PyObject* py_exit_state_offset = PyTuple_GetItem(ret,7);
-                        PyObject* py_proc_exec_connector_offset = PyTuple_GetItem(ret,8);
-                        PyObject* py_trim_init_extable_offset = PyTuple_GetItem(ret,9);
-                        PyObject* py_proc_exit_connector_offset = PyTuple_GetItem(ret,10);
+                        PyObject* py_thread_stack_size = PyTuple_GetItem(ret,8);
+                        PyObject* py_proc_exec_connector_offset = PyTuple_GetItem(ret,9);
+                        PyObject* py_trim_init_extable_offset = PyTuple_GetItem(ret,10);
+                        PyObject* py_proc_exit_connector_offset = PyTuple_GetItem(ret,11);
 
                         if (arch_bits[os_index] == 32){
                             init_task_offset = PyLong_AsUnsignedLong(py_init_task_offset);
@@ -140,6 +164,7 @@ void linux_vmi_init(os_index_t os_index){
                             pgd_offset = PyLong_AsUnsignedLong(py_pgd_offset);
                             parent_offset = PyLong_AsUnsignedLong(py_parent_offset);
                             exit_state_offset = PyLong_AsUnsignedLong(py_exit_state_offset);
+                            thread_stack_size = PyLong_AsUnsignedLong(py_thread_stack_size);
 
                             proc_exec_connector_offset = PyLong_AsUnsignedLong(py_proc_exec_connector_offset);
                             trim_init_extable_offset = PyLong_AsUnsignedLong(py_trim_init_extable_offset);
@@ -154,6 +179,7 @@ void linux_vmi_init(os_index_t os_index){
                             pgd_offset = PyLong_AsUnsignedLongLong(py_pgd_offset);
                             parent_offset = PyLong_AsUnsignedLongLong(py_parent_offset);
                             exit_state_offset = PyLong_AsUnsignedLongLong(py_exit_state_offset);
+                            thread_stack_size = PyLong_AsUnsignedLongLong(py_thread_stack_size);
 
                             proc_exec_connector_offset = PyLong_AsUnsignedLongLong(py_proc_exec_connector_offset);
                             trim_init_extable_offset = PyLong_AsUnsignedLongLong(py_trim_init_extable_offset);
@@ -169,7 +195,8 @@ void linux_vmi_init(os_index_t os_index){
                         utils_print_debug("  [-] exit_state offset: %016lx\n", exit_state_offset);
                         utils_print_debug("  [-] proc exec connector: %016lx\n", proc_exec_connector_offset);
                         utils_print_debug("  [-] trim init extable: %016lx\n", trim_init_extable_offset);
-                        utils_print_debug("  [-] proc exit connector: %016lx\n", proc_exit_connector_offset);*/
+                        utils_print_debug("  [-] proc exit connector: %016lx\n", proc_exit_connector_offset);
+                        utils_print_debug("  [-] thread stack size: %016lx\n", thread_stack_size);*/
 
                         Py_DECREF(ret);
                     }
@@ -233,8 +260,12 @@ void update_process_list(pyrebox_target_ulong pgd){
             memset(proc_name,0,MAX_PROCNAME_LEN);
             assert(MAX_PROCNAME_LEN >= LINUX_PROCESS_NAME_SIZE);
             qemu_virtual_memory_rw_with_pgd(pgd,h.next - tasks_offset + mm_offset,(uint8_t*)&mm_addr,sizeof(pyrebox_target_ulong),0);
-            qemu_virtual_memory_rw_with_pgd(pgd,mm_addr + pgd_offset,(uint8_t*)&proc_pgd,sizeof(pyrebox_target_ulong),0);
-            proc_pgd = qemu_virtual_to_physical_with_pgd(pgd,proc_pgd);
+            if (mm_addr == 0 || mm_addr == (pyrebox_target_ulong) -1){
+                proc_pgd = 0;
+            } else {
+                qemu_virtual_memory_rw_with_pgd(pgd,mm_addr + pgd_offset,(uint8_t*)&proc_pgd,sizeof(pyrebox_target_ulong),0);
+                proc_pgd = qemu_virtual_to_physical_with_pgd(pgd,proc_pgd);
+            }
             qemu_virtual_memory_rw_with_pgd(pgd,h.next - tasks_offset + parent_offset,(uint8_t*)&parent_task,sizeof(pyrebox_target_ulong),0);
             if (parent_task != 0){
                 qemu_virtual_memory_rw_with_pgd(pgd,parent_task + pid_offset,(uint8_t*)&ppid,4,0);

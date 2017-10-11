@@ -654,7 +654,7 @@ class ShellMagics(Magics):
                            running_str,
                            "*" if api.is_monitored_process(pgd) else "",
                            "%016x" % pid,
-                           "%016x" % pgd])
+                           ("%016x") % pgd if pgd != 0 else "----"])
         pp_print(str(t) + "\n")
 
     @line_magic
@@ -663,7 +663,8 @@ class ShellMagics(Magics):
         List modules, specify name, pgd, or pid
         '''
         if line == "":
-            pp_warning("Please, specify pid, pgd, or process name. Specify '0', 'System' or 'kernel' in order to list kernel modules\n")
+            pp_warning("Please, specify pid, pgd, or process name." +
+                       " Specify '0', 'System' or 'kernel' in order to list kernel modules\n")
             return
         param = line.split()[0]
         if (param.isdigit() and int(param) == 0) or param == "System" or param == "kernel":
@@ -678,7 +679,7 @@ class ShellMagics(Magics):
             elif len(found) == 1:
                 pid, pgd, pname = found[0]
                 if pname == "System":
-                    pid = 0
+                    # pid = 0
                     pgd = 0
                     pname = "kernel"
             else:
@@ -691,10 +692,9 @@ class ShellMagics(Magics):
         t = PrettyTable(["Name", "Base", "Size"])
         t.align["Base"] = "r"
         t.align["Size"] = "r"
-        for m in api.get_module_list(pgd):
+        for m in sorted(api.get_module_list(pgd), key=lambda k: k['base']):
             t.add_row([m["name"], "%016x" % m["base"], "%016x" % m["size"]])
         pp_print(str(t) + "\n")
-
 
     # ===================================================== Process monitoring
 

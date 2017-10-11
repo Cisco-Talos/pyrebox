@@ -578,3 +578,16 @@ struct proc_dir_entry {
 
 struct resource resource;
 
+//PyREBox
+
+//We use this struct in order to have in the dwarf info, a way
+//to represent the THREAD_SIZE macro. offset will be located
+//at an offset from base (offset 0), that equals the THREAD_SIZE
+//for this kernel configuration.
+
+struct pyrebox_thread_stack_size_info {
+    char base[THREAD_SIZE];
+    int offset;
+};
+
+struct pyrebox_thread_stack_size_info pyrebox_tssi;

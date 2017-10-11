@@ -26,6 +26,11 @@ symbols = {}
 
 modules = {}  # List of modules for each process, index is pgd
 
+OS_FAMILY_WIN = 0
+OS_FAMILY_LINUX = 1
+
+os_family = None
+
 
 class Module:
     def __init__(self, base, size, pid, pgd, checksum, name, fullname):
@@ -101,3 +106,23 @@ class PseudoLDRDATA:
 
     def export_dir(self):
         return self.export_directory
+
+
+def set_os_family_win():
+    global os_family
+    os_family = OS_FAMILY_WIN
+
+
+def set_os_family_linux():
+    global os_family
+    os_family = OS_FAMILY_LINUX
+
+
+def update_modules(proc_pgd, update_symbols=False):
+    global os_family
+    from windows_vmi import windows_update_modules
+    from linux_vmi import linux_update_modules
+    if os_family == OS_FAMILY_WIN:
+        windows_update_modules(proc_pgd, update_symbols)
+    elif os_family == OS_FAMILY_LINUX:
+        linux_update_modules(proc_pgd, update_symbols)

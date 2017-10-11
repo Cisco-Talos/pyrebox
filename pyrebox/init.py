@@ -42,8 +42,8 @@ import functools
 
 # Module handle incremental counter, start at 0x1
 MODULE_COUNTER = 0x1
-
 modules = {}
+
 
 class ConfigManager:
     def __init__(self, volatility_path, vol_profile, platform):
@@ -51,21 +51,19 @@ class ConfigManager:
         self.vol_profile = vol_profile
         self.platform = platform
 
+
 class Module:
-    def __init__(self,_id,module_name):
+    def __init__(self, _id, module_name):
         self.__module_name = module_name
         self.__module = None
         self.__loaded = False
         self.__id = _id
 
-
     def get_module_name(self):
         return self.__module_name
 
-
     def is_loaded(self):
         return (self.__loaded)
-
 
     def load(self):
         import api_internal
@@ -73,14 +71,12 @@ class Module:
         pp_print("[*]  Loading python module %s\n" % self.__module_name)
         self.__module = __import__(self.__module_name, fromlist=[''])
         self.__loaded = True
-        self.__module.initialize_callbacks(
-                self.__id, functools.partial(
-                api_internal.print_internal, self.__module_name))
+        self.__module.initialize_callbacks(self.__id,
+                                           functools.partial(api_internal.print_internal, self.__module_name))
         # Add commands declared by the module
         for element in dir(self.__module):
             if element.startswith("do_"):
                 add_command(element[3:], getattr(self.__module, element))
-
 
     def reload(self):
         import api_internal
@@ -90,10 +86,9 @@ class Module:
             if self.__loaded is True:
                 self.unload()
             reload(self.__module)
-            #Add again commands and call initialize_callbacks:
-            self.__module.initialize_callbacks(
-                    self.__id, functools.partial(
-                    api_internal.print_internal, self.__module_name))
+            # Add again commands and call initialize_callbacks:
+            self.__module.initialize_callbacks(self.__id,
+                                               functools.partial(api_internal.print_internal, self.__module_name))
             # Add commands declared by the module
             for element in dir(self.__module):
                 if element.startswith("do_"):
@@ -101,7 +96,6 @@ class Module:
             self.__loaded = True
         else:
             pp_warning("[!] The module was not correctly imported!\n")
-
 
     def unload(self):
         from ipython_shell import remove_command
@@ -126,7 +120,7 @@ def import_module(module_name):
                 already_imported = True
                 break
         if not already_imported:
-            modules[MODULE_COUNTER] = Module(MODULE_COUNTER,module_name)
+            modules[MODULE_COUNTER] = Module(MODULE_COUNTER, module_name)
             modules[MODULE_COUNTER].load()
             MODULE_COUNTER += 1
         else:
@@ -160,10 +154,11 @@ def unload_module(_id):
         pp_error("    %s\n" % str(e))
         return
 
+
 def list_modules():
     t = PrettyTable(["Hdl", "Module name", "Loaded"])
     for mod in modules:
-        t.add_row([mod, modules[mod].get_module_name(),"Yes" if modules[mod].is_loaded() else "No"])
+        t.add_row([mod, modules[mod].get_module_name(), "Yes" if modules[mod].is_loaded() else "No"])
     pp_print(str(t) + "\n")
 
 

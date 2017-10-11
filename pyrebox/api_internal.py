@@ -103,13 +103,6 @@ def print_internal(plugin_name, f, *args):
     return None
 
 
-def insert_new_module_from_base(base, size, pid, pgd, name, fullname):
-    import windows_vmi
-    windows_vmi.windows_insert_module_from_base(
-        base, size, pid, pgd, name, fullname)
-    return True
-
-
 def function_wrapper(f, *args):
     try:
         f(*args)

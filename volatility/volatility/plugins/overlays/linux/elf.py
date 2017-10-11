@@ -229,7 +229,7 @@ elf64_vtypes = {
 }
 
 class elf(obj.CType):
-    def __init__(self, is_header, name32, name64, theType, offset, vm, name = None, **kwargs):  
+    def __init__(self, is_header, name32, name64, theType, offset, vm, name = None, **kwargs):
         self.name32 = name32
         self.name64 = name64
         self.elf_obj = None
@@ -339,7 +339,7 @@ class elf_hdr(elf):
 
     def section_headers(self):
         (arr_start, rtsize) = self._section_headers()
-
+        
         if arr_start == -1:
             return
 
@@ -352,14 +352,15 @@ class elf_hdr(elf):
                 yield shdr  
 
     def _find_symbols_program_headers(self):
+
+        dt_strtab = None
+        dt_symtab = None    
+        dt_strent = None
+
         for phdr in self.program_headers():
             if not phdr.is_valid() or str(phdr.p_type) != 'PT_DYNAMIC':
                 continue                   
     
-            dt_strtab = None
-            dt_symtab = None    
-            dt_strent = None
-
             for dsec in phdr.dynamic_sections():
                 if dsec.d_tag == 5:
                     dt_strtab = dsec.d_ptr
@@ -370,10 +371,10 @@ class elf_hdr(elf):
                 elif dsec.d_tag == 11:
                     dt_strent = dsec.d_ptr
 
-            if dt_strtab == None or dt_symtab == None or dt_strent == None:
-                return None
-            
             break
+
+        if dt_strtab == None or dt_symtab == None or dt_strent == None:
+            return None
 
         self.cached_symtab  = dt_symtab
         self.cached_strtab  = dt_strtab

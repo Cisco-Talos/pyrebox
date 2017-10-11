@@ -29,6 +29,7 @@ import traceback
 
 last_kdbg = None
 
+
 def windows_insert_module_internal(
         p_pid,
         p_pgd,
@@ -56,7 +57,7 @@ def windows_insert_module_internal(
     if (checksum, fullname) in symbols:
         mod.set_symbols(symbols[(checksum, fullname)])
     elif update_symbols:
-        syms = []
+        syms = {}
         export_dir = nt_header.OptionalHeader.DataDirectory[0]
         if export_dir:
             expdir = obj.Object(
@@ -74,7 +75,7 @@ def windows_insert_module_internal(
                     if not isinstance(o, obj.NoneObject) and \
                        not isinstance(f, obj.NoneObject) and \
                        not isinstance(n, obj.NoneObject):
-                        syms.append((o, f.v(), str(n)))
+                        syms[str(n)] = f.v()
         symbols[(checksum, fullname)] = syms
         mod.set_symbols(syms)
 
@@ -123,33 +124,6 @@ def windows_insert_module(p_pid, p_pgd, module, update_symbols):
         update_symbols)
 
 
-def windows_insert_module_from_base(base, size, pid, pgd, name, fullname):
-    '''
-        Insert a module given its base
-    '''
-    from vmi import modules
-    from utils import get_addr_space
-
-    if pgd != 0:
-        addr_space = get_addr_space(pgd)
-    else:
-        addr_space = get_addr_space()
-    nt_header = obj.Object("_IMAGE_DOS_HEADER", offset=base, vm=addr_space)
-    checksum = nt_header.OptionalHeader.CheckSum.v()
-    if (pid, pgd) not in modules:
-        modules[(pid, pgd)] = {}
-    windows_insert_module_internal(
-        pid,
-        pgd,
-        base,
-        size,
-        fullname,
-        name,
-        checksum,
-        nt_header,
-        update_symbols=True)
-
-
 def windows_update_modules(pgd, update_symbols=False):
     '''
         Use volatility to get the modules and symbols for a given process, and
@@ -172,10 +146,10 @@ def windows_update_modules(pgd, update_symbols=False):
     # Get EPROC directly from its offset
     procs = api.get_process_list()
     inserted_bases = []
-    # Parse/update kernel modules:
-    if last_kdbg is not None:
-        if (0,0) not in modules:
-            modules[(0,0)] = {}
+    # Parse/update kernel modules if pgd 0 is requested:
+    if pgd == 0 and last_kdbg is not None:
+        if (0, 0) not in modules:
+            modules[(0, 0)] = {}
 
         kdbg = obj.Object(
             "_KDDEBUGGER_DATA64",

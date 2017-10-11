@@ -514,7 +514,6 @@ def get_module_list(pgd):
         :rtype: list
     """
     import vmi
-    import windows_vmi
     proc_list = get_process_list()
     mods = []
     found = False
@@ -531,11 +530,12 @@ def get_module_list(pgd):
                 break
 
     if found:
-        windows_vmi.windows_update_modules(proc_pgd, update_symbols=False)
-        for mod in vmi.modules[(proc_pid, proc_pgd)].values():
-            mods.append({"name": mod.get_name(),
-                         "base": mod.get_base(),
-                         "size": mod.get_size()})
+        vmi.update_modules(proc_pgd, update_symbols=False)
+        if (proc_pid, proc_pgd) in vmi.modules:
+            for mod in vmi.modules[(proc_pid, proc_pgd)].values():
+                mods.append({"name": mod.get_name(),
+                             "base": mod.get_base(),
+                             "size": mod.get_size()})
         return mods
     else:
         raise ValueError("Process with PGD %x not found" % pgd)
@@ -548,32 +548,37 @@ def get_symbol_list():
         :rtype: list
     """
     import vmi
-    import windows_vmi
     from utils import pp_print
-    syms = []
+    res_syms = []
     diff_modules = {}
     proc_list = get_process_list()
     pp_print("[*] Updating symbol list... Be patient, this may take a while\n")
     for proc in proc_list:
         proc_pid = proc["pid"]
         proc_pgd = proc["pgd"]
-        windows_vmi.windows_update_modules(proc_pgd, update_symbols=True)
-        for module in vmi.modules[proc_pid, proc_pgd].values():
-            c = module.get_checksum()
-            n = module.get_fullname()
-            if (c, n) not in diff_modules:
-                diff_modules[(c, n)] = module
-        #Include kernel modules too
-        for module in vmi.modules[0,0].values():
+        if proc_pgd != 0:
+            vmi.update_modules(proc_pgd, update_symbols=True)
+            if (proc_pid, proc_pgd) in vmi.modules:
+                for module in vmi.modules[proc_pid, proc_pgd].values():
+                    c = module.get_checksum()
+                    n = module.get_fullname()
+                    if (c, n) not in diff_modules:
+                        diff_modules[(c, n)] = module
+
+    # Include kernel modules too
+    vmi.update_modules(0, update_symbols=True)
+    if (0, 0) in vmi.modules:
+        for module in vmi.modules[0, 0].values():
             c = module.get_checksum()
             n = module.get_fullname()
             if (c, n) not in diff_modules:
                 diff_modules[(c, n)] = module
 
     for mod in diff_modules.values():
-        for ordinal, addr, name in mod.get_symbols():
-            syms.append({"mod": mod.get_name(), "name": name, "addr": addr})
-    return syms
+        syms = mod.get_symbols()
+        for name in syms:
+            res_syms.append({"mod": mod.get_name(), "name": name, "addr": syms[name]})
+    return res_syms
 
 
 def sym_to_va(pgd, mod_name, func_name):
@@ -607,7 +612,8 @@ def sym_to_va(pgd, mod_name, func_name):
             for module in vmi.modules[proc_pid, proc_pgd].values():
                 if mod_name in module.get_name().lower():
                     syms = module.get_symbols()
-                    for ordinal, symbol_offset, name in syms:
+                    for name in syms:
+                        symbol_offset = syms[name]
                         if func_name == name.lower():
                             return (module.get_base() + symbol_offset)
     # Finally, return None if the symbol is not found
@@ -642,7 +648,8 @@ def va_to_sym(pgd, addr):
                 offset = (addr - module.get_base())
                 if offset > 0 and offset < module.get_size():
                     syms = module.get_symbols()
-                    for (ordinal, symbol_offset, name) in syms:
+                    for name in syms:
+                        symbol_offset = syms[name]
                         if offset == symbol_offset:
                             return (module.get_name(), name)
     # Finally, return None if the symbol is not found

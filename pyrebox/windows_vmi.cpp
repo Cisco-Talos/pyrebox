@@ -118,7 +118,28 @@ pyrebox_target_ulong scan_kdbg(pyrebox_target_ulong pgd){
 }
 
 void windows_vmi_init(os_index_t os_index){
-    utils_print_debug("[*] Searching for KDBG...\n");
+   utils_print_debug("[*] Searching for KDBG...\n");
+
+   //Update the OS family in the Python VMI module
+   PyObject* py_module_name = PyString_FromString("vmi");
+   PyObject* py_vmi_module = PyImport_Import(py_module_name);
+   Py_DECREF(py_module_name);
+
+   if(py_vmi_module != NULL){
+       PyObject* py_setosfamily = PyObject_GetAttrString(py_vmi_module,"set_os_family_win");
+       if (py_setosfamily){
+           if (PyCallable_Check(py_setosfamily)){
+                PyObject* py_args = PyTuple_New(0);
+                PyObject* ret = PyObject_CallObject(py_setosfamily,py_args);
+                Py_DECREF(py_args);
+                if (ret){
+                    Py_DECREF(ret);
+                }
+           }
+           Py_XDECREF(py_setosfamily);
+       }
+       Py_DECREF(py_vmi_module);
+   }
 }
 
 void windows_vmi_context_change_callback(pyrebox_target_ulong old_pgd,pyrebox_target_ulong new_pgd, os_index_t os_index){
