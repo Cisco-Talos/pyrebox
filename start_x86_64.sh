@@ -13,7 +13,13 @@
 #   * A main hard-drive, provided as a qcow2 image as the first parameter for the script
 #   * Starts a VNC server on 127.0.0.1 for showing the system display
 #   * Redirects the QEMU monitor to stdio (only configuration supported currently)
-#   * Loads a VM snapshot named "init"
+
+if [ -z "$2" ]
+then
+    snapshot=""
+else
+    snapshot="-loadvm $2"
+fi
 
 cp pyrebox.conf.Win7SP0x64 pyrebox.conf
-./pyrebox-x86_64 -monitor stdio -m 512 -usb -drive file=$1,index=0,media=disk,format=qcow2,cache=unsafe -vnc 127.0.0.1:0 -loadvm init 
+./pyrebox-x86_64 -monitor stdio -m 512 -usb -drive file=$1,index=0,media=disk,format=qcow2,cache=unsafe -vnc 127.0.0.1:0 ${snapshot} 

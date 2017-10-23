@@ -46,6 +46,11 @@ from api import BP
 import pefile
 import functools
 
+# Add a requirements list in order to specify which other scripts
+# should get loaded before this one
+
+requirements = ["plugins.guest_agent"]
+
 # Callback manager
 cm = None
 # Printer
@@ -159,6 +164,37 @@ def do_set_target(line):
     global pyrebox_print
     global target_procname
     target_procname = line.strip()
+    pyrebox_print("Waiting for process %s to start\n" % target_procname)
+
+
+def do_copy_execute(line):
+    '''Copy a file from host to guest, execute it, and pause VM on its EP - Custom command
+
+       This command will first use the guest agent to copy a file to the guest
+       and execute if afterwards.
+
+       This file will be set as target, so that the script will start monitoring
+       context changes and retrieve the module entry point as soon as it is
+       available in memory. Then it will place a breakpoint on the entry point.
+    '''
+    global pyrebox_print
+    global target_procname
+    from plugins.guest_agent import guest_agent
+
+    pyrebox_print("Copying host file to guest, using agent...")
+
+    # Copy the specified file to C:\\temp.exe in the guest
+    guest_agent.copy_file(line.strip(), "C:\\temp.exe")
+    # Execute the file
+    guest_agent.execute_file("C:\\temp.exe")
+    # stop_agent() does not only kill the agent, but it also
+    # disables the agent plugin. Invalid opcodes
+    # are not treated as agent commands any more, so this call
+    # improves transparency.
+    guest_agent.stop_agent()
+
+    # Set target proc name:
+    target_procname = "temp.exe"
     pyrebox_print("Waiting for process %s to start\n" % target_procname)
 
 

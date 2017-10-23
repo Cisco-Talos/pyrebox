@@ -44,15 +44,35 @@ def pp_error(f, *args):
 
 class ConfigurationManager:
     # Class variables
-    conf = None
+    # Volatility configuration object
     vol_conf = None
     # Pre initialized address space for volatility
     addr_space = None
+    # Path to volatility module
+    volatility_path = None
+    # Platform (e.g.: i386-softmmu, x86_64-softmmu)
+    platform = None
+    # String containing the volatility profile name as
+    # declared in pyrebox.conf
+    vol_profile = None
+    # Agent file name
+    agent_filename = None
+    # Agent buffer offset and size
+    agent_buffer_offset = None
+    agent_buffer_size = None
+    # config object
+    config = None
 
-    def __init__(self, conf, vol_conf):
-        ConfigurationManager.conf = conf
-        ConfigurationManager.vol_conf = vol_conf
+    def __init__(self):
+        ConfigurationManager.volatility_path = None
+        ConfigurationManager.vol_profile = None
+        ConfigurationManager.platform = None
+        ConfigurationManager.vol_conf = None
         ConfigurationManager.addr_space = None
+        ConfigurationManager.agent_filename = None
+        ConfigurationManager.agent_buffer_offset = None
+        ConfigurationManager.agent_buffer_size = None
+        ConfigurationManager.config = None
 
 
 def get_addr_space(pgd=None):

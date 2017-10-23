@@ -28,5 +28,7 @@
 
 int is_tb_flush_needed(void);
 void pyrebox_flush_tb(void);
+int is_cpu_loop_exit_needed(void);
+void pyrebox_cpu_loop_exit(void);
 
 #endif

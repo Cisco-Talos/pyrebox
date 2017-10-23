@@ -150,7 +150,7 @@ void windows_vmi_context_change_callback(pyrebox_target_ulong old_pgd,pyrebox_ta
         uint64_t exittime = 0;
         qemu_virtual_memory_rw_with_pgd(new_pgd,it->get_exittime_offset(),(uint8_t*)&exittime,EXIT_TIME_SIZE,0);
         if (exittime > 0){
-            to_remove.insert(it->get_pgd());
+            to_remove.insert(it->get_pid());
         }
     }
     for (set<pyrebox_target_ulong>::iterator it = to_remove.begin();it != to_remove.end(); ++it){

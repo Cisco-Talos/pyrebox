@@ -26,7 +26,9 @@ Script life-cycle
 PyREBox scripts can be loaded and unloaded dynamically at any moment during the execution of the VM. The configuration 
 file pyrebox.conf allows to specify a list of scripts that should be loaded at startup.
 
-After this moment, you can load or unload scripts using the import_module and unload_module commands on QEMU's prompt.
+After this moment, you can load or unload scripts using the ``import_module`` and ``unload_module`` commands on QEMU's prompt.
+
+Additionally, if a script has been loaded but you modified its code, you can reload it using the ``reload_module`` command.
 
 In the ``scripts/`` directory you can find a good self-documented example PyREBox script.
 
@@ -35,6 +37,10 @@ first one will be called when the script is loaded, while the second one will be
 unloaded. The first one can register the callbacks you want to listen to, while the latter
 should unregister them. The clean() function of the CallbackManager class will help you 
 to unregister all the active callbacks previously registered for a CallbackManager instance.
+
+A script can optionally have one additional member named ``requirements``, which consists
+of a list of additional scripts (in python module notation), that should get loaded before
+the script can be loaded.
 
 Once the initialization function has been executed, the script will only be executed if:
   - One of the custom commands implemented in your script is executed.

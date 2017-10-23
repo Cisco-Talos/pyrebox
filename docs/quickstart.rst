@@ -3,6 +3,9 @@
 Quick start
 ===========
 
+.. _documentation: https://en.wikibooks.org/wiki/QEMU/Networking#SMB_server
+
+
 Building PyREBox
 ----------------
 
@@ -56,7 +59,7 @@ Proceed with installation, and then boot with network (don't use -net none) and 
   ./pyrebox-i386 -m 256 -monitor stdio -usb -drive file=images/xpsp3.qcow,index=0,media=disk,format=qcow2,cache=unsafe -netdev user,id=network0 -device rtl8139,netdev=network0
 
 Basic QEMU usage
-----------------
+documentation: ----------------
 
 PyREBox is based on QEMU, so in order to start a VM within PyREBox, you need to run it exactly as if you
 were booting up a QEMU VM. A couple of example scripts are provided: ``start_i386.sh``, ``start_x86_64.sh``,
@@ -159,6 +162,11 @@ Unmount
 Finally, plug usb image in the machine, and use it!
 ::
   (qemu)usb_add disk:/path/to/usb/image
+
+Sharing a host directory
+************************
+
+Check out existing documentation_ for sharing a host directory with the guest via SAMBA.
 
 Basic PyREBox usage
 -------------------

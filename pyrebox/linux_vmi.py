@@ -32,7 +32,7 @@ def linux_get_offsets():
     import volatility.registry as registry
     try:
         profs = registry.get_plugin_classes(obj.Profile)
-        profile = profs[conf_m.conf.vol_profile]()
+        profile = profs[conf_m.vol_profile]()
         init_task_offset = profile.get_symbol("init_task")
         comm_offset = profile.get_obj_offset("task_struct", "comm")
         pid_offset = profile.get_obj_offset("task_struct", "pid")

@@ -109,6 +109,8 @@ int pyrebox_init(void){
       free(init_fname);
   }
 
+  clear_targets();
+
   // Get a reference to the main module and global dictionary
   py_main_module = PyImport_AddModule("__main__");
   py_global_dict = PyModule_GetDict(py_main_module);
@@ -133,8 +135,6 @@ int pyrebox_init(void){
   const char* s = PyString_AsString(vol_prof_repr);
   //Set the vol profile in vmi.cpp
   vmi_init(s);
-
-  clear_targets();
 
   return 0;
 };

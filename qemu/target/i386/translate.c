@@ -2492,6 +2492,22 @@ static void gen_exception(DisasContext *s, int trapno, target_ulong cur_eip)
    the instruction is known, but it isn't allowed in the current cpu mode.  */
 static void gen_illegal_opcode(DisasContext *s)
 {
+    //Call opcode range callback before exception for illegal opcode is generated
+    if (is_opcode_range_callback_needed((target_ulong)s->saved_opcode,s->pgd)){
+        //CPU points to the next instruction
+        TCGv tcg_saved_pc = tcg_temp_new();
+        tcg_gen_movi_tl(tcg_saved_pc, s->saved_pc);
+        TCGv tcg_next_pc = tcg_const_tl(0);
+        TCGv_i32 tcg_opcode = tcg_const_i32(s->saved_opcode);
+    
+        TCGv_ptr tcg_cpu = tcg_const_ptr((tcg_target_ulong)s->cs);
+        gen_helper_qemu_opcode_range_callback(tcg_cpu,
+        tcg_saved_pc, tcg_next_pc, tcg_opcode);
+        tcg_temp_free(tcg_saved_pc);
+        tcg_temp_free(tcg_next_pc);
+        tcg_temp_free_i32(tcg_opcode);
+        tcg_temp_free_ptr(tcg_cpu);
+    }
     gen_exception(s, EXCP06_ILLOP, s->pc_start - s->cs_base);
 }
 

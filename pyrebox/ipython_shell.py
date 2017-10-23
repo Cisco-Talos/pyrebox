@@ -207,9 +207,9 @@ class ShellMagics(Magics):
         self.update_conf()
         self.proc_context = None
         self.symbols = None
-        if conf_m.conf.platform == "i386-softmmu":
+        if conf_m.platform == "i386-softmmu":
             cpu = X86CPU()
-        elif conf_m.conf.platform == "x86_64-softmmu":
+        elif conf_m.platform == "x86_64-softmmu":
             cpu = X64CPU()
         else:
             raise RuntimeError(
@@ -516,9 +516,9 @@ class ShellMagics(Magics):
         # Capstone disassembler
         md = None
 
-        if conf_m.conf.platform == "i386-softmmu":
+        if conf_m.platform == "i386-softmmu":
             md = Cs(CS_ARCH_X86, CS_MODE_32)
-        elif conf_m.conf.platform == "x86_64-softmmu":
+        elif conf_m.platform == "x86_64-softmmu":
             md = Cs(CS_ARCH_X86, CS_MODE_64)
         else:
             pp_error("[disassemble] Wrong platform specification")
@@ -1802,6 +1802,7 @@ def start_shell(cpu_index=0):
     global __local_ns
     global __cfg
     global __proc_prompt
+    from plugins.guest_agent import guest_agent as agent
     fd = sys.stdin.fileno()
     old = termios.tcgetattr(fd)
     new = termios.tcgetattr(fd)
@@ -1814,9 +1815,10 @@ def start_shell(cpu_index=0):
                 termios.tcsetattr(fd, termios.TCSADRAIN, new)
                 finished = True
                 __local_ns["__cpu_index"] = cpu_index
-                __local_ns["__conf"] = conf_m.conf
                 __local_ns["__vol_conf"] = conf_m.vol_conf
                 __local_ns["cpu"] = api.r_cpu(cpu_index)
+                if agent is not None:
+                    __local_ns["agent"] = agent
                 __shell(local_ns=__local_ns)
             except Exception:
                 traceback.print_stack()

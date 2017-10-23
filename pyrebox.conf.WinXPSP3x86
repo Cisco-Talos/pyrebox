@@ -1,4 +1,5 @@
 [MODULES]
+plugins.guest_agent: True
 scripts.script_example: False
 scripts.script_example_min: False
 scripts.vol_test: False
@@ -23,3 +24,7 @@ pyrebox_test.test_11_insn_end: False
 
 [VOL]
 profile: WinXPSP3x86
+
+[AGENT]
+name: win_agent_32.exe
+conf: win_agent_32.exe.conf 

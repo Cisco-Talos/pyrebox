@@ -11,3 +11,7 @@ docs/build
 pyrebox-i386
 pyrebox-x86_64
 pyrebox_venv
+win_agent_32.exe.conf
+win_agent_64.exe.conf
+guest/win/*.exe
+*.a

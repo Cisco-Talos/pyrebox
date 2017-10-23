@@ -78,6 +78,10 @@ test_scripts:
 	flake8 ./scripts --count --select=E901,E999,F821,F822,F823 --show-source --statistics
 	flake8 ./scripts --count --exit-zero --max-complexity=20 --max-line-length=127 --statistics
 
+test_plugins:
+	flake8 ./plugins --count --select=E901,E999,F821,F822,F823 --show-source --statistics
+	flake8 ./plugins --count --exit-zero --max-complexity=20 --max-line-length=127 --statistics
+
 test_pyrebox_test:
 	flake8 ./pyrebox_test --count --select=E901,E999,F821,F822,F823 --show-source --statistics
 	flake8 ./pyrebox_test --count --exit-zero --max-complexity=20 --max-line-length=127 --statistics
@@ -87,4 +91,4 @@ test_pyrebox:
 	flake8 ./pyrebox/*.py --count --exit-zero --max-complexity=20 --max-line-length=127 --statistics
 
 test: 
-	@$(MAKE) test_scripts test_pyrebox_test test_pyrebox
+	@$(MAKE) test_scripts test_pyrebox_test test_pyrebox test_plugins

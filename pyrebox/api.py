@@ -259,7 +259,7 @@ def w_r(cpu_index, regname, val):
     if cpu_index >= get_num_cpus():
         raise ValueError("Incorrect cpu index specified")
 
-    if conf_m.conf.platform == "i386-softmmu":
+    if conf_m.platform == "i386-softmmu":
         if regname in X86CPU.reg_nums:
             # If this function call fails, it will raise an exception.
             # Given that the exception is self explanatory, we just let it
@@ -267,7 +267,7 @@ def w_r(cpu_index, regname, val):
             return c_api.w_r(cpu_index, X86CPU.reg_nums[regname], val)
         else:
             raise ValueError("[w_r] Wrong register specification")
-    elif conf_m.conf.platform == "x86_64-softmmu":
+    elif conf_m.platform == "x86_64-softmmu":
         if regname in X64CPU.reg_nums:
             # If this function call fails, it will raise an exception.
             # Given that the exception is self explanatory, we just let it
@@ -306,7 +306,7 @@ def w_sr(cpu_index, regname, selector, base, limit, flags):
     if cpu_index >= get_num_cpus():
         raise ValueError("Incorrect cpu index specified")
 
-    if conf_m.conf.platform == "i386-softmmu":
+    if conf_m.platform == "i386-softmmu":
         if regname in X86CPU.reg_nums:
             # If this function call fails, it will raise an exception.
             # Given that the exception is self explanatory, we just let it
@@ -320,7 +320,7 @@ def w_sr(cpu_index, regname, selector, base, limit, flags):
                 flags)
         else:
             raise ValueError("[w_r] Wrong register specification")
-    elif conf_m.conf.platform == "x86_64-softmmu":
+    elif conf_m.platform == "x86_64-softmmu":
         if regname in X64CPU.reg_nums:
             # If this function call fails, it will raise an exception.
             # Given that the exception is self explanatory, we just let it
@@ -815,7 +815,7 @@ class CallbackManager:
         if trigger_path[-3:] == ".so":
             trigger_path = trigger_path[:-3]
         # Check if we have the plugin compiled for the correct architecture
-        trigger_path = "%s-%s.so" % (trigger_path, conf_m.conf.platform)
+        trigger_path = "%s-%s.so" % (trigger_path, conf_m.platform)
         p = subprocess.Popen(
             "make %s" %
             trigger_path,
@@ -873,9 +873,9 @@ class CallbackManager:
         elif (isinstance(val, int) or isinstance(val, long)) and val < 0:
             raise ValueError(
                 "Negative integers not supported, use only unsigned integers")
-        elif (isinstance(val, int) or isinstance(val, long)) and conf_m.conf.platform == "i386-softmmu":
+        elif (isinstance(val, int) or isinstance(val, long)) and conf_m.platform == "i386-softmmu":
             set_trigger_uint32(self.callbacks[name], var_name, val)
-        elif (isinstance(val, int) or isinstance(val, long)) and conf_m.conf.platform == "x86_64-softmmu":
+        elif (isinstance(val, int) or isinstance(val, long)) and conf_m.platform == "x86_64-softmmu":
             set_trigger_uint64(self.callbacks[name], var_name, long(val))
         else:
             raise ValueError(

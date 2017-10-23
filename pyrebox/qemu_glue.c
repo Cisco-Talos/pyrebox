@@ -48,6 +48,7 @@
 #include "hmp.h"
 
 #include "qemu_glue.h"
+#include "qemu_glue_callbacks_flush.h"
 
 /**************************************************** DEFINITIONS ************************************************/
 
@@ -515,6 +516,7 @@ int write_register_convert(qemu_cpu_opaque_t cpu_opaque, register_num_t reg_num,
 #elif defined(TARGET_ARM) && !defined(TARGET_AARCH64)
 #error "Architecture not supported yet"
 #endif
+    int changed = 0;
     if (reg_num < RN_LAST && register_type[reg_num] == RT_REGULAR)
     {
        switch(reg_num){
@@ -544,7 +546,11 @@ int write_register_convert(qemu_cpu_opaque_t cpu_opaque, register_num_t reg_num,
                 env->regs[R_EDI] = val;
                 break;
            case RN_EIP:
+                changed = ((env->eip) != val);
                 env->eip = val;
+                if (changed) {
+                    pyrebox_cpu_loop_exit();
+                }
                 break;
            case RN_EFLAGS:
                 env->eflags = val;
@@ -575,7 +581,11 @@ int write_register_convert(qemu_cpu_opaque_t cpu_opaque, register_num_t reg_num,
                 env->regs[R_EDI] = val;
                 break;
            case RN_RIP:
+                changed = ((env->eip) != val);
                 env->eip = val;
+                if (changed) {
+                    pyrebox_cpu_loop_exit();
+                }
                 break;
            case RN_RFLAGS:
                 env->eflags = val;

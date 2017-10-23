@@ -45,13 +45,6 @@ MODULE_COUNTER = 0x1
 modules = {}
 
 
-class ConfigManager:
-    def __init__(self, volatility_path, vol_profile, platform):
-        self.volatility_path = volatility_path
-        self.vol_profile = vol_profile
-        self.platform = platform
-
-
 class Module:
     def __init__(self, _id, module_name):
         self.__module_name = module_name
@@ -73,6 +66,12 @@ class Module:
         self.__loaded = True
         self.__module.initialize_callbacks(self.__id,
                                            functools.partial(api_internal.print_internal, self.__module_name))
+
+        # Import other modules or plugins required by the module
+        if hasattr(self.__module, "requirements"):
+            for el in self.__module.requirements:
+                import_module(el)
+
         # Add commands declared by the module
         for element in dir(self.__module):
             if element.startswith("do_"):
@@ -186,7 +185,7 @@ def pyrebox_ipython_shell():
             traceback.print_exc(file=sys.stdout)
 
 
-def init_volatility(conf):
+def init_volatility():
     import volatility.conf as volconf
     import volatility.registry as registry
     import volatility.commands as commands
@@ -197,7 +196,7 @@ def init_volatility(conf):
         vol_config = volconf.ConfObject()
         registry.register_global_options(vol_config, commands.Command)
         registry.register_global_options(vol_config, addrspace.BaseAddressSpace)
-        vol_config.PROFILE = conf.vol_profile
+        vol_config.PROFILE = conf_m.vol_profile
 
         # Set global volatility configuration
         conf_m.vol_conf = vol_config
@@ -212,7 +211,6 @@ def init_volatility(conf):
 
 
 def init(platform, root_path, volatility_path):
-    global conf
     try:
         # Just configure basic logging
         import logging
@@ -223,21 +221,22 @@ def init(platform, root_path, volatility_path):
         pp_debug("[*] Reading configuration\n")
         sys.settrace
         config = ConfigParser.RawConfigParser()
+        # Store configuration information in raw,
+        # for plugins to be able to fetch it
+        conf_m.config = config
         if not os.path.isfile("pyrebox.conf"):
             pp_error("[!] Could not initialize pyrebox, pyrebox.conf file missing!\n")
             return None
         config.read('pyrebox.conf')
         vol_profile = config.get('VOL', 'profile')
-        conf = ConfigManager(
-            volatility_path=volatility_path,
-            vol_profile=vol_profile,
-            platform=platform)
-        sys.path.append(conf.volatility_path)
+        # Set global configuration
+        conf_m.volatility_path = volatility_path
+        conf_m.vol_profile = vol_profile
+        conf_m.platform = platform
+        sys.path.append(volatility_path)
         sys.path.append(root_path)
         sys.path.append(os.getcwd())
-        # Set global configuration
-        conf_m.conf = conf
-        if not init_volatility(conf_m.conf):
+        if not init_volatility():
             return None
 
         # Initialize the shell now

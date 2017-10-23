@@ -1,0 +1,37 @@
+
+Changes:
+
+v0.0.4:
+	* Filter expressions are now evaluated outside the normal context of
+	  execution.  Specifically, the esp register is set such that any function
+	  calls *should* not overwrite the existing call stack, but access to
+	  local variables within the scope of the __try/__except pair is
+	  preserved.  Code using this library should NOT be compiled with GCC's
+	  -fomit-frame-pointer flag!
+	* As a result of the previous, the internal exception handler is now able 
+	  to postpone the calling of __finally blocks until an appropriate
+	  exception handler is found as evaluating filter expressions *should* not
+	  clobber the stack data of functions with frames further down the stack.
+	* The default SEH keywords have been changed to avoid conflict with
+	  libstdc++'s usage of __try.  The new symbols are __seh_try,
+	  __seh_except, __seh_finally, __seh_end_except, and __seh_end_finally.
+	  These definitions are now present in common/config.h.
+	* Support for __leave has been added.  It exists by default as
+	  __seh_leave.
+	* For the C++ component, exception classes have been added for the most
+	  common exceptions (most exceptions with an exception code macro in the
+	  PSDK beginning with EXCEPTION_).  
+	* Some additional tests have been added.
+	* SEH emulation using POSIX signals has been removed.
+
+v0.0.3:
+	* Apparently, the previous change to the positioning of __label__
+      declarations broke compatibility with GCC 3.x.  
+
+v0.0.2:
+	* Apparently GCC 4.x treats __label__ statements differently, which would not allow the test
+	  programs to compile.  This has been fixed.
+
+v0.0.1:
+	* Initial public release.
+
