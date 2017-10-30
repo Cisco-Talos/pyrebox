@@ -41,7 +41,7 @@ import functools
 #   ====================================
 
 # Module handle incremental counter, start at 0x1
-MODULE_COUNTER = 0x1
+MODULE_COUNTER = 0x0
 modules = {}
 
 
@@ -63,14 +63,15 @@ class Module:
         from ipython_shell import add_command
         pp_print("[*]  Loading python module %s\n" % self.__module_name)
         self.__module = __import__(self.__module_name, fromlist=[''])
-        self.__loaded = True
-        self.__module.initialize_callbacks(self.__id,
-                                           functools.partial(api_internal.print_internal, self.__module_name))
 
         # Import other modules or plugins required by the module
         if hasattr(self.__module, "requirements"):
             for el in self.__module.requirements:
                 import_module(el)
+
+        self.__loaded = True
+        self.__module.initialize_callbacks(self.__id,
+                                           functools.partial(api_internal.print_internal, self.__module_name))
 
         # Add commands declared by the module
         for element in dir(self.__module):
@@ -119,9 +120,9 @@ def import_module(module_name):
                 already_imported = True
                 break
         if not already_imported:
+            MODULE_COUNTER += 1
             modules[MODULE_COUNTER] = Module(MODULE_COUNTER, module_name)
             modules[MODULE_COUNTER].load()
-            MODULE_COUNTER += 1
         else:
             pp_warning("[*]  Module %s already imported, did you want to reload it instead?\n" % module_name)
     except Exception as e:

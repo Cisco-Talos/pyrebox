@@ -22,6 +22,7 @@
 # -------------------------------------------------------------------------
 
 import utils_print
+import fnmatch
 
 # Print function wrappers
 
@@ -79,3 +80,24 @@ def get_addr_space(pgd=None):
     if pgd is not None:
         ConfigurationManager.addr_space.dtb = pgd
     return ConfigurationManager.addr_space
+
+
+def find_procs(param):
+    import api
+    nb = None
+    name = None
+    try:
+        nb = int(param, 16)
+    except BaseException:
+        name = param
+    proc_list = api.get_process_list()
+    found = []
+    for proc in proc_list:
+        pid = proc["pid"]
+        pgd = proc["pgd"]
+        pname = proc["name"]
+        # k_addr = proc["kaddr"]
+        if (nb is not None and (nb == pid or nb == pgd)) or (
+                name is not None and (fnmatch.fnmatch(pname, name) or name in pname)):
+            found.append((pid, pgd, pname))
+    return found

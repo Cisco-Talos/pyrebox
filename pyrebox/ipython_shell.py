@@ -226,23 +226,8 @@ class ShellMagics(Magics):
         '''
         Return processes that match the parameter by pid, pgd, or name
         '''
-        nb = None
-        name = None
-        try:
-            nb = int(param, 16)
-        except BaseException:
-            name = param
-        proc_list = api.get_process_list()
-        found = []
-        for proc in proc_list:
-            pid = proc["pid"]
-            pgd = proc["pgd"]
-            pname = proc["name"]
-            # k_addr = proc["kaddr"]
-            if (nb is not None and (nb == pid or nb == pgd)) or (
-                    name is not None and (fnmatch.fnmatch(pname, name) or name in pname)):
-                found.append((pid, pgd, pname))
-        return found
+        from utils import find_procs
+        return find_procs(param)
 
     def find_syms(self, name):
         '''

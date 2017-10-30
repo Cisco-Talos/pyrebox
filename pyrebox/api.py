@@ -690,7 +690,7 @@ class CallbackManager:
         self.callbacks = {}
         self.module_hdl = module_hdl
 
-    def __generate_callback_name(self, name):
+    def generate_callback_name(self, name):
         """ Generates a unique callback name given an initial name
 
             :param name: The initial name
@@ -751,7 +751,7 @@ class CallbackManager:
         if name is None:
             random.seed(time.time())
             name = "".join(random.choice(string.lowercase) for i in range(16))
-        name = self.__generate_callback_name(name)
+        name = self.generate_callback_name(name)
         # addr,pgd and start_opcode,end_opcode are exclusive, so we join them
         # together to call register_callback
         first_param = start_opcode if addr is None else addr

@@ -207,9 +207,9 @@ class GuestAgentPlugin(object):
             :param destiny_path: The path (on the guest) of the file to copy
             :type destinity_path: str
         """
-        if self.__status != GuestAgentPlugin.__AGENT_RUNNING:
-            raise Exception(
-                "The agent is not ready yet, or it has been stopped")
+        # if self.__status != GuestAgentPlugin.__AGENT_RUNNING:
+        #    raise Exception(
+        #        "The agent is not ready yet, or it has been stopped")
 
         # Count the "\x00" character at the end
         if len(source_path) + 1 > self.__agent_buffer_size:
@@ -244,9 +244,9 @@ class GuestAgentPlugin(object):
         if type(env) is not dict:
             raise ValueError(
                 "Args must be provided as a dictionary of varible name -> value mappings")
-        if self.__status != GuestAgentPlugin.__AGENT_RUNNING:
-            raise Exception(
-                "The agent is not ready yet, or it has been stopped")
+        # if self.__status != GuestAgentPlugin.__AGENT_RUNNING:
+        #     raise Exception(
+        #         "The agent is not ready yet, or it has been stopped")
 
         # Check size of path and combined length of arguments and env to write
         if len(path) + 1 > self.__agent_buffer_size:

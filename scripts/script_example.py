@@ -130,7 +130,7 @@ def find_ep(pgd, proc_name):
                 pe = pefile.PE(data=pe_data)
                 ep = pe.OPTIONAL_HEADER.AddressOfEntryPoint
                 return (base + ep)
-            except:
+            except Exception:
                 pyrebox_print("Unable to run pefile on loaded module %s" % name)
 
 

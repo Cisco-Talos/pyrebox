@@ -37,8 +37,8 @@ def my_createproc(pid, pgd, name):
     cm.set_trigger_var("createproc", "var3", name)
 
     pyrebox_print("Printing list...\n")
-    l = cm.get_trigger_var("createproc", "list0")
-    for el in l:
+    list_ = cm.get_trigger_var("createproc", "list0")
+    for el in list_:
         pyrebox_print("%x - %x" % (el[0], el[1]))
 
     pyrebox_print("Created process %x with pgd %x and name %s" % (pid, pgd, name))
