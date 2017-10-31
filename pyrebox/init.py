@@ -244,13 +244,22 @@ def init(platform, root_path, volatility_path):
         from ipython_shell import initialize_shell
         initialize_shell()
 
+        return vol_profile
+    except Exception as e:
+        # Do this to make sure we print the stack trace to help trouble-shooting
+        traceback.print_exc()
+        raise e
+
+
+def init_plugins():
+    try:
         # Locate python modules that should be loaded by default
-        for (module, enable) in config.items("MODULES"):
+        for (module, enable) in conf_m.config.items("MODULES"):
             if enable.strip().lower() == "true" or enable.strip().lower() == "yes":
                 import_module(module)
 
         pp_debug("[*] Finished python module initialization\n")
-        return vol_profile
+        return True
     except Exception as e:
         # Do this to make sure we print the stack trace to help trouble-shooting
         traceback.print_exc()

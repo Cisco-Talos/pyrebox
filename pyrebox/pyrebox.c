@@ -136,6 +136,13 @@ int pyrebox_init(void){
   //Set the vol profile in vmi.cpp
   vmi_init(s);
 
+  py_args_tuple = PyTuple_New(1);
+  //Now that we initialized the VMI, init the plugins
+  py_init_plugins = PyDict_GetItemString(py_global_dict, "init_plugins");
+  PyObject* result = PyObject_CallObject(py_init_plugins, py_args_tuple);
+  if (result == 0 || result == Py_None){
+      return 1;
+  }
   return 0;
 };
 
