@@ -29,6 +29,9 @@ import traceback
 
 last_kdbg = None
 
+# Modules pending symbol resolution
+mods_pending = {}
+
 
 def windows_insert_module_internal(
         p_pid,
@@ -76,8 +79,18 @@ def windows_insert_module_internal(
                        not isinstance(f, obj.NoneObject) and \
                        not isinstance(n, obj.NoneObject):
                         syms[str(n)] = f.v()
-        symbols[(checksum, fullname)] = syms
-        mod.set_symbols(syms)
+        if len(syms) > 0:
+            symbols[(checksum, fullname)] = syms
+            mod.set_symbols(syms)
+            if (checksum, fullname) in mods_pending:
+                for m in mods_pending[(checksum, fullname)]:
+                    m.set_symbols(syms)
+                    del mods_pending[(checksum, fullname)]
+        else:
+            if (checksum, fullname) in mods_pending:
+                mods_pending[(checksum, fullname)].append(mod)
+            else:
+                mods_pending[(checksum, fullname)] = [mod]
 
     if base in modules[(p_pid, p_pgd)]:
         del modules[(p_pid, p_pgd)][base]
