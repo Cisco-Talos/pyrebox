@@ -31,7 +31,28 @@ In order to compile the test files, just use the provided Makefile as follows:
 Linux
 -----
 
-The linux guest agent has not been implemented yet but will be available soon.
+.. _path: https://github.com/Cisco-Talos/pyrebox/tree/master/guest/linux
+
+You can find the linux guest agent under the guest/linux path_.
+
+Compiling guest agent
+*********************
+
+You may need to install the following packages. For example, on Ubuntu, or Debian:
+::
+  apt-get install libc6-dev-i386
+
+Just compile with ``make``. It will produce 2 files: linux_agent_32 and linux_agent_64.exe, for 
+32 and 64 bit linux guests respectively.
+
+Compiling test files
+********************
+
+In order to compile the test files, just use the provided Makefile as follows:
+::
+  make 32bit_test 
+  make 64bit_test
+
 
 General usage
 -------------

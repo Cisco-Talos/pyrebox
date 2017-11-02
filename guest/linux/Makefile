@@ -31,60 +31,45 @@
 
 BUFFER_SIZE := 4096
 
-AGENT_NAME := win_agent
+AGENT_NAME := linux_agent
 
 #--------------------------------------------------------------------------------
 
-CC := i686-w64-mingw32-gcc
-CC32 := i686-w64-mingw32-gcc
-CC64 := x86_64-w64-mingw32-gcc
+CC := gcc
+CC32 := gcc
+CC64 := gcc
 
-CFLAGS_32 := -Iinclude/ -I../include/ -Ilibseh/ -g -O0
-CFLAGS_64 := -Iinclude/ -I../include/ -g -O0
+CFLAGS_32 := -Iinclude/ -I../include -g -O0 -m32
+CFLAGS_64 := -Iinclude/ -I../include -g -O0
 
 DEFINES := -DMAX_BUFFER_SIZE=$(BUFFER_SIZE)
 
-all: $(AGENT_NAME)_32.exe $(AGENT_NAME)_64.exe
+all: $(AGENT_NAME)_32 $(AGENT_NAME)_64
 
-test_32: test.c
-	$(CC32) $(DEFINES) -c -o test_32.o $<
-	$(CC32)  test_32.o -o test_32.exe
+32bit_test: test.c
+	$(CC32) $(CFLAGS_32) $(DEFINES) -c -o test_32.o $<
+	$(CC32) -m32 test_32.o -o test_32
 
-test_64: test.c
-	$(CC32) $(DEFINES) -c -o test_64.o $<
-	$(CC32)  test_64.o -o test_64.exe
+64bit_test: test.c
+	$(CC64) $(CFLAGS_64) $(DEFINES) -c -o test_64.o $<
+	$(CC64)  test_64.o -o test_64
 
-
-%_32.exe: %_32
-	cp $< $@
+%_32: guest_agent_32.o
+	$(CC32) -m32  $^ -o $@
 	AGENT_NAME=$@ BUFFER_SIZE=$(BUFFER_SIZE) bash ./configure_offsets.sh
-
-%_64.exe: %_64
-	cp $< $@
-	AGENT_NAME=$@ BUFFER_SIZE=$(BUFFER_SIZE) bash ./configure_offsets.sh
-
-%_32: guest_agent_32.o libseh/build/libseh.a
-	$(CC32)  $^ -o $@
 %_64: guest_agent_64.o 
 	$(CC64)  $^ -o $@
+	AGENT_NAME=$@ BUFFER_SIZE=$(BUFFER_SIZE) bash ./configure_offsets.sh
 
 %_32.o: %.c
 	$(CC32) $(CFLAGS_32) $(DEFINES) -c -o $@ $<
 %_64.o: %.c
 	$(CC64) $(CFLAGS_64) $(DEFINES) -DPYREBOX_GUEST_64 -c -o $@ $<
 
-libseh/build/libseh.a: 
-	$(MAKE) -C libseh -f GNUmakefile
-
 .PHONY: clean dist-clean 
 clean:
-	rm -f $(AGENT_NAME)_32 
-	rm -f $(AGENT_NAME)_64 
+	rm -f $(AGENT_NAME)_32
+	rm -f $(AGENT_NAME)_64
 	rm -f *.o
-	make -C libseh -f GNUmakefile clean
-
-dist-clean: clean
-	rm -f $(AGENT_NAME)_32.exe
-	rm -f $(AGENT_NAME)_64.exe
-	rm -f test_32.exe
-	rm -f test_64.exe
+	rm -f test_32
+	rm -f test_64

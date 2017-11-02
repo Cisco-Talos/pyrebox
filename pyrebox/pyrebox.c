@@ -71,6 +71,7 @@ int pyrebox_init(void){
   //Python references
   PyObject* py_main_module, *py_global_dict;
   PyObject* py_init = 0;
+  PyObject* py_init_plugins = 0;
 
   //XXX: Needed as a workaround to a python bug: 
   //https://mail.python.org/pipermail/new-bugs-announce/2008-November/003322.html
@@ -136,7 +137,7 @@ int pyrebox_init(void){
   //Set the vol profile in vmi.cpp
   vmi_init(s);
 
-  py_args_tuple = PyTuple_New(1);
+  py_args_tuple = PyTuple_New(0);
   //Now that we initialized the VMI, init the plugins
   py_init_plugins = PyDict_GetItemString(py_global_dict, "init_plugins");
   PyObject* result = PyObject_CallObject(py_init_plugins, py_args_tuple);

@@ -14,4 +14,8 @@ docs/build
 /win_agent_32.exe.conf
 /win_agent_64.exe.conf
 guest/win/*.exe
+guest/linux/linux_agent_32
+guest/linux/linux_agent_64
+guest/linux/test_64
+guest/linux/test_32
 *.a

@@ -253,6 +253,7 @@ def init(platform, root_path, volatility_path):
 
 def init_plugins():
     try:
+        pp_debug("[*] Initializing scripts...\n")
         # Locate python modules that should be loaded by default
         for (module, enable) in conf_m.config.items("MODULES"):
             if enable.strip().lower() == "true" or enable.strip().lower() == "yes":

@@ -34,19 +34,18 @@ What's new
 Remember to pull the latest version of PyREBox in order to enjoy its latest features. PyREBox is under
 active development and new cool features are yet to come!
 
-- [Oct 23, 2017] Added guest agent for Windows 32 and 64 bit !!!
+- [Nov 02, 2017] Added guest agent for linux 32 and 64 bits.
+- [Oct 23, 2017] Added guest agent for Windows 32 and 64 bits.
 - [Oct 11, 2017] Added linux module symbol parsing.
 - [Sep 22, 2017] Added support for module reloading.
 - [Sep 20, 2017] Added custom function callback to BP class.
 - [Sep 20, 2017] Upgraded to Qemu v2.10.0.
-- [Aug 31, 2017] Partial support for linux guests
+- [Aug 31, 2017] Partial support for linux guests.
 
-Roadmap
+Install
 =======
 
-- VM image configuration and management console.
-- Support for ARM, MIPS, and other architectures.
-- Finish support for GNU/Linux guest systems (see issues).
+A build script is provided. For specific details about dependencies, please see BUILD_. We also provide a Dockerfile.
 
 Documentation
 =============
@@ -69,10 +68,13 @@ us solve your issues, please include as much information as possible in order to
 - Any information about the error such as error messages, Python (or IPython) stack trace, or QEMU stack trace.
 - Any other relevant information
 
-Install
+Roadmap
 =======
 
-A build script is provided. For specific details about dependencies, please see BUILD_. We also provide a Dockerfile.
+- VM image configuration and management console.
+- Support for ARM, MIPS, and other architectures.
+- Finish support for GNU/Linux guest systems (see issues).
+
 
 Starting a VM
 =============

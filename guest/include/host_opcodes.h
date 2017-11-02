@@ -39,6 +39,8 @@
  "\x20\x00": self.handle_host_request_exec_path,
  "\x20\x01": self.handle_host_request_exec_args,
  "\x20\x02": self.handle_host_request_exec_env
+ "\x20\x03": self.handle_host_request_exec_args_linux,
+ "\x20\x04": self.handle_host_request_exec_env_linux
 */
 
 #define HOST_INSTRUCTION(v1, v2) \
@@ -201,5 +203,39 @@ static inline int host_request_exec_env(char* buffer, int max_buffer_size){
 
     return ret;
 }
+
+/**
+ * Copies the argument list for a file execution operation into a buffer.
+ * :arg buffer: The output buffer in which the argument list will be copied.
+ * :arg max_buffer_size: The size of the output buffer.
+ * :returns: The length of the copied data.
+ */
+static inline int host_request_exec_args_linux(char* buffer, int max_buffer_size){
+    int ret;
+    memset(buffer, 0, max_buffer_size);
+    __asm__ __volatile__(
+        HOST_INSTRUCTION(0x20, 0x03) : "=a" (ret) : 
+            "a" (buffer), "b" (max_buffer_size));
+
+    return ret;
+}
+
+/**
+ * Copies the env variable list for a file execution operation into a buffer.
+ * :arg buffer: The output buffer in which the env variable list will be copied.
+ * :arg max_buffer_size: The size of the output buffer.
+ * :returns: The length of the copied data.
+ */
+static inline int host_request_exec_env_linux(char* buffer, int max_buffer_size){
+
+    int ret;
+    memset(buffer, 0, max_buffer_size);
+    __asm__ __volatile__(
+        HOST_INSTRUCTION(0x20, 0x04) : "=a" (ret) : 
+            "a" (buffer), "b" (max_buffer_size));
+
+    return ret;
+}
+
         
 #endif
