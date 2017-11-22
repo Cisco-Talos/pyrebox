@@ -80,26 +80,25 @@ def vol_write_memory(addr, length, buff):
     return c_api.vol_write_memory(addr, length, buff)
 
 
-def print_internal(plugin_name, f, *args):
+def print_internal(plugin_name, string_to_print):
     import c_api
-    string_to_print = (f % args)
     num_breaks = string_to_print.count("\n")
     # Adjust output depending on the "\n" usage in the string to print
     if num_breaks == 0:
-        c_api.plugin_print_internal("[%s] %s\n" % (plugin_name, (f % args)))
+        c_api.plugin_print_internal("[%s] %s\n" % (plugin_name, string_to_print))
     elif num_breaks == 1 and string_to_print[-1] != "\n":
         c_api.plugin_print_internal("\n[%s]\n" % (plugin_name))
         c_api.plugin_print_internal("-" * (2 + len(plugin_name)) + "\n")
-        c_api.plugin_print_internal("%s\n" % (f % args))
+        c_api.plugin_print_internal("%s\n" % string_to_print)
     elif num_breaks == 1 and string_to_print[-1] == "\n":
-        c_api.plugin_print_internal("[%s] %s" % (plugin_name, (f % args)))
+        c_api.plugin_print_internal("[%s] %s" % (plugin_name, string_to_print))
     else:
         c_api.plugin_print_internal("\n[%s]\n" % (plugin_name))
         c_api.plugin_print_internal("-" * (2 + len(plugin_name)) + "\n")
         if string_to_print[-1] != "\n":
-            c_api.plugin_print_internal("%s\n" % (f % args))
+            c_api.plugin_print_internal("%s\n" % string_to_print)
         else:
-            c_api.plugin_print_internal("%s" % (f % args))
+            c_api.plugin_print_internal("%s" % string_to_print)
     return None
 
 
