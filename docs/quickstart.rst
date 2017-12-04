@@ -198,6 +198,10 @@ List loaded modules
 ::
   (qemu) list_modules
 
+Reload a module, by module handle (you can obtain this handle by listing loaded modules)
+::
+  (qemu) reload_module 1
+
 Unload a module, by module handle (you can obtain this handle by listing loaded modules)
 ::
   (qemu) unload_module 1
