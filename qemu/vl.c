@@ -2995,9 +2995,6 @@ static void register_global_properties(MachineState *ms)
 
 int main(int argc, char **argv, char **envp)
 {
-    if (pyrebox_init()){
-        return 1;
-    }
     int i;
     int snapshot, linux_boot;
     const char *initrd_filename;
@@ -3033,6 +3030,7 @@ int main(int argc, char **argv, char **envp)
     Error *main_loop_err = NULL;
     Error *err = NULL;
     bool list_data_dirs = false;
+    const char *pyrebox_conf_name = "pyrebox.conf";
     typedef struct BlockdevOptions_queue {
         BlockdevOptions *bdo;
         Location loc;
@@ -3119,6 +3117,9 @@ int main(int argc, char **argv, char **envp)
 
             popt = lookup_opt(argc, argv, &optarg, &optind);
             switch (popt->index) {
+            case QEMU_OPTION_conf:
+	        pyrebox_conf_name = optarg;
+                break; 
             case QEMU_OPTION_nodefconfig:
                 defconfig = false;
                 break;
@@ -3127,6 +3128,10 @@ int main(int argc, char **argv, char **envp)
                 break;
             }
         }
+    }
+
+    if (pyrebox_init(pyrebox_conf_name)){
+        return 1;
     }
 
     if (defconfig && userconfig) {
