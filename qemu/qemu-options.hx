@@ -11,6 +11,15 @@ STEXI
 @table @option
 ETEXI
 
+DEF("conf", HAS_ARG, QEMU_OPTION_conf, \
+    "-conf custom.conf\n"
+    "                PyREBox Config File. Default: pyrebox.conf\n", QEMU_ARCH_ALL)
+STEXI
+@item -conf
+@findex -conf
+Load this config file rather than pyrebox.conf
+ETEXI
+
 DEF("help", 0, QEMU_OPTION_h,
     "-h or -help     display this help and exit\n", QEMU_ARCH_ALL)
 STEXI

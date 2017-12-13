@@ -55,7 +55,7 @@ void clear_targets(void){
   clear_monitored_processes();
 }
 
-int pyrebox_init(void){
+int pyrebox_init(const char *pyrebox_conf_str){
 
   //Initialize mutex to call python code, which may sometime be thread unsafe
   if (pthread_mutex_init(&pyrebox_mutex, NULL) != 0){      
@@ -121,11 +121,13 @@ int pyrebox_init(void){
   PyObject *platform_str = PyString_FromString(target_platform);
   PyObject *root_path_str = PyString_FromString(ROOT_PATH);
   PyObject *volatility_path_str = PyString_FromString(VOLATILITY_PATH);
+  PyObject *conf_name_str = PyString_FromString(pyrebox_conf_str);
 
-  py_args_tuple = PyTuple_New(3);
+  py_args_tuple = PyTuple_New(4);
   PyTuple_SetItem(py_args_tuple, 0, platform_str); 
   PyTuple_SetItem(py_args_tuple, 1, root_path_str); 
   PyTuple_SetItem(py_args_tuple, 2, volatility_path_str); 
+  PyTuple_SetItem(py_args_tuple, 3, conf_name_str);
 
   py_init = PyDict_GetItemString(py_global_dict, "init");
   PyObject* vol_profile = PyObject_CallObject(py_init,py_args_tuple);
