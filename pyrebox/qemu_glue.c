@@ -277,10 +277,11 @@ int qemu_virtual_memory_rw(qemu_cpu_opaque_t *cpu_opaque, pyrebox_target_ulong a
 
 int qemu_virtual_memory_rw_with_pgd(pyrebox_target_ulong pgd, pyrebox_target_ulong addr,
                         uint8_t *buf, pyrebox_target_ulong len, int is_write){
+    int result = 0;
     //First try to do it using the running CPU with the corresponding pgd
     qemu_cpu_opaque_t running_cpu = get_qemu_cpu_with_pgd(pgd);
     if (running_cpu != NULL){
-        qemu_virtual_memory_rw(running_cpu,addr,buf,len,is_write); 
+        result = qemu_virtual_memory_rw(running_cpu,addr,buf,len,is_write);
     }
     else{//If it didnt work, we force the pgd 
         CPUState* cpu = first_cpu;
@@ -289,7 +290,7 @@ int qemu_virtual_memory_rw_with_pgd(pyrebox_target_ulong pgd, pyrebox_target_ulo
         CPUX86State* env = &(X86_CPU(cpu)->env);
         pyrebox_target_ulong old_pgd = env->cr[3];
         env->cr[3] = pgd;
-        qemu_virtual_memory_rw((qemu_cpu_opaque_t)cpu,addr,buf,len,is_write);
+        result = qemu_virtual_memory_rw((qemu_cpu_opaque_t)cpu,addr,buf,len,is_write);
         env->cr[3] = old_pgd;
 #elif defined(TARGET_AARCH64)
 #error "Architecture not supported yet"
@@ -297,7 +298,7 @@ int qemu_virtual_memory_rw_with_pgd(pyrebox_target_ulong pgd, pyrebox_target_ulo
 #error "Architecture not supported yet"
 #endif
     }
-    return 0;
+    return result;
 }
 pyrebox_target_ulong qemu_virtual_to_physical_with_pgd(pyrebox_target_ulong pgd, pyrebox_target_ulong addr){
     qemu_cpu_opaque_t running_cpu = get_qemu_cpu_with_pgd(pgd);

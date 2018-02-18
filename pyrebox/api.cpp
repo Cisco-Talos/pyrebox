@@ -194,8 +194,12 @@ PyObject* r_va(PyObject *dummy, PyObject *args)
         } else{
             buffer = (uint8_t*) malloc(len * sizeof(uint8_t));
             if (buffer) {
-                qemu_virtual_memory_rw_with_pgd(pgd,addr,buffer,len,0);
-                result = Py_BuildValue("s#",buffer,len);
+                if (qemu_virtual_memory_rw_with_pgd(pgd,addr,buffer,len,0) == 0) {
+                    result = Py_BuildValue("s#",buffer,len);
+                } else
+                {
+                    PyErr_SetString(PyExc_RuntimeError, "Could not read memory");
+                }
                 free(buffer);
             } else
             {
