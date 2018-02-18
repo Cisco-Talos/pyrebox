@@ -2617,6 +2617,20 @@ do_gen_eob_worker(DisasContext *s, bool inhibit, bool recheck_tf, TCGv jr)
         TCGv vaddr = tcg_temp_new();
 
         tcg_gen_add_tl(vaddr, jr, cpu_seg_base[R_CS]);
+
+        //Pyrebox: block_end
+        //helper_qemu_block_end_callback(CPUState* cpu,TranslationBlock* next_tb, target_ulong from)
+        if (is_block_end_callback_needed(s->pgd)){
+            TCGv_ptr tcg_tb = tcg_const_ptr((tcg_target_ulong)s->tb);
+            TCGv tcg_from = tcg_temp_new();
+            tcg_gen_movi_tl(tcg_from, s->saved_pc);
+            TCGv_ptr tcg_cpu = tcg_const_ptr((tcg_target_ulong)s->cs);
+            gen_helper_qemu_block_end_callback(tcg_cpu,tcg_tb,tcg_from,jr);
+            tcg_temp_free(tcg_from);
+            tcg_temp_free_ptr(tcg_tb);
+            tcg_temp_free_ptr(tcg_cpu);
+        }
+
         tcg_gen_lookup_and_goto_ptr(vaddr);
         tcg_temp_free(vaddr);
     } else {
