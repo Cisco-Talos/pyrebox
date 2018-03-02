@@ -85,7 +85,7 @@ def windows_insert_module_internal(
             if (checksum, fullname) in mods_pending:
                 for m in mods_pending[(checksum, fullname)]:
                     m.set_symbols(syms)
-                    del mods_pending[(checksum, fullname)]
+                del mods_pending[(checksum, fullname)]
         else:
             if (checksum, fullname) in mods_pending:
                 mods_pending[(checksum, fullname)].append(mod)
