@@ -349,7 +349,7 @@ class GuestAgentPlugin(object):
             # If we already have a running agent, ignore it
             if self.__status < GuestAgentPlugin.__AGENT_RUNNING:
                 # Use only the first 8 characters since the name could be truncated
-                if name in self.__agent_filename:
+                if name is not None and name != "" and name in self.__agent_filename:
                     self.__agent_pgd = pgd
                     # Monitor context change to check we can get the base address
                     # for the process main module
