@@ -1,6 +1,6 @@
 # -------------------------------------------------------------------------------
 #
-#   Copyright (C) 2017 Cisco Talos Security Intelligence and Research Group
+#   Copyright (C) 2018 Cisco Talos Security Intelligence and Research Group
 #
 #   PyREBox: Python scriptable Reverse Engineering Sandbox
 #   Author: Xabier Ugarte-Pedrero
@@ -22,23 +22,36 @@
 # -------------------------------------------------------------------------------
 
 from __future__ import print_function
-from api import CallbackManager
 
 # Callback manager
 cm = None
-counter = 0
 pyrebox_print = None
 
-
-def mem_write(cpu_index, addr, size, haddr, data):
+def module_loaded(pid, pgd, base, size, name, fullname):
+    '''
+    Callback for loaded modules
+    '''
     global cm
-    global counter
-    pyrebox_print("Mem write at cpu %x, addr %x size %x\n" % (cpu_index, addr, size))
-    counter += 1
-    # Remove the callback after 5 writes
-    if counter == 5:
-        cm.rm_callback("mem_write")
+    global pyrebox_print
+    pyrebox_print("Loaded module: PID: %x PGD: %x Base: %x Size: %x Name: %s" % (pid, pgd, base, size, name))
 
+def module_removed(pid, pgd, base, size, name, fullname):
+    '''
+    Callback for loaded modules
+    '''
+    global cm
+    global pyrebox_print
+    pyrebox_print("Removed module: PID: %x PGD: %x Base: %x Size: %x Name: %s" % (pid, pgd, base, size, name))
+
+def new_proc(pid, pgd, name):
+    global cm
+    from api import CallbackManager
+    pyrebox_print("Process created: %s" % name)
+    if "calc.exe" in name:
+        pyrebox_print("Adding module load/remove callback on calc.exe")
+        cm.add_callback(CallbackManager.LOADMODULE_CB, module_loaded, pgd = pgd, name="load_module_%x" % pgd)
+        cm.add_callback(CallbackManager.REMOVEMODULE_CB, module_removed, pgd = pgd, name="remove_module_%x" % pgd)
+        cm.rm_callback("vmi_new_proc")
 
 def clean():
     '''
@@ -51,7 +64,6 @@ def clean():
     cm.clean()
     pyrebox_print("[*]    Cleaned module\n")
 
-
 def initialize_callbacks(module_hdl, printer):
     '''
     Initilize callbacks for this module. This function
@@ -60,18 +72,14 @@ def initialize_callbacks(module_hdl, printer):
     '''
     global cm
     global pyrebox_print
-
+    from api import CallbackManager
+    # Initialize printer
     pyrebox_print = printer
     pyrebox_print("[*]    Initializing callbacks\n")
     cm = CallbackManager(module_hdl)
-    cm.add_callback(CallbackManager.MEM_WRITE_CB, mem_write, name="mem_write")
-    # Add a bpw_memrange trigger to the callback, that will limit
-    # the address range for which the callback will be triggered
-    cm.add_trigger("mem_write", "triggers/trigger_bpw_memrange.so")
-    cm.set_trigger_var("mem_write", "begin", 0x0)
-    cm.set_trigger_var("mem_write", "end", 0x80000000)
-    cm.set_trigger_var("mem_write", "pgd", 0xFFFFFFFF)
+    cm.add_callback(CallbackManager.CREATEPROC_CB, new_proc, name="vmi_new_proc")
     pyrebox_print("[*]    Initialized callbacks\n")
+    pyrebox_print("[!]    Test: Open calc.exe and monitor the process")
 
 
 if __name__ == "__main__":

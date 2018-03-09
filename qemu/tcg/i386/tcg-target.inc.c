@@ -141,11 +141,20 @@ static bool have_lzcnt;
 static tcg_insn_unit *tb_ret_addr;
 
 #if TCG_TARGET_REG_BITS == 64 
-static void load_operation(target_ulong vaddr, target_ulong size, CPUState* cpu) {
-    helper_qemu_mem_read_callback(cpu, vaddr, size);
+static void load_operation(target_ulong vaddr, void* haddr, target_ulong size, CPUState* cpu) {
+    helper_qemu_mem_read_callback(cpu, vaddr, (uintptr_t) qemu_ram_addr_from_host((void*)haddr), size);
 }
-static void store_operation(target_ulong vaddr, target_ulong size, CPUState* cpu) {
-    helper_qemu_mem_write_callback(cpu, vaddr, size);
+static void store_operation_1(target_ulong vaddr, void* haddr, target_ulong data, CPUState* cpu) {
+    helper_qemu_mem_write_callback(cpu, vaddr, (uintptr_t) qemu_ram_addr_from_host((void*)haddr), data, 1);
+}
+static void store_operation_2(target_ulong vaddr, void* haddr, target_ulong data, CPUState* cpu) {
+    helper_qemu_mem_write_callback(cpu, vaddr, (uintptr_t) qemu_ram_addr_from_host((void*)haddr), data, 2);
+}
+static void store_operation_4(target_ulong vaddr, void* haddr, target_ulong data, CPUState* cpu) {
+    helper_qemu_mem_write_callback(cpu, vaddr, (uintptr_t) qemu_ram_addr_from_host((void*)haddr), data, 4);
+}
+static void store_operation_8(target_ulong vaddr, void* haddr, target_ulong data, CPUState* cpu) {
+    helper_qemu_mem_write_callback(cpu, vaddr, (uintptr_t) qemu_ram_addr_from_host((void*)haddr), data, 8);
 }
 
 #endif
@@ -1715,6 +1724,8 @@ static void tcg_out_qemu_ld(TCGContext *s, const TCGArg *args, bool is64)
         tcg_out_push(s, tcg_target_call_iarg_regs[1]);
         //Push the arg
         tcg_out_push(s, tcg_target_call_iarg_regs[2]);
+        //Push the arg
+        tcg_out_push(s, tcg_target_call_iarg_regs[3]);
 
         //Saveguard datalo, datahi, addrlo, addrhi
         tcg_out_push(s, datalo);
@@ -1722,26 +1733,26 @@ static void tcg_out_qemu_ld(TCGContext *s, const TCGArg *args, bool is64)
         tcg_out_push(s, addrlo);
         tcg_out_push(s, addrhi);
 
-        //Push 8 bytes to ensure stack alignment to 16 bytes are required by GCC.w
-        tcg_out_push(s, 0);
+        //Push 8 bytes to ensure stack alignment to 16 bytes are required by GCC.
+        //tcg_out_push(s, 0);
 
         //In 64 bit targets, the address is contained in addrlo
         tcg_out_mov(s, TCG_TYPE_I64,tcg_target_call_iarg_regs[0], addrlo);
 
-        tcg_out_movi(s, TCG_TYPE_I64,tcg_target_call_iarg_regs[2], (tcg_target_long)s->cpu);
+        tcg_out_movi(s, TCG_TYPE_I64,tcg_target_call_iarg_regs[3], (tcg_target_long)s->cpu);
 
         switch (opc & MO_SIZE) {
           case MO_8:
-            tcg_out_movi(s, TCG_TYPE_I64,tcg_target_call_iarg_regs[1], 1);
+            tcg_out_movi(s, TCG_TYPE_I64,tcg_target_call_iarg_regs[2], 1);
             break;
           case MO_16:
-            tcg_out_movi(s, TCG_TYPE_I64,tcg_target_call_iarg_regs[1], 2);
+            tcg_out_movi(s, TCG_TYPE_I64,tcg_target_call_iarg_regs[2], 2);
             break;
           case MO_32:
-            tcg_out_movi(s, TCG_TYPE_I64,tcg_target_call_iarg_regs[1], 4);
+            tcg_out_movi(s, TCG_TYPE_I64,tcg_target_call_iarg_regs[2], 4);
             break;
           case MO_64:
-            tcg_out_movi(s, TCG_TYPE_I64,tcg_target_call_iarg_regs[1], 8);
+            tcg_out_movi(s, TCG_TYPE_I64,tcg_target_call_iarg_regs[2], 8);
             break;
           default:
             tcg_abort();
@@ -1749,8 +1760,8 @@ static void tcg_out_qemu_ld(TCGContext *s, const TCGArg *args, bool is64)
         tcg_out_call(s, (tcg_insn_unit*)load_operation);
 
         //Undo stack alignment
-        TCGReg tmp = 0;
-        tcg_out_pop(s, tmp);
+        //TCGReg tmp = 0;
+        //tcg_out_pop(s, tmp);
 
         //Pop the rest
         tcg_out_pop(s, addrhi);
@@ -1758,6 +1769,8 @@ static void tcg_out_qemu_ld(TCGContext *s, const TCGArg *args, bool is64)
         tcg_out_pop(s, datahi);
         tcg_out_pop(s, datalo);
 
+        //Pop the arg
+        tcg_out_pop(s, tcg_target_call_iarg_regs[3]);
         //Pop the arg
         tcg_out_pop(s, tcg_target_call_iarg_regs[2]);
         //Pop the arg 0
@@ -1910,6 +1923,9 @@ static void tcg_out_qemu_st(TCGContext *s, const TCGArg *args, bool is64)
     tcg_out_tlb_load(s, addrlo, addrhi, mem_index, opc,
                      label_ptr, offsetof(CPUTLBEntry, addr_write));
 
+    /* TLB Hit.  */
+    tcg_out_qemu_st_direct(s, datalo, datahi, TCG_REG_L1, 0, 0, opc);
+
 #if TCG_TARGET_REG_BITS == 64 
 
     CPUX86State* env = &(X86_CPU((CPUState*)s->cpu)->env);
@@ -1930,6 +1946,9 @@ static void tcg_out_qemu_st(TCGContext *s, const TCGArg *args, bool is64)
         tcg_out_push(s, tcg_target_call_iarg_regs[1]);
         //Push the arg
         tcg_out_push(s, tcg_target_call_iarg_regs[2]);
+        //Push the arg
+        tcg_out_push(s, tcg_target_call_iarg_regs[3]);
+
 
         //Saveguard datalo, datahi, addrlo, addrhi
         tcg_out_push(s, datalo);
@@ -1939,34 +1958,37 @@ static void tcg_out_qemu_st(TCGContext *s, const TCGArg *args, bool is64)
 
 
         //Stack alignment
-        tcg_out_push(s, 0);
+        //tcg_out_push(s, 0);
 
         //In 64 bit targets, the address is contained in addrlo
         tcg_out_mov(s, TCG_TYPE_I64,tcg_target_call_iarg_regs[0], addrlo);
 
-        tcg_out_movi(s, TCG_TYPE_I64,tcg_target_call_iarg_regs[2], (tcg_target_long)s->cpu);
+        tcg_out_movi(s, TCG_TYPE_I64,tcg_target_call_iarg_regs[3], (tcg_target_long)s->cpu);
 
+        tcg_out_mov(s, TCG_TYPE_I64,tcg_target_call_iarg_regs[2], datalo);
+
+        // and tcg_target_call_iarg_regs[1] contains the physical address in case
+        // of TLB hit.
         switch (opc & MO_SIZE) {
           case MO_8:
-            tcg_out_movi(s, TCG_TYPE_I64,tcg_target_call_iarg_regs[1], 1);
+            tcg_out_call(s, (tcg_insn_unit*)store_operation_1);
             break;
           case MO_16:
-            tcg_out_movi(s, TCG_TYPE_I64,tcg_target_call_iarg_regs[1], 2);
+            tcg_out_call(s, (tcg_insn_unit*)store_operation_2);
             break;
           case MO_32:
-            tcg_out_movi(s, TCG_TYPE_I64,tcg_target_call_iarg_regs[1], 4);
+            tcg_out_call(s, (tcg_insn_unit*)store_operation_4);
             break;
           case MO_64:
-            tcg_out_movi(s, TCG_TYPE_I64,tcg_target_call_iarg_regs[1], 8);
+            tcg_out_call(s, (tcg_insn_unit*)store_operation_8);
             break;
           default:
             tcg_abort();
         }
-        tcg_out_call(s, (tcg_insn_unit*)store_operation);
 
         //Undo stack alignment
-        TCGReg tmp = 0;
-        tcg_out_pop(s, tmp);
+        //TCGReg tmp = 0;
+        //tcg_out_pop(s, tmp);
 
         //Pop the rest
         tcg_out_pop(s, addrhi);
@@ -1974,6 +1996,8 @@ static void tcg_out_qemu_st(TCGContext *s, const TCGArg *args, bool is64)
         tcg_out_pop(s, datahi);
         tcg_out_pop(s, datalo);
 
+        //Pop the arg
+        tcg_out_pop(s, tcg_target_call_iarg_regs[3]);
         //Pop the arg
         tcg_out_pop(s, tcg_target_call_iarg_regs[2]);
         //Pop the arg 0
@@ -1985,9 +2009,6 @@ static void tcg_out_qemu_st(TCGContext *s, const TCGArg *args, bool is64)
     //---------------------------------End Pyrebox added ---------------------------------
 #endif
 
-
-    /* TLB Hit.  */
-    tcg_out_qemu_st_direct(s, datalo, datahi, TCG_REG_L1, 0, 0, opc);
 
     /* Record the current context of a store into ldst label */
     add_qemu_ldst_label(s, false, oi, datalo, datahi, addrlo, addrhi,

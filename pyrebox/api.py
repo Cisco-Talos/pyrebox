@@ -40,6 +40,10 @@ from api_internal import set_trigger_uint32
 from api_internal import set_trigger_uint64
 from api_internal import set_trigger_str
 from api_internal import get_trigger_var
+from api_internal import unregister_module_load_callback
+from api_internal import unregister_module_remove_callback
+from api_internal import register_module_load_callback
+from api_internal import register_module_remove_callback
 
 import functools
 
@@ -679,6 +683,8 @@ class CallbackManager:
     CREATEPROC_CB = 13
     REMOVEPROC_CB = 14
     CONTEXTCHANGE_CB = 15
+    LOADMODULE_CB = 16
+    REMOVEMODULE_CB = 17
 
     def __init__(self, module_hdl):
         """ Constructor of the class
@@ -688,6 +694,9 @@ class CallbackManager:
             :type module_hdl: int
         """
         self.callbacks = {}
+        self.load_module_callbacks = {}
+        self.remove_module_callbacks = {}
+
         self.module_hdl = module_hdl
 
     def generate_callback_name(self, name):
@@ -700,12 +709,13 @@ class CallbackManager:
             :rtype: str
         """
         subname = name
-        if subname in self.callbacks:
-            counter = 1
-            while subname in self.callbacks:
-                subname = "%s_%d" % (name, counter)
-                counter += 1
-        return name
+        counter = 0
+        while subname in self.callbacks or \
+              subname in self.load_module_callbacks or \
+              subname in self.remove_module_callbacks:
+            subname = "%s_%d" % (name, counter)
+            counter += 1
+        return subname
 
     def add_callback(
             self,
@@ -746,12 +756,22 @@ class CallbackManager:
         import random
         import string
         import time
+
         # If a name was not provided, just provide a 16 lowercase letter random
         # name
         if name is None:
             random.seed(time.time())
             name = "".join(random.choice(string.lowercase) for i in range(16))
         name = self.generate_callback_name(name)
+
+        # If the callback_type is a module callback, register it with specific API
+        if callback_type == CallbackManager.LOADMODULE_CB:
+            register_module_load_callback(pgd, name, func)
+            return
+        if callback_type == CallbackManager.REMOVEMODULE_CB:
+            register_module_remove_callback(pgd, name, func)
+            return
+
         # addr,pgd and start_opcode,end_opcode are exclusive, so we join them
         # together to call register_callback
         first_param = start_opcode if addr is None else addr
@@ -769,13 +789,24 @@ class CallbackManager:
             :return: None
             :rtype: None
         """
-        if name not in self.callbacks:
-            raise ValueError(
+        if name in self.callbacks:
+            unregister_callback(self.callbacks[name])
+            del(self.callbacks[name])
+            return
+
+        if name in self.load_module_callbacks:
+            unregister_module_load_callback(name)
+            del(self.load_module_callbacks[name])
+            return
+
+        if name in self.remove_module_callbacks:
+            unregister_module_remove_callback(name)
+            del(self.remove_module_callbacks[name])
+            return
+
+        raise ValueError(
                 "[!] CallbackManager: A callback with name %s does not exist and cannot be removed\n" %
                 (name))
-            return
-        unregister_callback(self.callbacks[name])
-        del(self.callbacks[name])
 
     def callback_exists(self, name):
         """ Determine if a callback exists or not, given its name
@@ -786,7 +817,7 @@ class CallbackManager:
             :return: True if the callback already exists
             :rtype: bool
         """
-        return (name in self.callbacks)
+        return (name in self.callbacks) or (name in self.module_load_callbacks) or (name in self.module_remove_callbacks)
 
     def add_trigger(self, name, trigger_path):
         ''' Add trigger to a callback.
@@ -806,9 +837,10 @@ class CallbackManager:
         from utils import ConfigurationManager as conf_m
         import subprocess
         import os
+
         if name not in self.callbacks:
             raise ValueError(
-                "[!] CallbackManager: A callback with name %s does not exist\n" %
+                "[!] CallbackManager: A callback with name %s does not exist, or it is a module callback (non-trigger compatible)\n" %
                 (name))
             return
         # Remove ".so" from the path, if present
@@ -840,7 +872,7 @@ class CallbackManager:
         '''
         if name not in self.callbacks:
             raise ValueError(
-                "[!] CallbackManager: A callback with name %s does not exist\n" %
+                "[!] CallbackManager: A callback with name %s does not exist, or it is a module callback (non-trigger compatible)\n" %
                 (name))
             return
         remove_trigger(self.callbacks[name])
@@ -865,7 +897,7 @@ class CallbackManager:
 
         if name not in self.callbacks:
             raise ValueError(
-                "[!] CallbackManager: A callback with name %s does not exist\n" %
+                "[!] CallbackManager: A callback with name %s does not exist, or it is a module callback (non-trigger compatible)\n" %
                 (name))
             return
         if isinstance(val, str):
@@ -897,7 +929,7 @@ class CallbackManager:
         '''
         if name not in self.callbacks:
             raise ValueError(
-                "[!] CallbackManager: A callback with name %s does not exist\n" %
+                "[!] CallbackManager: A callback with name %s does not exist, or it is a module callback (non-trigger compatible)\n" %
                 (name))
             return
         return get_trigger_var(self.callbacks[name], var_name)
@@ -913,6 +945,13 @@ class CallbackManager:
         names = self.callbacks.keys()
         for name in names:
             self.rm_callback(name)
+        names = self.load_module_callbacks.keys()
+        for name in names:
+            self.rm_callback(name)
+        names = self.remove_module_callbacks.keys()
+        for name in names:
+            self.rm_callback(name)
+
 
 # ================================================== CLASSES ==============
 
@@ -924,6 +963,8 @@ class BP:
     EXECUTION = 0
     MEM_READ = 1
     MEM_WRITE = 2
+    MEM_READ_PHYS = 3
+    MEM_WRITE_PHYS = 4
     __active_bps = {}
     __cm = CallbackManager(0)
     __bp_num = 0
@@ -934,14 +975,15 @@ class BP:
             :param addr: The (start) address where we want to put the breakpoint
             :type addr: int
 
-            :param pgd: The PGD or address space where we want to put the breakpoing
+            :param pgd: The PGD or address space where we want to put the breakpoint. Irrelevant for physical address
+                        breakpoints.
             :type pgd: int
 
             :param size: Optional. The size of the area we want to put a breakpoint on.
                          We can put the BP on a single address or a memory range.
             :type size: int
 
-            :param typ: The type of breakpoint: BP.EXECUTION, BP.MEM_READ, BP.MEM_WRITE
+            :param typ: The type of breakpoint: BP.EXECUTION, BP.MEM_READ, BP.MEM_WRITE, BP.MEM_READ_PHYS, BP.MEM_WRITE_PHYS
             :type typ: int
 
             :param func: Optional. The function that will be called as callback for the breakpoint. The
@@ -956,14 +998,22 @@ class BP:
         """
 
         self.typ = typ
-        typ_str = "x" if typ == self.EXECUTION else (
-            "r" if typ == self.MEM_READ else "w")
+        if typ == self.EXECUTION:
+            typ_str = "x"
+        elif typ == self.MEM_READ:
+            typ_str = "r"
+        elif typ == self.MEM_WRITE:
+            typ_str = "w"
+        elif typ == self.MEM_READ_PHYS:
+            typ_str = "rp"
+        elif typ == self.MEM_WRITE_PHYS:
+            typ_str = "wp"
         self.__bp_repr = "BP%s_%d" % (typ_str, BP.__bp_num)
         BP.__bp_num += 1
         self.addr = addr
         self.pgd = pgd
         self.en = False
-        if (typ == self.MEM_READ or typ == self.MEM_WRITE) and size == 0:
+        if (typ > self.EXECUTION) and size == 0:
             self.size = 1
         else:
             self.size = size
@@ -1081,6 +1131,22 @@ class BP:
                 BP.__cm.set_trigger_var(
                     self.__bp_repr, "end", self.addr + self.size)
                 BP.__cm.set_trigger_var(self.__bp_repr, "pgd", self.pgd)
+            elif self.typ == self.MEM_READ_PHYS:
+                self.__bp_repr = BP.__cm.add_callback(
+                    CallbackManager.MEM_READ_CB, self.func, name=self.__bp_repr)
+                BP.__cm.add_trigger(
+                    self.__bp_repr, "triggers/trigger_bprh_memrange.so")
+                BP.__cm.set_trigger_var(self.__bp_repr, "begin", self.addr)
+                BP.__cm.set_trigger_var(
+                    self.__bp_repr, "end", self.addr + self.size)
+            elif self.typ == self.MEM_WRITE_PHYS:
+                self.__bp_repr = BP.__cm.add_callback(
+                    CallbackManager.MEM_WRITE_CB, self.func, name=self.__bp_repr)
+                BP.__cm.add_trigger(
+                    self.__bp_repr, "triggers/trigger_bpwh_memrange.so")
+                BP.__cm.set_trigger_var(self.__bp_repr, "begin", self.addr)
+                BP.__cm.set_trigger_var(
+                    self.__bp_repr, "end", self.addr + self.size)
 
     def disable(self):
         """ Disable a breakpoint
@@ -1093,7 +1159,7 @@ class BP:
             self.en = False
             # Trigger is deleted automagically
             BP.__cm.rm_callback(self.__bp_repr)
-            if self.pgd in BP.__active_bps:
+            if self.typ < BP.MEM_READ_PHYS and self.pgd in BP.__active_bps:
                 BP.__active_bps[self.pgd] -= 1
                 if BP.__active_bps[self.pgd] == 0:
                     stop_monitoring_process(self.pgd)

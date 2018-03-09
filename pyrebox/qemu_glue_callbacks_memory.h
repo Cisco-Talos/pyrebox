@@ -27,8 +27,8 @@
 #include "qemu_glue_callbacks_needed.h"
 
 //In TCG code
-void helper_qemu_mem_read_callback(CPUState* cpu, target_ulong vaddr, target_ulong size);
+void helper_qemu_mem_read_callback(CPUState* cpu, target_ulong vaddr, uintptr_t haddr, target_ulong size);
 
-void helper_qemu_mem_write_callback(CPUState* cpu, target_ulong vaddr, target_ulong size);
+void helper_qemu_mem_write_callback(CPUState* cpu, target_ulong vaddr, uintptr_t haddr, target_ulong data, target_ulong size);
 
 #endif

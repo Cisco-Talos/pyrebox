@@ -31,7 +31,7 @@ target_procname = None
 page_status = {}
 
 
-def mem_write(cpu_index, vaddr, size):
+def mem_write(cpu_index, vaddr, size, haddr, data):
     global cm
     global page_status
     import api

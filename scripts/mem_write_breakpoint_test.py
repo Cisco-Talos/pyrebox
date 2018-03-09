@@ -35,7 +35,7 @@ memwrite_breakpoint = None
 target_procname = ""
 
 
-def mem_write(cpu_index, addr, size):
+def mem_write(cpu_index, addr, size, haddr, data):
     global cm
     global counter
     global memwrite_breakpoint

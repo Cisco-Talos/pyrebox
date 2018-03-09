@@ -105,13 +105,6 @@ Install
 A build script is provided. For specific details about dependencies, please see the :ref:`quickstart guide <quickstart>`. 
 We also provide a Dockerfile.
 
-Roadmap
-=======
-
-- VM image configuration and management console.
-- Support for ARM, MIPS, and other architectures.
-- Support for GNU/Linux guest systems.
-
 Acknowledgement
 ===============
 

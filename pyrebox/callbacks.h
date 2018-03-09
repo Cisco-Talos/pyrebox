@@ -88,15 +88,18 @@ typedef struct insn_end_params {
 typedef struct mem_read_params {
     int cpu_index;
     pyrebox_target_ulong vaddr;
-    pyrebox_target_ulong paddr;
+    uintptr_t haddr;
     pyrebox_target_ulong size;
+    qemu_cpu_opaque_t cpu;
 } mem_read_params_t;
 
 typedef struct mem_write_params {
     int cpu_index;
     pyrebox_target_ulong vaddr;
-    pyrebox_target_ulong paddr;
+    uintptr_t haddr;
     pyrebox_target_ulong size;
+    pyrebox_target_ulong data;
+    qemu_cpu_opaque_t cpu;
 } mem_write_params_t;
 
 typedef struct keystroke_params {
@@ -297,7 +300,8 @@ class OptimizedInsBeginCallback : public Callback
             OptimizedInsBeginCallback* casted_rhs = dynamic_cast<OptimizedInsBeginCallback*>(rhs);
             //Exit if it does not belong to the same class
             assert(casted_rhs != 0);
-            return ((this->target_address.pgd < casted_rhs->target_address.pgd) || (this->target_address.pgd == casted_rhs->target_address.pgd && this->target_address.address < casted_rhs->target_address.address));
+            //Consider only the address, because the PGD will be checked at callback delivery
+            return (this->target_address.address < casted_rhs->target_address.address);
         }
 
     protected:
@@ -317,7 +321,8 @@ class OptimizedBlockBeginCallback : public Callback
             OptimizedBlockBeginCallback* casted_rhs = dynamic_cast<OptimizedBlockBeginCallback*>(rhs);
             //Exit if it does not belong to the same class
             assert(casted_rhs != 0);
-            return ((this->target_address.pgd < casted_rhs->target_address.pgd) || (this->target_address.pgd == casted_rhs->target_address.pgd && this->target_address.address < casted_rhs->target_address.address));
+            //Consider only the address, because the PGD will be checked at callback delivery
+            return (this->target_address.address < casted_rhs->target_address.address);
         }
 
     protected:

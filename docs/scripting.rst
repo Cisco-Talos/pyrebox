@@ -54,10 +54,11 @@ which processes are being monitored running the ``ps`` command in the PyREBox sh
 
 There are some exceptions to these rules:
 
-- **Block begin / Instruction begin**. If an address and pgd are specified for the callback (see examples), this callback will be fired only for that address and process, no matter if it is monitored or not.
+- **Block begin / Instruction begin**. If an address and pgd are specified for the callback (see examples), this callback will be triggered only for that address and process, no matter if it is monitored or not.
 - **Keystroke callback**. It will be called for all the processes in the system and in the context of any process in the system.
 - **NIC send/receive**. It will be called for all the processes in the system and in the context of any process in the system. 
 - **Opcode range callback**. It will be called at the instruction end for instructions with the specified opcodes, only for the monitored processes.
+- **Triggers**. Triggers are C/C++ compiled shared objects that are associated to a given callback. This code will be executed before the python callback function is called, and can decide whether the callback should be delivered to the python function or not. This approach allows to improve the overall performance by setting arbitrary callback conditions. When a trigger is attached to a callback, the trigger will be executed for every event (no matter if the process is being monitored or not), and it is the responsibility of the developer to check that the callback happened in the appropiate context (usually checking the PGD, that determines the current address space).
 
 Defining a new command
 ----------------------
@@ -84,13 +85,13 @@ There are some common data types used in many callbacks.
 **Parameter**     **Description**
 ----------------- ---------------------------------------------------------------------------------- 
 cpu               Object representing the CPU state. It will contain one member (field) for every register in the CPU
-tb                Tuple containing information about the translation block (set of instructions translated at one time) by QEMU, similar in concept to a basic block. The tuple contains 3 values: (pc,size,icount), where pc is the program counter of the first instruction, size is the size of the block, and icount the number of instructions in it.
+tb                Tuple containing information about the translation block (set of instructions translated at one time) by QEMU, similar in concept to a basic block. The tuple contains 3 values: (pc,size,icount), where pc is the program counter of the first instruction, size is the size of the block, and icount the number of instructions in it. **Translation blocks may not necessarily match basic blocks. The QEMU emulator will disassemble instruction by instruction until it finds either a control flow instruction, or a point where the next address cannot be guessed statically. All these instructions conform a translation block. Note that in some cases (e.g. special instructions), translation blocks may not necessarily match basic blocks.**
 ================= ==================================================================================
 
 Block begin
 ***********
 
-The callback is triggered for every executed basic block in the context of the monitored processes, at the beginning of the basic block. It is useful for tracing basic blocks. It allows to specify an address and PGD. In such a case, it will be triggered only for that address and process address space, no matter if the process is monitored or not.
+The callback is triggered for every executed translation block in the context of the monitored processes, at the beginning of the translation block. It is useful for tracing translation blocks. It allows to specify an address and PGD. In such a case, it will be triggered only for that address and process address space, no matter if the process is monitored or not.
 
 Callback type:  ``CallbackManager.BLOCK_BEGIN_CB``
 
@@ -108,7 +109,7 @@ Callback interface:
 Block end
 *********
 
-The callback is triggered for every executed basic block in the context of the monitored processes, at the end of the basic block. It is useful for tracing basic blocks. The ``cur_pc`` 
+The callback is triggered for every executed translation block in the context of the monitored processes, at the end of the translation block. It is useful for tracing translation blocks. The ``cur_pc`` 
 parameter represents the current instruction pointer, while ``next_pc`` represents the next instruction to execute. When the callback is triggered, the emulated cpu is already at the start of the next instruction.
 
 Callback type:  ``CallbackManager.BLOCK_END_CB``
@@ -159,7 +160,7 @@ Callback interface:
 Memory read
 ***********
 
-Triggered whenever any memory address is read in any of the processes monitored. The parameter ``vaddr`` represents the modified virtual address, and ``size`` is the size of the modification.
+Triggered whenever any memory address is read in any of the processes monitored. The parameter ``vaddr`` represents the modified virtual address. ``haddr`` is the corresponding physical address, and ``size`` is the size of the modification.
 
 Callback type: ``CallbackManager.MEM_READ_CB``
 
@@ -169,13 +170,13 @@ Example:
 
 Callback interface:
 ::
-    def my_function(cpu_index,vaddr,size): 
+    def my_function(cpu_index,vaddr,size,haddr):
         ...
 
 Memory write
 ************
 
-Triggered whenever any memory address is written in any of the processes monitored. The parameter ``vaddr`` represents the modified virtual address, and ``size`` is the size of the modification.
+Triggered whenever any memory address is written in any of the processes monitored. The parameter ``vaddr`` represents the modified virtual address. ``haddr`` is the corresponding physical address, and ``size`` is the size of the modification. The callback is called *after* the memory has been written. The ``data`` parameter contains the written memory value.
 
 Callback type: ``CallbackManager.MEM_WRITE_CB``
 
@@ -185,7 +186,7 @@ Example:
 
 Callback interface:
 ::
-    def my_function(cpu_index,vaddr,size): 
+    def my_function(cpu_index,vaddr,size,haddr,data):
         ...
 
 Keystroke event
@@ -331,10 +332,45 @@ Interface:
     def my_function(pid,cr3,name): 
         ...
 
+Module load
+***********
+
+Triggered whenever a library or a driver is loaded in the address space of a process. Parameters are self-descriptive.
+
+Callback type:  ``CallbackManager.LOADMODULE_CB``
+
+Example:
+::
+    cm.add_callback(CallbackManager.LOADMODULE_CB, my_function, pgd = cpu.CR3)
+
+Callback interface:
+::
+    def my_function(pid, pgd, base, size, name, fullname): 
+        ...
+
+Module remove
+*************
+
+Triggered whenever a library or a driver is removed from the address space of a process. Parameters are self-descriptive.
+
+Callback type:  ``CallbackManager.REMOVEPROC_CB``
+
+Example:
+::
+    cm.add_callback(CallbackManager.REMOVEMODULE_CB, my_function, pgd = cpu.CR3)
+
+Interface:
+::
+    def my_function(pid, pgd, base, size, name, fullname): 
+        ...
+
+
 Triggers
 --------
 
 Triggers are libraries developed in C/C++ that are compiled into native code and loaded at runtime. These triggers define a function named ``trigger`` that can perform any necessary computation and use the API offered by ``qemu_glue.h``. This function will then decide if the attached python callback should be executed or not. If the function returns 1, the python callback will be executed. If the function returns 0, the python callback is not executed.
+
+**When a trigger is added to a callback, it will be called for every event happening in any process context (not only monitored processes). Note that this is different from the default behavior in certain callback types. For instance, if we add a block begin callback and attach a trigger to it, the trigger will be called every time a block is executed in any process on the system. The trigger should then decide whether the event must be followed by a python callback function call, or be ignored, by checking the process context, or any other relevant value.**
 
 Triggers can access variables associated to the callback (trigger variables), which can be set in the python script once the trigger has been loaded.
 

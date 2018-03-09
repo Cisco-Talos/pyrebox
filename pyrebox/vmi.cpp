@@ -28,9 +28,10 @@
 #include <set>
 
 extern "C" {
+#include <pthread.h>
 #include "qemu_glue.h"    
 #include "utils.h"
-
+#include "pyrebox.h"
 }
 
 #include "vmi.h"
@@ -72,7 +73,48 @@ void vmi_context_change(pyrebox_target_ulong old_pgd,pyrebox_target_ulong new_pg
     }
 }
 
-void vmi_tlb_callback(pyrebox_target_ulong new_pgd){
+void update_modules(pyrebox_target_ulong pgd){
+
+   //Lock the python mutex
+   pthread_mutex_lock(&pyrebox_mutex);
+   fflush(stdout);
+   fflush(stderr);
+
+   //Call python for module scanning
+   PyObject* py_module_name = PyString_FromString("vmi");
+   PyObject* py_vmi_module = PyImport_Import(py_module_name);
+   Py_DECREF(py_module_name);
+
+   if(py_vmi_module != NULL){
+       PyObject* py_update_modules = PyObject_GetAttrString(py_vmi_module, "update_modules");
+       if (py_update_modules){
+           if (PyCallable_Check(py_update_modules)){
+                PyObject* py_args = PyTuple_New(1);
+                if (arch_bits[os_index] == 32){
+                    PyTuple_SetItem(py_args, 0, PyLong_FromUnsignedLong(pgd)); // The reference to the object in the tuple is stolen
+                }
+                else{
+                    PyTuple_SetItem(py_args, 0, PyLong_FromUnsignedLongLong(pgd)); // The reference to the object in the tuple is stolen
+                }
+                PyObject* ret = PyObject_CallObject(py_update_modules, py_args);
+                Py_DECREF(py_args);
+                if (ret){
+                    Py_DECREF(ret);
+                }
+           }
+           Py_XDECREF(py_update_modules);
+       }
+       Py_DECREF(py_vmi_module);
+   }
+
+   //Unlock the python mutex
+   fflush(stdout);
+   fflush(stderr);
+   pthread_mutex_unlock(&pyrebox_mutex);
+}
+
+
+void vmi_tlb_callback(pyrebox_target_ulong new_pgd, pyrebox_target_ulong vaddr){
     if (os_index < LimitWindows){
         windows_vmi_tlb_callback(new_pgd,os_index);
     }

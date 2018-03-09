@@ -25,7 +25,6 @@ import os.path
 from utils import pp_error
 from volatility.renderers.basic import Address
 
-
 def linux_get_offsets():
     from utils import ConfigurationManager as conf_m
     import volatility.obj as obj
@@ -94,6 +93,8 @@ def linux_insert_module(task, pid, pgd, base, size, basename, fullname, update_s
     from vmi import modules
     from vmi import symbols
     from vmi import Module
+    from api_internal import dispatch_module_load_callback
+    from api_internal import dispatch_module_remove_callback
     import api
     import hashlib
 
@@ -106,11 +107,27 @@ def linux_insert_module(task, pid, pgd, base, size, basename, fullname, update_s
     if (pid, pgd) not in modules:
         modules[(pid, pgd)] = {}
 
-    # Add the module to the module list
+    #Module load/del notification
     if base in modules[(pid, pgd)]:
-        del modules[(pid, pgd)][base]
+        if modules[(pid, pgd)][base].get_size() != size or \
+           modules[(pid, pgd)][base].get_checksum() != checksum or \
+           modules[(pid, pgd)][base].get_name() != basename or \
+           modules[(pid, pgd)][base].get_fullname() != fullname:
+            # Notify of module deletion and module load
+            dispatch_module_remove_callback(pid, pgd, base,
+                                            modules[(pid, pgd)][base].get_size(),
+                                            modules[(pid, pgd)][base].get_name(),
+                                            modules[(pid, pgd)][base].get_fullname())
+            del modules[(pid, pgd)][base]
+            dispatch_module_load_callback(pid, pgd, base, size, basename, fullname)
+            modules[(pid, pgd)][base] = mod
+    else:
+        # Just notify of module load
+        dispatch_module_load_callback(pid, pgd, base, size, basename, fullname)
+        modules[(pid, pgd)][base] = mod
 
-    modules[(pid, pgd)][base] = mod
+    # Mark the module as present
+    modules[(pid, pgd)][base].set_present()
 
     if update_symbols:
         # Compute the checksum of the ELF Header, as a way to avoid name
@@ -160,6 +177,8 @@ def linux_insert_kernel_module(module, base, size, basename, fullname, update_sy
     from vmi import modules
     from vmi import symbols
     from vmi import Module
+    from api_internal import dispatch_module_load_callback
+    from api_internal import dispatch_module_remove_callback
 
     # Create module, use 0 as checksum as it is irrelevant here
     mod = Module(base, size, 0, 0, 0, basename, fullname)
@@ -168,11 +187,27 @@ def linux_insert_kernel_module(module, base, size, basename, fullname, update_sy
     if (0, 0) not in modules:
         modules[(0, 0)] = {}
 
-    # Add the module to the module list
+    #Module load/del notification
     if base in modules[(0, 0)]:
-        del modules[(0, 0)][base]
+        if modules[(0, 0)][base].get_size() != size or \
+           modules[(0, 0)][base].get_checksum() != checksum or \
+           modules[(0, 0)][base].get_name() != basename or \
+           modules[(0, 0)][base].get_fullname() != fullname:
+            # Notify of module deletion and module load
+            dispatch_module_remove_callback(0, 0, base,
+                                            modules[(0, 0)][base].get_size(),
+                                            modules[(0, 0)][base].get_name(),
+                                            modules[(0, 0)][base].get_fullname())
+            del modules[(0, 0)][base]
+            dispatch_module_load_callback(0, 0, base, size, basename, fullname)
+            modules[(0, 0)][base] = mod
+    else:
+        # Just notify of module load
+        dispatch_module_load_callback(0, 0, base, size, basename, fullname)
+        modules[(0, 0)][base] = mod
 
-    modules[(0, 0)][base] = mod
+    # Mark the module as present
+    modules[(0, 0)][base].set_present()
 
     if update_symbols:
         # Use 0 as a checksum, here we should not have name collision
@@ -209,62 +244,38 @@ def linux_insert_kernel_module(module, base, size, basename, fullname, update_sy
     return None
 
 
-def linux_update_modules(pgd=None, update_symbols=False):
+def linux_update_modules(pgd, update_symbols=False):
     from utils import ConfigurationManager as conf_m
     import volatility.obj as obj
+    from vmi import set_modules_non_present
+    from vmi import clean_non_present_modules
 
     if conf_m.addr_space is None:
         linux_init_address_space()
 
-    tasks = []
-
-    init_task_addr = conf_m.addr_space.profile.get_symbol("init_task")
-    init_task = obj.Object(
-        "task_struct", vm=conf_m.addr_space, offset=init_task_addr)
-
-    # walk the ->tasks list, note that this will *not* display "swapper"
-    for task in init_task.tasks:
-        tasks.append(task)
-
-    # List of tasks (threads) whose pgd is equal to the pgd to update
-    tasks_to_update = []
-
-    # First task in the list with a valid pgd
-    for task in tasks:
-        # Certain kernel threads do not have a memory map (they just take the pgd / memory map of
-        # the thread that was previously executed, because the kernel is mapped
-        # in all the threads.
-        if task.mm:
-            phys_pgd = conf_m.addr_space.vtop(task.mm.pgd) or task.mm.pgd
-            # If the pgd was None, then update ALL tasks
-            if pgd is None:
-                tasks_to_update.append(task)
-            elif phys_pgd == pgd:
-                tasks_to_update.append(task)
-
-    for task in tasks_to_update:
-        for vma in task.get_proc_maps():
-            (fname, major, minor, ino, pgoff) = vma.info(task)
-            phys_pgd = conf_m.addr_space.vtop(task.mm.pgd) or task.mm.pgd
-            # Only add the module if the inode is not 0 (it is an actual module
-            # and not a heap region
-            if ino != 0:
-                # Checksum
-                linux_insert_module(task, task.pid.v(),
-                                    Address(phys_pgd),
-                                    Address(vma.vm_start),
-                                    Address(vma.vm_end) - Address(
-                                        vma.vm_start),
-                                    os.path.basename(fname),
-                                    fname,
-                                    update_symbols)
-
     # pgd == 0 means that kernel modules have been requested
     if pgd == 0:
+
+        # List entries are returned, so that
+        # we can monitor memory writes to these
+        # entries and detect when a module is added
+        # or removed
+        list_entry_size = None
+        list_entry_regions = []
+
         # Now, update the kernel modules
         modules_addr = conf_m.addr_space.profile.get_symbol("modules")
         modules = obj.Object(
             "list_head", vm=conf_m.addr_space, offset=modules_addr)
+
+        # Add the initial list pointer as a list entry
+        # modules_addr is the offset of a list_head (2 pointers) that points to the
+        # first entry of a module list of type module.
+        list_entry_regions.append((modules_addr, modules_addr, modules.size()))
+
+        # Mark all modules as non-present
+        set_modules_non_present(0, 0)
+
         for module in modules.list_of_type("module", "list"):
             """
             pp_debug("Module: %s - %x - %x - %x - %x - %x\n" % (module.name,
@@ -281,6 +292,15 @@ def linux_update_modules(pgd=None, update_symbols=False):
             for section in sorted(secs, key = lambda k: k["addr"]):
                 pp_debug("    %s - %x\n" % (section["name"],section["addr"]))
             """
+
+            if list_entry_size is None:
+                list_entry_size = module.list.size()
+            # The 'module' type has a field named list of type list_head, that points
+            # to the next module in the linked list.
+            entry = (module.obj_offset, module.list.obj_offset, list_entry_size)
+            if entry not in list_entry_regions:
+                list_entry_regions.append(entry)
+
             # First, create a module for the "module_core", that contains
             # .text, readonly data and writable data
             if module.module_core != 0 and module.core_size != 0:
@@ -309,4 +329,74 @@ def linux_update_modules(pgd=None, update_symbols=False):
                     size = (secs[-1].address + 0x4000) - secs[0].address
                     linux_insert_kernel_module(module, start, size,
                                                module.name + "/module_init", module.name + "/module_init", update_symbols)
-    return
+
+        # Remove all the modules that are not marked as present
+        clean_non_present_modules(0, 0)
+        return list_entry_regions
+
+    # If pgd != 0 was requested
+    
+    tasks = []
+
+    init_task_addr = conf_m.addr_space.profile.get_symbol("init_task")
+    init_task = obj.Object(
+        "task_struct", vm=conf_m.addr_space, offset=init_task_addr)
+
+    # walk the ->tasks list, note that this will *not* display "swapper"
+    for task in init_task.tasks:
+        tasks.append(task)
+
+    # List of tasks (threads) whose pgd is equal to the pgd to update
+    tasks_to_update = []
+
+    # First task in the list with a valid pgd
+    for task in tasks:
+        # Certain kernel threads do not have a memory map (they just take the pgd / memory map of
+        # the thread that was previously executed, because the kernel is mapped
+        # in all the threads.
+        if task.mm:
+            phys_pgd = conf_m.addr_space.vtop(task.mm.pgd) or task.mm.pgd
+            if phys_pgd == pgd:
+                tasks_to_update.append(task)
+
+    # List entries are returned, so that
+    # we can monitor memory writes to these
+    # entries and detect when a module is added
+    # or removed
+    list_entry_size = None
+    list_entry_regions = []
+
+    for task in tasks_to_update:
+        phys_pgd = conf_m.addr_space.vtop(task.mm.pgd) or task.mm.pgd
+
+        # Mark all modules as non-present
+        set_modules_non_present(task.pid.v(), phys_pgd)
+
+        # Add the initial list pointer as a list entry
+        list_entry_regions.append((task.mm.mmap.obj_offset, task.mm.mmap.obj_offset, task.mm.mmap.size()))
+
+        for vma in task.get_proc_maps():
+            if list_entry_size is None:
+                list_entry_size = vma.vm_next.size()
+            entry = (vma.obj_offset, vma.vm_next.obj_offset, list_entry_size)
+            if entry not in list_entry_regions:
+                list_entry_regions.append(entry)
+
+            (fname, major, minor, ino, pgoff) = vma.info(task)
+            # Only add the module if the inode is not 0 (it is an actual module
+            # and not a heap region
+            if ino != 0:
+                # Checksum
+                linux_insert_module(task, task.pid.v(),
+                                    Address(phys_pgd),
+                                    Address(vma.vm_start),
+                                    Address(vma.vm_end) - Address(
+                                        vma.vm_start),
+                                    os.path.basename(fname),
+                                    fname,
+                                    update_symbols)
+
+        # Remove all the modules that are not marked as present
+        clean_non_present_modules(task.pid.v(), phys_pgd)
+
+    return list_entry_regions

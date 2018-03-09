@@ -42,6 +42,8 @@ class Module:
         self.__name = name
         self.__fullname = fullname
         self.__symbols = []
+
+        self.__is_present = False
     # Getters
 
     def get_base(self):
@@ -67,6 +69,10 @@ class Module:
 
     def get_checksum(self):
         return self.__checksum
+
+    def is_present(self):
+        return self.__is_present    
+
     # Setters
 
     def set_base(self, base):
@@ -93,6 +99,8 @@ class Module:
     def set_symbols(self, syms):
         self.__symbols = syms
 
+    def set_present(self, present = True):
+        self.__is_present = present
 
 class PseudoLDRDATA:
     '''
@@ -122,7 +130,49 @@ def update_modules(proc_pgd, update_symbols=False):
     global os_family
     from windows_vmi import windows_update_modules
     from linux_vmi import linux_update_modules
+    hook_points = None
     if os_family == OS_FAMILY_WIN:
-        windows_update_modules(proc_pgd, update_symbols)
+        hook_points = windows_update_modules(proc_pgd, update_symbols)
     elif os_family == OS_FAMILY_LINUX:
-        linux_update_modules(proc_pgd, update_symbols)
+        hook_points = linux_update_modules(proc_pgd, update_symbols)
+    return hook_points
+
+
+def set_modules_non_present(pid, pgd):
+    if pid is not None:
+        if (pid, pgd) in modules:
+            for base, mod in modules[(pid, pgd)].iteritems():
+                mod.set_present(False)
+    else:
+        for pid, _pgd in modules.keys():
+            if _pgd == pgd:
+                if (pid, pgd) in modules:
+                    for base, mod in modules[(pid, _pgd)].iteritems():
+                        mod.set_present(False)
+
+def clean_non_present_modules(pid, pgd):
+    from api_internal import dispatch_module_remove_callback
+
+    mods_to_remove = []
+    if pid is not None:
+        if (pid, pgd) in modules:
+            for base, mod in modules[(pid, pgd)].iteritems():
+                if not mod.is_present():
+                    mods_to_remove.append((pid, pgd, base))
+    else:
+        for pid, _pgd in modules.keys():
+            if _pgd == pgd:
+                if (pid, _pgd) in modules:
+                    for base, mod in modules[(pid, _pgd)].iteritems():
+                        if not mod.is_present():
+                            mods_to_remove.append((pid, pgd, base))
+
+    for pid, pgd, base in mods_to_remove:
+        # Callback notification
+        dispatch_module_remove_callback(pid, pgd, base, 
+                                        modules[(pid, pgd)][base].get_size(),
+                                        modules[(pid, pgd)][base].get_name(),
+                                        modules[(pid, pgd)][base].get_fullname())
+
+        # Remove module
+        del modules[(pid, pgd)][base]

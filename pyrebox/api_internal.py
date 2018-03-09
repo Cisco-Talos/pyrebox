@@ -25,6 +25,226 @@ import traceback
 from cpus import X86CPU
 from cpus import X64CPU
 
+module_load_callbacks = {}
+module_remove_callbacks = {}
+module_load_remove_pgds = []
+
+module_load_remove_breakpoints = {}
+
+def module_change_callback(pgd, bp_vaddr, bp_haddr, cpu_index, vaddr, size, haddr, data):
+    '''
+    Callback function triggered whenever there is a change in the list of linked
+    modules for a given process.
+ 
+    Updates the module list for that PGD (or kernel).
+    ''' 
+    import functools
+    import struct
+    import api
+    from api import BP
+    from vmi import update_modules
+    from utils import pp_error
+    from vmi import set_modules_non_present
+    from vmi import clean_non_present_modules
+
+    # First, we check if the memory address written points to a module
+    # that we have already detected (it is in our list of hooking points).
+    # In this way we avoid triggering one update operation for every
+    # modified pointer (inserting a module requires to change several
+    # pointers, due to the different linked lists).
+   
+    # Return if it points inside a module that we have already added to our list
+    for module_base, hook_addr, hook_size in module_load_remove_breakpoints[pgd]:
+        if data >= module_base and data < (hook_addr + hook_size):
+            return
+
+    hooking_points = update_modules(pgd)
+
+    if hooking_points is not None:
+        # Update hooking points
+        # 1) Remove the breakpoints not used anymore
+        bps_to_remove = []
+        for hp in module_load_remove_breakpoints[pgd]:
+            if hp not in hooking_points:
+                bps_to_remove.append(hp)
+
+        for hp in bps_to_remove:
+            module_load_remove_breakpoints[pgd][hp].disable()
+            del module_load_remove_breakpoints[pgd][hp]
+
+        # 2) Add new breakpoints
+        for hp in hooking_points:
+            if hp not in module_load_remove_breakpoints[pgd]:
+                 module_base, addr, size = hp
+                 haddr = api.va_to_pa(pgd, addr)
+                 bp = BP(haddr,
+                         None,
+                         size = size,
+                         typ = BP.MEM_WRITE_PHYS,
+                         func = functools.partial(module_change_callback, pgd, addr, haddr))
+                 module_load_remove_breakpoints[pgd][hp] = bp
+                 bp.enable()
+    else:
+        # Just remove all the  modules for the process
+        # Mark all modules as non-present
+        set_modules_non_present(None, pgd)
+        # Remove all the modules that are not marked as present
+        clean_non_present_modules(None, pgd)
+
+
+def add_module_monitoring_hooks(pgd):
+    ''' 
+    Adds initial set of breakpoints for a given process, so that
+    we can detect when a new module is inserted, or a module is
+    removed from any of its linked lists.
+    '''
+    from api import BP
+    import api
+    from vmi import update_modules
+    import functools
+    from utils import pp_error
+
+    if pgd not in module_load_remove_breakpoints:
+        module_load_remove_breakpoints[pgd] = {}
+
+    # Update the module list for this pgd
+    hooking_points = update_modules(pgd)
+
+    if hooking_points is not None:
+        # Add the BPW breakpoints
+        for module_base, addr, size in hooking_points:
+            haddr = api.va_to_pa(pgd, addr)
+            bp = BP(haddr, 
+                    None, 
+                    size = size, 
+                    typ = BP.MEM_WRITE_PHYS,
+                    func = functools.partial(module_change_callback, pgd, addr, haddr))
+            module_load_remove_breakpoints[pgd][(module_base, addr, size)] = bp
+            bp.enable()
+    else:
+        pp_error("Could not set initial list of breakpoints for module monitoring")
+
+def remove_module_monitoring_hooks(pgd):
+    ''' 
+    Remove BPW breakpoints on every link of its module linked list
+    '''
+    for bp in module_load_remove_breakpoints[pgd]:
+        bp.disable()
+
+def register_module_load_callback(pgd, callback_name, callback_function):
+    '''
+    Register a module load callback. The parameters for the callback
+    function should be: func(pid, pgd, base, size, name, fullname)
+
+    :param pgd: The PGD of the process that will be monitored. The callback
+                function will be called whenever a new module is loaded
+                in the context of that process. A value of 0 will subscribe
+                to kernel module updates.
+    :type pgd: int
+
+    :param callback_function: The callback function
+    :type callback_function: func(pid, pgd, base, size, name, fullname)
+    '''
+    if pgd not in module_load_callbacks:
+        module_load_callbacks[pgd] = {}
+
+    for pgd in module_load_callbacks:
+        if callback_name in module_load_callbacks[pgd]:
+            raise ValueError("Cannot register 2 callbacks with the same name! %s" % callback_name)
+
+    module_load_callbacks[pgd][callback_name] = callback_function
+
+    # module_load_remove_pgds checks which PGDs we are monitoring
+    # for either module load or module removes...
+    if pgd not in module_load_remove_pgds:
+        module_load_remove_pgds.append(pgd)
+        add_module_monitoring_hooks(pgd)
+
+
+def register_module_remove_callback(pgd, callback_name, callback_function):
+    '''
+    Register a module remove callback. The parameters for the callback
+    function should be: func(pid, pgd, base, size, name, fullname)
+
+    :param pgd: The PGD of the process that will be monitored. The callback
+                function will be called whenever a module is removed
+                in the context of that process. A value of 0 will subscribe
+                to kernel module updates.
+    :type pgd: int
+
+    :param callback_function: The callback function
+    :type callback_function: func(pid, pgd, base, size, name, fullname)
+    '''
+    if not pgd in module_remove_callbacks:
+        module_remove_callbacks[pgd] = {} 
+        # module_load_remove_pgds checks which PGDs we are monitoring
+        # for either module load or module removes...
+        if pgd not in module_load_remove_pgds:
+            module_load_remove_pgds.append(pgd)
+            add_module_monitoring_hooks(pgd)
+
+    for pgd in module_remove_callbacks:
+        if callback_name in module_remove_callbacks[pgd]:
+            raise ValueError("Cannot register 2 callbacks with the same name! %s" % callback_name)
+    module_remove_callbacks[pgd][callback_name] = callback_function
+
+def unregister_module_load_callback(callback_name):
+    '''
+    Unregister a module load callback.
+
+    :param callback_name: The name of the callback.
+    :type callback_name: str
+    '''
+    pgd = None
+    for pgd_ in module_load_callbacks:
+        if callback_name in module_load_callbacks[pgd]:
+            pgd = pgd_
+    if pgd is None:
+        raise ValueError("The provided callback_name does not exist in the list of callbacks!")
+        
+    del module_load_callbacks[pgd][callback_name]
+
+    if len(module_load_callbacks[pgd]) == 0 and len(module_remove_callbacks[pgd]) == 0:
+        module_load_remove_pgds.remove(pgd)
+        remove_module_monitoring_hooks(pgd)
+
+
+def unregister_module_remove_callback(callback_name):
+    '''
+    Unregister a module load callback.
+
+    :param callback_name: The name of the callback.
+    :type callback_name: str
+    '''
+    pgd = None
+    for pgd_ in module_remove_callbacks:
+        if callback_name in module_remove_callbacks[pgd]:
+            pgd = pgd_
+    if pgd is None:
+        raise ValueError("The provided callback_name does not exist in the list of callbacks!")
+        
+    del module_remove_callbacks[pgd][callback_name]
+
+    if len(module_remove_callbacks[pgd]) == 0 and len(module_load_callbacks[pgd]) == 0:
+        module_load_remove_pgds.remove(pgd)
+        remove_module_monitoring_hooks(pgd)
+
+
+def dispatch_module_load_callback(pid, pgd, base, size, name, fullname):
+    '''
+    Internal function. Dispatch all module load callbacks.
+    '''
+    if pgd in module_load_callbacks:
+        for cn in module_load_callbacks[pgd]:
+            module_load_callbacks[pgd][cn](pid, pgd, base, size, name, fullname)
+
+def dispatch_module_remove_callback(pid, pgd, base, size, name, fullname):
+    '''
+    Internal function. Dispatch all module remove callbacks.
+    '''
+    if pgd in module_remove_callbacks:
+        for cn in module_remove_callbacks[pgd]:
+            module_remove_callbacks[pgd][cn](pid, pgd, base, size, name, fullname)
 
 def convert_x86_cpu(args):
     '''

@@ -28,7 +28,7 @@ cm = None
 pyrebox_print = None
 
 
-def my_function(cpu_index, addr, size):
+def my_function(cpu_index, addr, size, haddr):
     global cm
     pyrebox_print("Memory read at address %x with size %x\n" % (addr, size))
 

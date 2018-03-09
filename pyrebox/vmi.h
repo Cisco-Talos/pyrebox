@@ -131,7 +131,7 @@ extern int arch_bits[LastIndex];
 
 extern os_index_t os_index;
 extern char vol_profile[MAX_PROFILE_LEN];
-void vmi_tlb_callback(pyrebox_target_ulong new_pgd);
+void vmi_tlb_callback(pyrebox_target_ulong new_pgd, pyrebox_target_ulong vaddr);
 void vmi_context_change(pyrebox_target_ulong old_pgd,pyrebox_target_ulong new_pgd);
 void vmi_init(const char* prof);
 void vmi_add_process(pyrebox_target_ulong pgd, pyrebox_target_ulong pid, pyrebox_target_ulong ppid, pyrebox_target_ulong kernel_addr, pyrebox_target_ulong exittime_offset, char* name);

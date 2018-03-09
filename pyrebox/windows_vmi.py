@@ -32,7 +32,6 @@ last_kdbg = None
 # Modules pending symbol resolution
 mods_pending = {}
 
-
 def windows_insert_module_internal(
         p_pid,
         p_pgd,
@@ -49,6 +48,8 @@ def windows_insert_module_internal(
     from vmi import symbols
     from vmi import Module
     from vmi import PseudoLDRDATA
+    from api_internal import dispatch_module_load_callback
+    from api_internal import dispatch_module_remove_callback
 
     mod = Module(base, size, p_pid, p_pgd, checksum, basename, fullname)
     if p_pgd != 0:
@@ -92,10 +93,27 @@ def windows_insert_module_internal(
             else:
                 mods_pending[(checksum, fullname)] = [mod]
 
+    #Module load/del notification
     if base in modules[(p_pid, p_pgd)]:
-        del modules[(p_pid, p_pgd)][base]
+        if modules[(p_pid, p_pgd)][base].get_size() != size or \
+           modules[(p_pid, p_pgd)][base].get_checksum() != checksum or \
+           modules[(p_pid, p_pgd)][base].get_name() != basename or \
+           modules[(p_pid, p_pgd)][base].get_fullname() != fullname:
+            # Notify of module deletion and module load
+            dispatch_module_remove_callback(p_pid, p_pgd, base,
+                                            modules[(p_pid, p_pgd)][base].get_size(),
+                                            modules[(p_pid, p_pgd)][base].get_name(),
+                                            modules[(p_pid, p_pgd)][base].get_fullname())
+            del modules[(p_pid, p_pgd)][base]
+            dispatch_module_load_callback(p_pid, p_pgd, base, size, basename, fullname)
+            modules[(p_pid, p_pgd)][base] = mod
+    else:
+        # Just notify of module load
+        dispatch_module_load_callback(p_pid, p_pgd, base, size, basename, fullname)
+        modules[(p_pid, p_pgd)][base] = mod
 
-    modules[(p_pid, p_pgd)][base] = mod
+    # Mark the module as present
+    modules[(p_pid, p_pgd)][base].set_present()
 
 
 def windows_insert_module(p_pid, p_pgd, module, update_symbols):
@@ -147,6 +165,8 @@ def windows_update_modules(pgd, update_symbols=False):
     import api
     from utils import get_addr_space
     from vmi import modules
+    from vmi import set_modules_non_present
+    from vmi import clean_non_present_modules
 
     if pgd != 0:
         addr_space = get_addr_space(pgd)
@@ -155,7 +175,8 @@ def windows_update_modules(pgd, update_symbols=False):
 
     if addr_space is None:
         pp_error("Volatility address space not loaded\n")
-        return
+        return []
+
     # Get EPROC directly from its offset
     procs = api.get_process_list()
     inserted_bases = []
@@ -168,10 +189,31 @@ def windows_update_modules(pgd, update_symbols=False):
             "_KDDEBUGGER_DATA64",
             offset=last_kdbg,
             vm=addr_space)
+        
+        # List entries are returned, so that
+        # we can monitor memory writes to these
+        # entries and detect when a module is added
+        # or removed
+        list_entry_size = None
+        list_entry_regions = []
+
+        # Add the initial list pointer as a list entry
+        list_entry_regions.append((kdbg.obj_offset, kdbg.PsLoadedModuleList.obj_offset, kdbg.PsLoadedModuleList.size()))
+
+        # Mark all modules as non-present
+        set_modules_non_present(0, 0)
         for module in kdbg.modules():
             if module.DllBase not in inserted_bases:
                 inserted_bases.append(module.DllBase)
                 windows_insert_module(0, 0, module, update_symbols)
+                if list_entry_size is None:
+                    list_entry_size = module.InLoadOrderLinks.size()
+                list_entry_regions.append((module.obj_offset, module.InLoadOrderLinks.obj_offset, list_entry_size * 3))
+
+        # Remove all the modules that are not marked as present
+        clean_non_present_modules(0, 0)
+  
+        return list_entry_regions
 
     for proc in procs:
         p_pid = proc["pid"]
@@ -180,26 +222,66 @@ def windows_update_modules(pgd, update_symbols=False):
         p_kernel_addr = proc["kaddr"]
         if p_pgd == pgd:
             task = obj.Object("_EPROCESS", offset=p_kernel_addr, vm=addr_space)
+
+            # List entries are returned, so that
+            # we can monitor memory writes to these
+            # entries and detect when a module is added
+            # or removed
+            list_entry_size = None
+            list_entry_regions = []
+
+            if task.Peb is None or not task.Peb.is_valid():
+                if isinstance(task.Peb.obj_offset, int):
+                    list_entry_regions.append((task.obj_offset, task.Peb.obj_offset, task.Peb.size()))
+                return list_entry_regions
+            if task.Peb.Ldr is None or not task.Peb.Ldr.is_valid():
+                list_entry_regions.append((task.Peb.v(), task.Peb.Ldr.obj_offset, task.Peb.Ldr.size()))
+                return list_entry_regions
+
+            # Add the initial list pointer as a list entry if we already have a PEB and LDR
+            list_entry_regions.append((task.Peb.Ldr.dereference().obj_offset, task.Peb.Ldr.InLoadOrderModuleList.obj_offset, task.Peb.Ldr.InLoadOrderModuleList.size() * 3))
+            
             # Note: we do not erase the modules we have information for from the list,
             # unless we have a different module loaded at the same base address.
             # In this way, if at some point the module gets unmapped from the PEB list
             # but it is still in memory, we do not loose the information.
+
             if (p_pid, p_pgd) not in modules:
                 modules[(p_pid, p_pgd)] = {}
+
+            # Mark all modules as non-present
+            set_modules_non_present(p_pid, p_pgd)
+
             for module in task.get_init_modules():
                 if module.DllBase not in inserted_bases:
                     inserted_bases.append(module.DllBase)
                     windows_insert_module(p_pid, p_pgd, module, update_symbols)
+                    if list_entry_size is None:
+                        list_entry_size = module.InLoadOrderLinks.size()
+                    list_entry_regions.append((module.obj_offset, module.InLoadOrderLinks.obj_offset, list_entry_size * 3))
+
             for module in task.get_mem_modules():
                 if module.DllBase not in inserted_bases:
                     inserted_bases.append(module.DllBase)
                     windows_insert_module(p_pid, p_pgd, module, update_symbols)
+                    if list_entry_size is None:
+                        list_entry_size = module.InLoadOrderLinks.size()
+                    list_entry_regions.append((module.obj_offset, module.InLoadOrderLinks.obj_offset, list_entry_size * 3))
+
             for module in task.get_load_modules():
                 if module.DllBase not in inserted_bases:
                     inserted_bases.append(module.DllBase)
                     windows_insert_module(p_pid, p_pgd, module, update_symbols)
-            return
+                    if list_entry_size is None:
+                        list_entry_size = module.InLoadOrderLinks.size()
+                    list_entry_regions.append((module.obj_offset, module.InLoadOrderLinks.obj_offset, list_entry_size * 3))
 
+            # Remove all the modules that are not marked as present
+            clean_non_present_modules(p_pid, p_pgd)
+
+            return list_entry_regions
+
+    return None 
 
 def windows_kdbgscan_fast(dtb):
     global last_kdbg
