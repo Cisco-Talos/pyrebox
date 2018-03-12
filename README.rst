@@ -34,8 +34,7 @@ What's new
 Remember to pull the latest version of PyREBox in order to enjoy its latest features. PyREBox is under
 active development and new cool features are yet to come!
 
-- [Mar 08, 2018] **Triggers are now called for every process in the system (not only monitored processes). See
-documentation**
+- [Mar 08, 2018] **Triggers are now called for every process in the system (not only monitored processes). See documentation**
 - [Mar 08, 2018] **Changed memory read/write callback parameters. See documentation and examples.** 
 - [Mar 08, 2018] Added physical memory address read/write breakpoints.
 - [Mar 08, 2018] Added module load and remove callbacks.
