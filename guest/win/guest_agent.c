@@ -112,9 +112,27 @@ int exec_file(){
 
     /* Use Windows API CreateProcess because unlike execv* or fork(), 
      * allows the parent to exit while the child keeps running */
-    STARTUPINFO si;
-    PROCESS_INFORMATION pi;
-    CreateProcess(path,args,0,0,0,0,env,0,&si,&pi);
+    STARTUPINFO si = {};
+    PROCESS_INFORMATION pi = {};
+
+    si.cb = sizeof(si);
+    if( ! CreateProcess( (path[0]) ? path : NULL, // lpApplicationName
+                         (args[0]) ? args : NULL, // lpCommandLine
+                         0,    // lpProcessAttributes
+                         0,    // lpThreadAttributes
+                         0,    // bInheritHandles
+                         0,    // dwCreationFlags
+                         (env[0]) ? env : NULL,
+                         0,    // lpCurrentDirectory
+                         &si,  // lpStartupInfo
+                         &pi   // lpProcessInformation
+                       ) ){
+        fprintf(stderr, "The process creation failed %d under Pyrebox.\n", GetLastError());
+    }
+    else {
+        CloseHandle(pi.hProcess);
+        CloseHandle(pi.hThread);
+    }
 }
 
 int main(int argc, char* argv[]) {
