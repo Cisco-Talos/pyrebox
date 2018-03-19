@@ -22,6 +22,7 @@
  * THE SOFTWARE.
  */
 #include "qemu/osdep.h"
+#include "qemu/main-loop.h"
 #include "qemu/sockets.h"
 #include "qapi/error.h"
 #include "qemu-common.h"
@@ -42,10 +43,63 @@ static int fd_chr_write(Chardev *chr, const uint8_t *buf, int len)
 
 static gboolean fd_chr_read(QIOChannel *chan, GIOCondition cond, void *opaque)
 {
+    // If the pyrebox_mutex is locked, we do not read any data, we just return.
+    //
+    // This must be done both on fd_chr_read and fd_chr_read_poll. Actually,
+    // fd_chr_read_poll is called first, and it should return the number
+    // of bytes available for read. So, if the pyrebox_mutex is locked, fd_chr_read_poll 
+    // returns 0 (see the function), and this function is not even called.
+    //
+    // These functions conflict with ipython, which will receive/send 
+    // control characters over stdin/stdout, causing both not to work properly
+    // if run concurrently.
+    //
+    // Python callbacks can potenially enter the ipython shell, as the user-defined
+    // callback routine may at any moment invoke the start_shell() function. 
+    //
+    // Therefore, we need to avoid running this fd-chardev reading function
+    // whenever we are executing a python callback.
+    //
+    // pyrebox_mutex is acquired every time we execute a python function
+    // that has the potential to open an ipython shell. Any callback that ends
+    // up executing a user-defined python callback may end up starting a shell.
+    //
+    // Nevertheless, in this function we cannot just lock the pyrebox_mutex, because
+    // it causes a dead-lock in the following conditions:
+    //
+    //     A python callback first aquires pyrebox_mutex and then
+    //     starts a memory read/write operation over an address that corresponds
+    //     to I/O memory (volatility usually does it). In that case, the memory 
+    //     read operation will try to acquire the iothread mutex and wait for it 
+    //     to be released. This mutex may have been locked 
+    //     at the main_loop, which may call this function while holding the iothread
+    //     mutex. This ends up in a dead-lock.
+    //
+    //     So, the thread executing the callback first locks pyrebox_mutex and then tries
+    //     to lock iothread mutex, while this thread first locks iothread_mutex
+    //     and afterwards tries to acquire the pyrebox_mutex. Since this thread
+    //     keeps waiting for the pyrebox_mutex to be released, it locks
+    //     the main-loop and prevents it from dealing with the IO memory r/w.
+    //
+    // The solution is to try to acquire the pyrebox_mutex lock, without waiting for
+    // it. If it is locked, we just do not execute this fd_chr_read function,
+    // (it will be called again sometime later), return TRUE, and keep running.
+    //
+    // We make sure that this function is only run when the pyrebox_mutex 
+    // is not owned by any callback running in parallel.
+    //
+    // We also apply the same approach to fd_chr_read_poll,
+    // which determines the number of bytes to read, and causes this function
+    // to be called.
 
-    //Lock the python mutex
-    pthread_mutex_lock(&pyrebox_mutex);
-
+    int lock_result = pthread_mutex_trylock(&pyrebox_mutex);
+    if (lock_result == EBUSY){
+        return TRUE;
+    } else if (lock_result > 0){
+        printf("pthread_mutex_trylock(&pyrebox_mutex) returned %d, which should never happen!\n", lock_result);
+        assert(0);
+    }
+    
     Chardev *chr = CHARDEV(opaque);
     FDChardev *s = FD_CHARDEV(opaque);
     int len;
@@ -80,18 +134,30 @@ static gboolean fd_chr_read(QIOChannel *chan, GIOCondition cond, void *opaque)
     //Unlock the pyrebox mutex
     pthread_mutex_unlock(&pyrebox_mutex);
 
-
     return TRUE;
-
 
 }
 
 static int fd_chr_read_poll(void *opaque)
 {
+    // See comment on fd_chr_read for information
+    // about pyrebox_mutex
+    int lock_result = pthread_mutex_trylock(&pyrebox_mutex);
+    if (lock_result == EBUSY){
+        return 0;
+    } else if (lock_result > 0){
+        printf("pthread_mutex_trylock(&pyrebox_mutex) returned %d, which should never happen!\n", lock_result);
+        assert(0);
+    }
+
     Chardev *chr = CHARDEV(opaque);
     FDChardev *s = FD_CHARDEV(opaque);
 
     s->max_size = qemu_chr_be_can_write(chr);
+
+    //Unlock the pyrebox mutex
+    pthread_mutex_unlock(&pyrebox_mutex);
+
     return s->max_size;
 }
 
