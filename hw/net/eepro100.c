@@ -754,8 +754,8 @@ static void read_cb(EEPRO100State *s)
 
 static void tx_command(EEPRO100State *s)
 {
-    uint32_t tbd_array = le32_to_cpu(s->tx.tbd_array_addr);
-    uint16_t tcb_bytes = (le16_to_cpu(s->tx.tcb_bytes) & 0x3fff);
+    uint32_t tbd_array = s->tx.tbd_array_addr;
+    uint16_t tcb_bytes = s->tx.tcb_bytes & 0x3fff;
     /* Sends larger than MAX_ETH_FRAME_SIZE are allowed, up to 2600 bytes. */
     uint8_t buf[2600];
     uint16_t size = 0;
@@ -774,23 +774,11 @@ static void tx_command(EEPRO100State *s)
     }
     assert(tcb_bytes <= sizeof(buf));
     while (size < tcb_bytes) {
-        uint32_t tx_buffer_address = ldl_le_pci_dma(&s->dev, tbd_address);
-        uint16_t tx_buffer_size = lduw_le_pci_dma(&s->dev, tbd_address + 4);
-#if 0
-        uint16_t tx_buffer_el = lduw_le_pci_dma(&s->dev, tbd_address + 6);
-#endif
-        if (tx_buffer_size == 0) {
-            /* Prevent an endless loop. */
-            logout("loop in %s:%u\n", __FILE__, __LINE__);
-            break;
-        }
-        tbd_address += 8;
         TRACE(RXTX, logout
             ("TBD (simplified mode): buffer address 0x%08x, size 0x%04x\n",
-             tx_buffer_address, tx_buffer_size));
-        tx_buffer_size = MIN(tx_buffer_size, sizeof(buf) - size);
-        pci_dma_read(&s->dev, tx_buffer_address, &buf[size], tx_buffer_size);
-        size += tx_buffer_size;
+             tbd_address, tcb_bytes));
+        pci_dma_read(&s->dev, tbd_address, &buf[size], tcb_bytes);
+        size += tcb_bytes;
     }
     if (tbd_array == 0xffffffff) {
         /* Simplified mode. Was already handled by code above. */
@@ -1904,8 +1892,7 @@ static void e100_nic_realize(PCIDevice *pci_dev, Error **errp)
 
     qemu_register_reset(nic_reset, s);
 
-    s->vmstate = g_malloc(sizeof(vmstate_eepro100));
-    memcpy(s->vmstate, &vmstate_eepro100, sizeof(vmstate_eepro100));
+    s->vmstate = g_memdup(&vmstate_eepro100, sizeof(vmstate_eepro100));
     s->vmstate->name = qemu_get_queue(s->nic)->model;
     vmstate_register(&pci_dev->qdev, -1, s->vmstate, s);
 }
@@ -2117,6 +2104,10 @@ static void eepro100_register_types(void)
         type_info.class_init = eepro100_class_init;
         type_info.instance_size = sizeof(EEPRO100State);
         type_info.instance_init = eepro100_instance_init;
+        type_info.interfaces = (InterfaceInfo[]) {
+            { INTERFACE_CONVENTIONAL_PCI_DEVICE },
+            { },
+        };
 
         type_register(&type_info);
     }

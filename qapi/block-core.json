@@ -1,11 +1,12 @@
 # -*- Mode: Python -*-
 
 ##
-# == QAPI block core definitions (vm unrelated)
+# == Block core (VM unrelated)
 ##
 
-# QAPI common definitions
 { 'include': 'common.json' }
+{ 'include': 'crypto.json' }
+{ 'include': 'sockets.json' }
 
 ##
 # @SnapshotInfo:
@@ -1905,6 +1906,54 @@
             '*iops_size': 'int', '*group': 'str' } }
 
 ##
+# @ThrottleLimits:
+#
+# Limit parameters for throttling.
+# Since some limit combinations are illegal, limits should always be set in one
+# transaction. All fields are optional. When setting limits, if a field is
+# missing the current value is not changed.
+#
+# @iops-total:             limit total I/O operations per second
+# @iops-total-max:         I/O operations burst
+# @iops-total-max-length:  length of the iops-total-max burst period, in seconds
+#                          It must only be set if @iops-total-max is set as well.
+# @iops-read:              limit read operations per second
+# @iops-read-max:          I/O operations read burst
+# @iops-read-max-length:   length of the iops-read-max burst period, in seconds
+#                          It must only be set if @iops-read-max is set as well.
+# @iops-write:             limit write operations per second
+# @iops-write-max:         I/O operations write burst
+# @iops-write-max-length:  length of the iops-write-max burst period, in seconds
+#                          It must only be set if @iops-write-max is set as well.
+# @bps-total:              limit total bytes per second
+# @bps-total-max:          total bytes burst
+# @bps-total-max-length:   length of the bps-total-max burst period, in seconds.
+#                          It must only be set if @bps-total-max is set as well.
+# @bps-read:               limit read bytes per second
+# @bps-read-max:           total bytes read burst
+# @bps-read-max-length:    length of the bps-read-max burst period, in seconds
+#                          It must only be set if @bps-read-max is set as well.
+# @bps-write:              limit write bytes per second
+# @bps-write-max:          total bytes write burst
+# @bps-write-max-length:   length of the bps-write-max burst period, in seconds
+#                          It must only be set if @bps-write-max is set as well.
+# @iops-size:              when limiting by iops max size of an I/O in bytes
+#
+# Since: 2.11
+##
+{ 'struct': 'ThrottleLimits',
+  'data': { '*iops-total' : 'int', '*iops-total-max' : 'int',
+            '*iops-total-max-length' : 'int', '*iops-read' : 'int',
+            '*iops-read-max' : 'int', '*iops-read-max-length' : 'int',
+            '*iops-write' : 'int', '*iops-write-max' : 'int',
+            '*iops-write-max-length' : 'int', '*bps-total' : 'int',
+            '*bps-total-max' : 'int', '*bps-total-max-length' : 'int',
+            '*bps-read' : 'int', '*bps-read-max' : 'int',
+            '*bps-read-max-length' : 'int', '*bps-write' : 'int',
+            '*bps-write-max' : 'int', '*bps-write-max-length' : 'int',
+            '*iops-size' : 'int' } }
+
+##
 # @block-stream:
 #
 # Copy data from a backing file into a block device.
@@ -2015,6 +2064,12 @@
 # The operation will cancel as soon as possible and then emit the
 # BLOCK_JOB_CANCELLED event.  Before that happens the job is still visible when
 # enumerated using query-block-jobs.
+#
+# Note that if you issue 'block-job-cancel' after 'drive-mirror' has indicated
+# (via the event BLOCK_JOB_READY) that the source and destination are
+# synchronized, then the event triggered by this command changes to
+# BLOCK_JOB_COMPLETED, to indicate that the mirroring has ended and the
+# destination now has a point-in-time copy tied to the time of the cancellation.
 #
 # For streaming, the image file retains its backing file unless the streaming
 # operation happens to complete just as it is being cancelled.  A new streaming
@@ -2174,6 +2229,7 @@
 # Drivers that are supported in block device operations.
 #
 # @vxhs: Since 2.10
+# @throttle: Since 2.11
 #
 # Since: 2.9
 ##
@@ -2183,7 +2239,7 @@
             'host_device', 'http', 'https', 'iscsi', 'luks', 'nbd', 'nfs',
             'null-aio', 'null-co', 'parallels', 'qcow', 'qcow2', 'qed',
             'quorum', 'raw', 'rbd', 'replication', 'sheepdog', 'ssh',
-            'vdi', 'vhdx', 'vmdk', 'vpc', 'vvfat', 'vxhs' ] }
+            'throttle', 'vdi', 'vhdx', 'vmdk', 'vpc', 'vvfat', 'vxhs' ] }
 
 ##
 # @BlockdevOptionsFile:
@@ -2191,6 +2247,9 @@
 # Driver specific block device options for the file backend.
 #
 # @filename:    path to the image file
+# @pr-manager:  the id for the object that will handle persistent reservations
+#               for this device (default: none, forward the commands via SG_IO;
+#               since 2.11)
 # @aio:         AIO backend (default: threads) (since: 2.8)
 # @locking:     whether to enable file locking. If set to 'auto', only enable
 #               when Open File Descriptor (OFD) locking API is available
@@ -2200,6 +2259,7 @@
 ##
 { 'struct': 'BlockdevOptionsFile',
   'data': { 'filename': 'str',
+            '*pr-manager': 'str',
             '*locking': 'OnOffAuto',
             '*aio': 'BlockdevAioOptions' } }
 
@@ -2479,6 +2539,13 @@
 #
 # Trigger events supported by blkdebug.
 #
+# @l1_shrink_write_table:      write zeros to the l1 table to shrink image.
+#                              (since 2.11)
+#
+# @l1_shrink_free_l2_clusters: discard the l2 tables. (since 2.11)
+#
+# @cor_write: a write due to copy-on-read (since 2.11)
+#
 # Since: 2.9
 ##
 { 'enum': 'BlkdebugEvent', 'prefix': 'BLKDBG',
@@ -2495,7 +2562,9 @@
             'cluster_alloc_bytes', 'cluster_free', 'flush_to_os',
             'flush_to_disk', 'pwritev_rmw_head', 'pwritev_rmw_after_head',
             'pwritev_rmw_tail', 'pwritev_rmw_after_tail', 'pwritev',
-            'pwritev_zero', 'pwritev_done', 'empty_image_prepare' ] }
+            'pwritev_zero', 'pwritev_done', 'empty_image_prepare',
+            'l1_shrink_write_table', 'l1_shrink_free_l2_clusters',
+            'cor_write'] }
 
 ##
 # @BlkdebugInjectErrorOptions:
@@ -3047,6 +3116,20 @@
             '*tls-creds': 'str' } }
 
 ##
+# @BlockdevOptionsThrottle:
+#
+# Driver specific block device options for the throttle driver
+#
+# @throttle-group:   the name of the throttle-group object to use. It
+#                    must already exist.
+# @file:             reference to or definition of the data source block device
+# Since: 2.11
+##
+{ 'struct': 'BlockdevOptionsThrottle',
+  'data': { 'throttle-group': 'str',
+            'file' : 'BlockdevRef'
+             } }
+##
 # @BlockdevOptions:
 #
 # Options for creating a block device.  Many options are available for all
@@ -3057,8 +3140,11 @@
 #                 This option is required on the top level of blockdev-add.
 # @discard:       discard-related options (default: ignore)
 # @cache:         cache-related options
-# @read-only:     whether the block device should be read-only
-#                 (default: false)
+# @read-only:     whether the block device should be read-only (default: false).
+#                 Note that some block drivers support only read-only access,
+#                 either generally or in certain configurations. In this case,
+#                 the default value does not work and the option must be
+#                 specified explicitly.
 # @detect-zeroes: detect and optimize zero writes (Since 2.1)
 #                 (default: off)
 # @force-share:   force share all permission on added nodes.
@@ -3107,6 +3193,7 @@
       'replication':'BlockdevOptionsReplication',
       'sheepdog':   'BlockdevOptionsSheepdog',
       'ssh':        'BlockdevOptionsSsh',
+      'throttle':   'BlockdevOptionsThrottle',
       'vdi':        'BlockdevOptionsGenericFormat',
       'vhdx':       'BlockdevOptionsGenericFormat',
       'vmdk':       'BlockdevOptionsGenericCOWFormat',

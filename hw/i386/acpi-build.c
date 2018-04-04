@@ -493,36 +493,6 @@ build_madt(GArray *table_data, BIOSLinker *linker, PCMachineState *pcms)
                  table_data->len - madt_start, 1, NULL, NULL);
 }
 
-/* Assign BSEL property to all buses.  In the future, this can be changed
- * to only assign to buses that support hotplug.
- */
-static void *acpi_set_bsel(PCIBus *bus, void *opaque)
-{
-    unsigned *bsel_alloc = opaque;
-    unsigned *bus_bsel;
-
-    if (qbus_is_hotpluggable(BUS(bus))) {
-        bus_bsel = g_malloc(sizeof *bus_bsel);
-
-        *bus_bsel = (*bsel_alloc)++;
-        object_property_add_uint32_ptr(OBJECT(bus), ACPI_PCIHP_PROP_BSEL,
-                                       bus_bsel, &error_abort);
-    }
-
-    return bsel_alloc;
-}
-
-static void acpi_set_pci_info(void)
-{
-    PCIBus *bus = find_i440fx(); /* TODO: Q35 support */
-    unsigned bsel_alloc = ACPI_PCIHP_BSEL_DEFAULT;
-
-    if (bus) {
-        /* Scan all PCI buses. Set property to enable acpi based hotplug. */
-        pci_for_each_bus_depth_first(bus, acpi_set_bsel, NULL, &bsel_alloc);
-    }
-}
-
 static void build_append_pcihp_notify_entry(Aml *method, int slot)
 {
     Aml *if_ctx;
@@ -2318,6 +2288,9 @@ build_tpm2(GArray *table_data, BIOSLinker *linker)
                  (void *)tpm2_ptr, "TPM2", sizeof(*tpm2_ptr), 4, NULL, NULL);
 }
 
+#define HOLE_640K_START  (640 * 1024)
+#define HOLE_640K_END   (1024 * 1024)
+
 static void
 build_srat(GArray *table_data, BIOSLinker *linker, MachineState *machine)
 {
@@ -2373,16 +2346,29 @@ build_srat(GArray *table_data, BIOSLinker *linker, MachineState *machine)
     next_base = 0;
     numa_start = table_data->len;
 
-    numamem = acpi_data_push(table_data, sizeof *numamem);
-    build_srat_memory(numamem, 0, 640 * 1024, 0, MEM_AFFINITY_ENABLED);
-    next_base = 1024 * 1024;
     for (i = 1; i < pcms->numa_nodes + 1; ++i) {
         mem_base = next_base;
         mem_len = pcms->node_mem[i - 1];
-        if (i == 1) {
-            mem_len -= 1024 * 1024;
-        }
         next_base = mem_base + mem_len;
+
+        /* Cut out the 640K hole */
+        if (mem_base <= HOLE_640K_START &&
+            next_base > HOLE_640K_START) {
+            mem_len -= next_base - HOLE_640K_START;
+            if (mem_len > 0) {
+                numamem = acpi_data_push(table_data, sizeof *numamem);
+                build_srat_memory(numamem, mem_base, mem_len, i - 1,
+                                  MEM_AFFINITY_ENABLED);
+            }
+
+            /* Check for the rare case: 640K < RAM < 1M */
+            if (next_base <= HOLE_640K_END) {
+                next_base = HOLE_640K_END;
+                continue;
+            }
+            mem_base = HOLE_640K_END;
+            mem_len = next_base - HOLE_640K_END;
+        }
 
         /* Cut out the ACPI_PCI hole */
         if (mem_base <= pcms->below_4g_mem_size &&
@@ -2780,17 +2766,22 @@ void acpi_build(AcpiBuildTables *tables, MachineState *machine)
                      ACPI_BUILD_ALIGN_SIZE);
         if (tables_blob->len > legacy_table_size) {
             /* Should happen only with PCI bridges and -M pc-i440fx-2.0.  */
-            warn_report("migration may not work.");
+            warn_report("ACPI table size %u exceeds %d bytes,"
+                        " migration may not work",
+                        tables_blob->len, legacy_table_size);
+            error_printf("Try removing CPUs, NUMA nodes, memory slots"
+                         " or PCI bridges.");
         }
         g_array_set_size(tables_blob, legacy_table_size);
     } else {
         /* Make sure we have a buffer in case we need to resize the tables. */
         if (tables_blob->len > ACPI_BUILD_TABLE_SIZE / 2) {
             /* As of QEMU 2.1, this fires with 160 VCPUs and 255 memory slots.  */
-            warn_report("ACPI tables are larger than 64k.");
-            warn_report("migration may not work.");
-            warn_report("please remove CPUs, NUMA nodes, "
-                        "memory slots or PCI bridges.");
+            warn_report("ACPI table size %u exceeds %d bytes,"
+                        " migration may not work",
+                        tables_blob->len, ACPI_BUILD_TABLE_SIZE / 2);
+            error_printf("Try removing CPUs, NUMA nodes, memory slots"
+                         " or PCI bridges.");
         }
         acpi_align_size(tables_blob, ACPI_BUILD_TABLE_SIZE);
     }
@@ -2888,8 +2879,6 @@ void acpi_setup(void)
 
     build_state = g_malloc0(sizeof *build_state);
 
-    acpi_set_pci_info();
-
     acpi_build_tables_init(&tables);
     acpi_build(&tables, MACHINE(pcms));
 
@@ -2922,7 +2911,7 @@ void acpi_setup(void)
 
         build_state->rsdp = g_memdup(tables.rsdp->data, rsdp_size);
         fw_cfg_add_file_callback(pcms->fw_cfg, ACPI_BUILD_RSDP_FILE,
-                                 acpi_build_update, build_state,
+                                 acpi_build_update, NULL, build_state,
                                  build_state->rsdp, rsdp_size, true);
         build_state->rsdp_mr = NULL;
     } else {

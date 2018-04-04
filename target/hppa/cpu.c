@@ -108,19 +108,11 @@ static void hppa_cpu_initfn(Object *obj)
     cs->env_ptr = env;
     cpu_hppa_loaded_fr0(env);
     set_snan_bit_is_one(true, &env->fp_status);
-
-    hppa_translate_init();
 }
 
-HPPACPU *cpu_hppa_init(const char *cpu_model)
+static ObjectClass *hppa_cpu_class_by_name(const char *cpu_model)
 {
-    HPPACPU *cpu;
-
-    cpu = HPPA_CPU(object_new(TYPE_HPPA_CPU));
-
-    object_property_set_bool(OBJECT(cpu), true, "realized", NULL);
-
-    return cpu;
+    return object_class_by_name(TYPE_HPPA_CPU);
 }
 
 static void hppa_cpu_class_init(ObjectClass *oc, void *data)
@@ -132,6 +124,7 @@ static void hppa_cpu_class_init(ObjectClass *oc, void *data)
     acc->parent_realize = dc->realize;
     dc->realize = hppa_cpu_realizefn;
 
+    cc->class_by_name = hppa_cpu_class_by_name;
     cc->do_interrupt = hppa_cpu_do_interrupt;
     cc->cpu_exec_interrupt = hppa_cpu_exec_interrupt;
     cc->dump_state = hppa_cpu_dump_state;
@@ -141,6 +134,7 @@ static void hppa_cpu_class_init(ObjectClass *oc, void *data)
     cc->gdb_write_register = hppa_cpu_gdb_write_register;
     cc->handle_mmu_fault = hppa_cpu_handle_mmu_fault;
     cc->disas_set_info = hppa_cpu_disas_set_info;
+    cc->tcg_initialize = hppa_translate_init;
 
     cc->gdb_num_core_regs = 128;
 }

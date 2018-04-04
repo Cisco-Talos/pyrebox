@@ -27,6 +27,7 @@
 #include "microblaze-decode.h"
 #include "exec/cpu_ldst.h"
 #include "exec/helper-gen.h"
+#include "exec/translator.h"
 
 #include "trace-tcg.h"
 #include "exec/log.h"
@@ -46,8 +47,12 @@
 #define EXTRACT_FIELD(src, start, end) \
             (((src) >> start) & ((1 << (end - start + 1)) - 1))
 
+/* is_jmp field values */
+#define DISAS_JUMP    DISAS_TARGET_0 /* only pc was modified dynamically */
+#define DISAS_UPDATE  DISAS_TARGET_1 /* cpu state was modified dynamically */
+#define DISAS_TB_JUMP DISAS_TARGET_2 /* only pc was modified statically */
+
 static TCGv env_debug;
-static TCGv_env cpu_env;
 static TCGv cpu_R[32];
 static TCGv cpu_SR[18];
 static TCGv env_imm;
@@ -1660,7 +1665,7 @@ void gen_intermediate_code(CPUState *cs, struct TranslationBlock *tb)
 
     next_page_start = (pc_start & TARGET_PAGE_MASK) + TARGET_PAGE_SIZE;
     num_insns = 0;
-    max_insns = tb->cflags & CF_COUNT_MASK;
+    max_insns = tb_cflags(tb) & CF_COUNT_MASK;
     if (max_insns == 0) {
         max_insns = CF_COUNT_MASK;
     }
@@ -1695,7 +1700,7 @@ void gen_intermediate_code(CPUState *cs, struct TranslationBlock *tb)
         /* Pretty disas.  */
         LOG_DIS("%8.8x:\t", dc->pc);
 
-        if (num_insns == max_insns && (tb->cflags & CF_LAST_IO)) {
+        if (num_insns == max_insns && (tb_cflags(tb) & CF_LAST_IO)) {
             gen_io_start();
         }
 
@@ -1757,7 +1762,7 @@ void gen_intermediate_code(CPUState *cs, struct TranslationBlock *tb)
             npc = dc->jmp_pc;
     }
 
-    if (tb->cflags & CF_LAST_IO)
+    if (tb_cflags(tb) & CF_LAST_IO)
         gen_io_end();
     /* Force an update if the per-tb cpu state has changed.  */
     if (dc->is_jmp == DISAS_NEXT
@@ -1804,7 +1809,7 @@ void gen_intermediate_code(CPUState *cs, struct TranslationBlock *tb)
         qemu_log_lock();
         qemu_log("--------------\n");
 #if DISAS_GNU
-        log_target_disas(cs, pc_start, dc->pc - pc_start, 0);
+        log_target_disas(cs, pc_start, dc->pc - pc_start);
 #endif
         qemu_log("\nisize=%d osize=%d\n",
                  dc->pc - pc_start, tcg_op_buf_count());
@@ -1845,23 +1850,9 @@ void mb_cpu_dump_state(CPUState *cs, FILE *f, fprintf_function cpu_fprintf,
     cpu_fprintf(f, "\n\n");
 }
 
-MicroBlazeCPU *cpu_mb_init(const char *cpu_model)
-{
-    MicroBlazeCPU *cpu;
-
-    cpu = MICROBLAZE_CPU(object_new(TYPE_MICROBLAZE_CPU));
-
-    object_property_set_bool(OBJECT(cpu), true, "realized", NULL);
-
-    return cpu;
-}
-
 void mb_tcg_init(void)
 {
     int i;
-
-    cpu_env = tcg_global_reg_new_ptr(TCG_AREG0, "env");
-    tcg_ctx.tcg_env = cpu_env;
 
     env_debug = tcg_global_mem_new(cpu_env,
                     offsetof(CPUMBState, debug),

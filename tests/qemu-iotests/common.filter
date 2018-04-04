@@ -105,12 +105,19 @@ _filter_block_job_len()
     sed -e 's/, "len": [0-9]\+,/, "len": LEN,/g'
 }
 
+# replace actual image size (depends on the host filesystem)
+_filter_actual_image_size()
+{
+    sed -s 's/\("actual-size":\s*\)[0-9]\+/\1SIZE/g'
+}
+
 # replace driver-specific options in the "Formatting..." line
 _filter_img_create()
 {
     sed -e "s#$IMGPROTO:$TEST_DIR#TEST_DIR#g" \
         -e "s#$TEST_DIR#TEST_DIR#g" \
         -e "s#$IMGFMT#IMGFMT#g" \
+        -e 's#nbd:127.0.0.1:10810#TEST_DIR/t.IMGFMT#g' \
         -e "s# encryption=off##g" \
         -e "s# cluster_size=[0-9]\\+##g" \
         -e "s# table_size=[0-9]\\+##g" \
@@ -150,7 +157,9 @@ _filter_img_info()
         -e "/lazy_refcounts: \\(on\\|off\\)/d" \
         -e "/block_size: [0-9]\\+/d" \
         -e "/block_state_zero: \\(on\\|off\\)/d" \
-        -e "/log_size: [0-9]\\+/d"
+        -e "/log_size: [0-9]\\+/d" \
+        -e "s/iters: [0-9]\\+/iters: 1024/" \
+        -e "s/uuid: [-a-f0-9]\\+/uuid: 00000000-0000-0000-0000-000000000000/"
 }
 
 # filter out offsets and file names from qemu-img map; good for both
@@ -170,9 +179,9 @@ _filter_nbd()
     #
     # Filter out the TCP port number since this changes between runs.
     sed -e '/nbd\/.*\.c:/d' \
-        -e 's#nbd:\(//\)\?127\.0\.0\.1:[0-9]*#nbd:\1127.0.0.1:PORT#g' \
+        -e 's#127\.0\.0\.1:[0-9]*#127.0.0.1:PORT#g' \
         -e "s#?socket=$TEST_DIR#?socket=TEST_DIR#g" \
-        -e 's#\(exportname=foo\|PORT\): Failed to .*$#\1#'
+        -e 's#\(foo\|PORT/\?\|.sock\): Failed to .*$#\1#'
 }
 
 # make sure this script returns success

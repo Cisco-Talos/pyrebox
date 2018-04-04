@@ -352,6 +352,8 @@ static uint16_t base_GEN14_GA1[] = {
  * support these features yet.
  */
 static uint16_t full_GEN7_GA1[] = {
+    S390_FEAT_PPA15,
+    S390_FEAT_BPB,
     S390_FEAT_SIE_F2,
     S390_FEAT_SIE_SKEY,
     S390_FEAT_SIE_GPERE,
@@ -527,7 +529,6 @@ static uint16_t default_GEN13_GA1[] = {
 #define default_GEN13_GA2 EmptyFeat
 
 static uint16_t default_GEN14_GA1[] = {
-    S390_FEAT_ADAPTER_INT_SUPPRESSION,
     S390_FEAT_INSTRUCTION_EXEC_PROT,
     S390_FEAT_GUARDED_STORAGE,
     S390_FEAT_VECTOR_PACKED_DECIMAL,

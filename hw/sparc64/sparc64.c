@@ -339,8 +339,7 @@ void cpu_tick_set_limit(CPUTimer *timer, uint64_t limit)
     }
 }
 
-SPARCCPU *sparc64_cpu_devinit(const char *cpu_model,
-                              const char *default_cpu_model, uint64_t prom_addr)
+SPARCCPU *sparc64_cpu_devinit(const char *cpu_type, uint64_t prom_addr)
 {
     SPARCCPU *cpu;
     CPUSPARCState *env;
@@ -350,14 +349,7 @@ SPARCCPU *sparc64_cpu_devinit(const char *cpu_model,
     uint32_t  stick_frequency = 100 * 1000000;
     uint32_t hstick_frequency = 100 * 1000000;
 
-    if (cpu_model == NULL) {
-        cpu_model = default_cpu_model;
-    }
-    cpu = cpu_sparc_init(cpu_model);
-    if (cpu == NULL) {
-        fprintf(stderr, "Unable to find Sparc CPU definition\n");
-        exit(1);
-    }
+    cpu = SPARC_CPU(cpu_create(cpu_type));
     env = &cpu->env;
 
     env->tick = cpu_timer_create("tick", cpu, tick_irq,

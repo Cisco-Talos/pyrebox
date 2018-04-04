@@ -92,8 +92,18 @@ static void flush_all_helper(CPUState *src, run_on_cpu_func fn,
     }
 }
 
-/* statistics */
-int tlb_flush_count;
+size_t tlb_flush_count(void)
+{
+    CPUState *cpu;
+    size_t count = 0;
+
+    CPU_FOREACH(cpu) {
+        CPUArchState *env = cpu->env_ptr;
+
+        count += atomic_read(&env->tlb_flush_count);
+    }
+    return count;
+}
 
 /* This is OK because CPU architectures generally permit an
  * implementation to drop entries from the TLB at any time, so
@@ -112,7 +122,8 @@ static void tlb_flush_nocheck(CPUState *cpu)
     }
 
     assert_cpu_is_self(cpu);
-    tlb_debug("(count: %d)\n", tlb_flush_count++);
+    atomic_set(&env->tlb_flush_count, env->tlb_flush_count + 1);
+    tlb_debug("(count: %zu)\n", tlb_flush_count());
 
     tb_lock();
 
@@ -683,6 +694,9 @@ void tlb_set_page_with_attrs(CPUState *cpu, target_ulong vaddr,
         } else {
             tn.addr_write = address;
         }
+        if (prot & PAGE_WRITE_INV) {
+            tn.addr_write |= TLB_INVALID_MASK;
+        }
     }
 
     /* Pairs with flag setting in tlb_reset_dirty_range */
@@ -747,6 +761,7 @@ static inline ram_addr_t qemu_ram_addr_from_host_nofail(void *ptr)
 }
 
 static uint64_t io_readx(CPUArchState *env, CPUIOTLBEntry *iotlbentry,
+                         int mmu_idx,
                          target_ulong addr, uintptr_t retaddr, int size)
 {
     CPUState *cpu = ENV_GET_CPU(env);
@@ -754,6 +769,7 @@ static uint64_t io_readx(CPUArchState *env, CPUIOTLBEntry *iotlbentry,
     MemoryRegion *mr = iotlb_to_region(cpu, physaddr, iotlbentry->attrs);
     uint64_t val;
     bool locked = false;
+    MemTxResult r;
 
     physaddr = (physaddr & TARGET_PAGE_MASK) + addr;
     cpu->mem_io_pc = retaddr;
@@ -763,11 +779,16 @@ static uint64_t io_readx(CPUArchState *env, CPUIOTLBEntry *iotlbentry,
 
     cpu->mem_io_vaddr = addr;
 
-    if (mr->global_locking) {
+    if (mr->global_locking && !qemu_mutex_iothread_locked()) {
         qemu_mutex_lock_iothread();
         locked = true;
     }
-    memory_region_dispatch_read(mr, physaddr, &val, size, iotlbentry->attrs);
+    r = memory_region_dispatch_read(mr, physaddr,
+                                    &val, size, iotlbentry->attrs);
+    if (r != MEMTX_OK) {
+        cpu_transaction_failed(cpu, physaddr, addr, size, MMU_DATA_LOAD,
+                               mmu_idx, iotlbentry->attrs, r, retaddr);
+    }
     if (locked) {
         qemu_mutex_unlock_iothread();
     }
@@ -776,6 +797,7 @@ static uint64_t io_readx(CPUArchState *env, CPUIOTLBEntry *iotlbentry,
 }
 
 static void io_writex(CPUArchState *env, CPUIOTLBEntry *iotlbentry,
+                      int mmu_idx,
                       uint64_t val, target_ulong addr,
                       uintptr_t retaddr, int size)
 {
@@ -783,6 +805,7 @@ static void io_writex(CPUArchState *env, CPUIOTLBEntry *iotlbentry,
     hwaddr physaddr = iotlbentry->addr;
     MemoryRegion *mr = iotlb_to_region(cpu, physaddr, iotlbentry->attrs);
     bool locked = false;
+    MemTxResult r;
 
     physaddr = (physaddr & TARGET_PAGE_MASK) + addr;
     if (mr != &io_mem_rom && mr != &io_mem_notdirty && !cpu->can_do_io) {
@@ -791,11 +814,16 @@ static void io_writex(CPUArchState *env, CPUIOTLBEntry *iotlbentry,
     cpu->mem_io_vaddr = addr;
     cpu->mem_io_pc = retaddr;
 
-    if (mr->global_locking) {
+    if (mr->global_locking && !qemu_mutex_iothread_locked()) {
         qemu_mutex_lock_iothread();
         locked = true;
     }
-    memory_region_dispatch_write(mr, physaddr, val, size, iotlbentry->attrs);
+    r = memory_region_dispatch_write(mr, physaddr,
+                                     val, size, iotlbentry->attrs);
+    if (r != MEMTX_OK) {
+        cpu_transaction_failed(cpu, physaddr, addr, size, MMU_DATA_STORE,
+                               mmu_idx, iotlbentry->attrs, r, retaddr);
+    }
     if (locked) {
         qemu_mutex_unlock_iothread();
     }
@@ -845,6 +873,7 @@ tb_page_addr_t get_page_addr_code(CPUArchState *env, target_ulong addr)
     MemoryRegion *mr;
     CPUState *cpu = ENV_GET_CPU(env);
     CPUIOTLBEntry *iotlbentry;
+    hwaddr physaddr;
 
     index = (addr >> TARGET_PAGE_BITS) & (CPU_TLB_SIZE - 1);
     mmu_idx = cpu_mmu_index(env, true);
@@ -867,6 +896,19 @@ tb_page_addr_t get_page_addr_code(CPUArchState *env, target_ulong addr)
             return get_page_addr_code(env, addr);
         }
         qemu_mutex_unlock_iothread();
+
+        /* Give the new-style cpu_transaction_failed() hook first chance
+         * to handle this.
+         * This is not the ideal place to detect and generate CPU
+         * exceptions for instruction fetch failure (for instance
+         * we don't know the length of the access that the CPU would
+         * use, and it would be better to go ahead and try the access
+         * and use the MemTXResult it produced). However it is the
+         * simplest place we have currently available for the check.
+         */
+        physaddr = (iotlbentry->addr & TARGET_PAGE_MASK) + addr;
+        cpu_transaction_failed(cpu, physaddr, addr, 0, MMU_INST_FETCH, mmu_idx,
+                               iotlbentry->attrs, MEMTX_DECODE_ERROR, 0);
 
         cpu_unassigned_access(cpu, addr, false, true, 0, 4);
         /* The CPU's unassigned access hook might have longjumped out
@@ -904,7 +946,8 @@ void probe_write(CPUArchState *env, target_ulong addr, int mmu_idx,
 /* Probe for a read-modify-write atomic operation.  Do not allow unaligned
  * operations, or io operations to proceed.  Return the host address.  */
 static void *atomic_mmu_lookup(CPUArchState *env, target_ulong addr,
-                               TCGMemOpIdx oi, uintptr_t retaddr)
+                               TCGMemOpIdx oi, uintptr_t retaddr,
+                               NotDirtyInfo *ndi)
 {
     size_t mmu_idx = get_mmuidx(oi);
     size_t index = (addr >> TARGET_PAGE_BITS) & (CPU_TLB_SIZE - 1);
@@ -913,6 +956,7 @@ static void *atomic_mmu_lookup(CPUArchState *env, target_ulong addr,
     TCGMemOp mop = get_memop(oi);
     int a_bits = get_alignment_bits(mop);
     int s_bits = mop & MO_SIZE;
+    void *hostaddr;
 
     /* Adjust the given return address.  */
     retaddr -= GETPC_ADJ;
@@ -939,24 +983,18 @@ static void *atomic_mmu_lookup(CPUArchState *env, target_ulong addr,
         if (!VICTIM_TLB_HIT(addr_write, addr)) {
             tlb_fill(ENV_GET_CPU(env), addr, MMU_DATA_STORE, mmu_idx, retaddr);
         }
-        tlb_addr = tlbe->addr_write;
-    }
-
-    /* Check notdirty */
-    if (unlikely(tlb_addr & TLB_NOTDIRTY)) {
-        tlb_set_dirty(ENV_GET_CPU(env), addr);
-        tlb_addr = tlb_addr & ~TLB_NOTDIRTY;
+        tlb_addr = tlbe->addr_write & ~TLB_INVALID_MASK;
     }
 
     /* Notice an IO access  */
-    if (unlikely(tlb_addr & ~TARGET_PAGE_MASK)) {
+    if (unlikely(tlb_addr & TLB_MMIO)) {
         /* There's really nothing that can be done to
            support this apart from stop-the-world.  */
         goto stop_the_world;
     }
 
     /* Let the guest notice RMW on a write-only page.  */
-    if (unlikely(tlbe->addr_read != tlb_addr)) {
+    if (unlikely(tlbe->addr_read != (tlb_addr & ~TLB_NOTDIRTY))) {
         tlb_fill(ENV_GET_CPU(env), addr, MMU_DATA_LOAD, mmu_idx, retaddr);
         /* Since we don't support reads and writes to different addresses,
            and we do have the proper page loaded for write, this shouldn't
@@ -964,7 +1002,17 @@ static void *atomic_mmu_lookup(CPUArchState *env, target_ulong addr,
         goto stop_the_world;
     }
 
-    return (void *)((uintptr_t)addr + tlbe->addend);
+    hostaddr = (void *)((uintptr_t)addr + tlbe->addend);
+
+    ndi->active = false;
+    if (unlikely(tlb_addr & TLB_NOTDIRTY)) {
+        ndi->active = true;
+        memory_notdirty_write_prepare(ndi, ENV_GET_CPU(env), addr,
+                                      qemu_ram_addr_from_host_nofail(hostaddr),
+                                      1 << s_bits);
+    }
+
+    return hostaddr;
 
  stop_the_world:
     cpu_loop_exit_atomic(ENV_GET_CPU(env), retaddr);
@@ -998,7 +1046,14 @@ static void *atomic_mmu_lookup(CPUArchState *env, target_ulong addr,
 #define EXTRA_ARGS     , TCGMemOpIdx oi, uintptr_t retaddr
 #define ATOMIC_NAME(X) \
     HELPER(glue(glue(glue(atomic_ ## X, SUFFIX), END), _mmu))
-#define ATOMIC_MMU_LOOKUP  atomic_mmu_lookup(env, addr, oi, retaddr)
+#define ATOMIC_MMU_DECLS NotDirtyInfo ndi
+#define ATOMIC_MMU_LOOKUP atomic_mmu_lookup(env, addr, oi, retaddr, &ndi)
+#define ATOMIC_MMU_CLEANUP                              \
+    do {                                                \
+        if (unlikely(ndi.active)) {                     \
+            memory_notdirty_write_complete(&ndi);       \
+        }                                               \
+    } while (0)
 
 #define DATA_SIZE 1
 #include "atomic_template.h"
@@ -1026,7 +1081,7 @@ static void *atomic_mmu_lookup(CPUArchState *env, target_ulong addr,
 #undef ATOMIC_MMU_LOOKUP
 #define EXTRA_ARGS         , TCGMemOpIdx oi
 #define ATOMIC_NAME(X)     HELPER(glue(glue(atomic_ ## X, SUFFIX), END))
-#define ATOMIC_MMU_LOOKUP  atomic_mmu_lookup(env, addr, oi, GETPC())
+#define ATOMIC_MMU_LOOKUP  atomic_mmu_lookup(env, addr, oi, GETPC(), &ndi)
 
 #define DATA_SIZE 1
 #include "atomic_template.h"

@@ -70,7 +70,7 @@ static void vhost_dev_sync_region(struct vhost_dev *dev,
     uint64_t end = MIN(mlast, rlast);
     vhost_log_chunk_t *from = log + start / VHOST_LOG_CHUNK;
     vhost_log_chunk_t *to = log + end / VHOST_LOG_CHUNK + 1;
-    uint64_t addr = (start / VHOST_LOG_CHUNK) * VHOST_LOG_CHUNK;
+    uint64_t addr = QEMU_ALIGN_DOWN(start, VHOST_LOG_CHUNK);
 
     if (end < start) {
         return;
@@ -375,8 +375,6 @@ static void vhost_log_put(struct vhost_dev *dev, bool sync)
     if (!log) {
         return;
     }
-    dev->log = NULL;
-    dev->log_size = 0;
 
     --log->refcnt;
     if (log->refcnt == 0) {
@@ -396,6 +394,9 @@ static void vhost_log_put(struct vhost_dev *dev, bool sync)
 
         g_free(log);
     }
+
+    dev->log = NULL;
+    dev->log_size = 0;
 }
 
 static bool vhost_dev_log_is_shared(struct vhost_dev *dev)
@@ -492,21 +493,21 @@ static int vhost_verify_ring_mappings(struct vhost_dev *dev,
         j = 0;
         r = vhost_verify_ring_part_mapping(dev, vq->desc, vq->desc_phys,
                                            vq->desc_size, start_addr, size);
-        if (!r) {
+        if (r) {
             break;
         }
 
         j++;
         r = vhost_verify_ring_part_mapping(dev, vq->avail, vq->avail_phys,
                                            vq->avail_size, start_addr, size);
-        if (!r) {
+        if (r) {
             break;
         }
 
         j++;
         r = vhost_verify_ring_part_mapping(dev, vq->used, vq->used_phys,
                                            vq->used_size, start_addr, size);
-        if (!r) {
+        if (r) {
             break;
         }
     }
@@ -1137,6 +1138,10 @@ static void vhost_virtqueue_stop(struct vhost_dev *dev,
     r = dev->vhost_ops->vhost_get_vring_base(dev, &state);
     if (r < 0) {
         VHOST_OPS_DEBUG("vhost VQ %d ring restore failed: %d", idx, r);
+        /* Connection to the backend is broken, so let's sync internal
+         * last avail idx to the device used idx.
+         */
+        virtio_queue_restore_last_avail_idx(vdev, idx);
     } else {
         virtio_queue_set_last_avail_idx(vdev, idx, state.num);
     }
@@ -1356,6 +1361,10 @@ void vhost_dev_cleanup(struct vhost_dev *hdev)
     if (hdev->mem) {
         /* those are only safe after successful init */
         memory_listener_unregister(&hdev->memory_listener);
+        for (i = 0; i < hdev->n_mem_sections; ++i) {
+            MemoryRegionSection *section = &hdev->mem_sections[i];
+            memory_region_unref(section->mr);
+        }
         QLIST_REMOVE(hdev, entry);
     }
     if (hdev->migration_blocker) {

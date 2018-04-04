@@ -38,6 +38,7 @@
 #include "hw/mem/pc-dimm.h"
 #include "qemu/option.h"
 #include "qemu/config-file.h"
+#include "qemu/cutils.h"
 
 QemuOptsList qemu_numa_opts = {
     .name = "numa",
@@ -142,7 +143,7 @@ uint32_t numa_get_node(ram_addr_t addr, Error **errp)
 }
 
 static void parse_numa_node(MachineState *ms, NumaNodeOptions *node,
-                            QemuOpts *opts, Error **errp)
+                            Error **errp)
 {
     uint16_t nodenr;
     uint16List *cpus = NULL;
@@ -199,13 +200,7 @@ static void parse_numa_node(MachineState *ms, NumaNodeOptions *node,
     }
 
     if (node->has_mem) {
-        uint64_t mem_size = node->mem;
-        const char *mem_str = qemu_opt_get(opts, "mem");
-        /* Fix up legacy suffix-less format */
-        if (g_ascii_isdigit(mem_str[strlen(mem_str) - 1])) {
-            mem_size <<= 20;
-        }
-        numa_info[nodenr].node_mem = mem_size;
+        numa_info[nodenr].node_mem = node->mem;
     }
     if (node->has_memdev) {
         Object *o;
@@ -221,6 +216,7 @@ static void parse_numa_node(MachineState *ms, NumaNodeOptions *node,
     }
     numa_info[nodenr].present = true;
     max_numa_nodeid = MAX(max_numa_nodeid, nodenr + 1);
+    nb_numa_nodes++;
 }
 
 static void parse_numa_distance(NumaDistOptions *dist, Error **errp)
@@ -275,13 +271,18 @@ static int parse_numa(void *opaque, QemuOpts *opts, Error **errp)
         goto end;
     }
 
+    /* Fix up legacy suffix-less format */
+    if ((object->type == NUMA_OPTIONS_TYPE_NODE) && object->u.node.has_mem) {
+        const char *mem_str = qemu_opt_get(opts, "mem");
+        qemu_strtosz_MiB(mem_str, NULL, &object->u.node.mem);
+    }
+
     switch (object->type) {
     case NUMA_OPTIONS_TYPE_NODE:
-        parse_numa_node(ms, &object->u.node, opts, &err);
+        parse_numa_node(ms, &object->u.node, &err);
         if (err) {
             goto end;
         }
-        nb_numa_nodes++;
         break;
     case NUMA_OPTIONS_TYPE_DIST:
         parse_numa_distance(&object->u.dist, &err);
@@ -432,6 +433,25 @@ void parse_numa_opts(MachineState *ms)
         exit(1);
     }
 
+    /*
+     * If memory hotplug is enabled (slots > 0) but without '-numa'
+     * options explicitly on CLI, guestes will break.
+     *
+     *   Windows: won't enable memory hotplug without SRAT table at all
+     *
+     *   Linux: if QEMU is started with initial memory all below 4Gb
+     *   and no SRAT table present, guest kernel will use nommu DMA ops,
+     *   which breaks 32bit hw drivers when memory is hotplugged and
+     *   guest tries to use it with that drivers.
+     *
+     * Enable NUMA implicitly by adding a new NUMA node automatically.
+     */
+    if (ms->ram_slots > 0 && nb_numa_nodes == 0 &&
+        mc->auto_enable_numa_with_memhp) {
+            NumaNodeOptions node = { };
+            parse_numa_node(ms, &node, NULL);
+    }
+
     assert(max_numa_nodeid <= MAX_NODES);
 
     /* No support for sparse NUMA node IDs yet: */
@@ -567,7 +587,7 @@ void memory_region_allocate_system_memory(MemoryRegion *mr, Object *owner,
     }
 
     memory_region_init(mr, owner, name, ram_size);
-    for (i = 0; i < MAX_NODES; i++) {
+    for (i = 0; i < nb_numa_nodes; i++) {
         uint64_t size = numa_info[i].node_mem;
         HostMemoryBackend *backend = numa_info[i].node_memdev;
         if (!backend) {
@@ -591,11 +611,12 @@ void memory_region_allocate_system_memory(MemoryRegion *mr, Object *owner,
     }
 }
 
-static void numa_stat_memory_devices(uint64_t node_mem[])
+static void numa_stat_memory_devices(NumaNodeMem node_mem[])
 {
     MemoryDeviceInfoList *info_list = NULL;
     MemoryDeviceInfoList **prev = &info_list;
     MemoryDeviceInfoList *info;
+    PCDIMMDeviceInfo     *pcdimm_info;
 
     qmp_pc_dimm_device_list(qdev_get_machine(), &prev);
     for (info = info_list; info; info = info->next) {
@@ -603,9 +624,16 @@ static void numa_stat_memory_devices(uint64_t node_mem[])
 
         if (value) {
             switch (value->type) {
-            case MEMORY_DEVICE_INFO_KIND_DIMM:
-                node_mem[value->u.dimm.data->node] += value->u.dimm.data->size;
+            case MEMORY_DEVICE_INFO_KIND_DIMM: {
+                pcdimm_info = value->u.dimm.data;
+                node_mem[pcdimm_info->node].node_mem += pcdimm_info->size;
+                if (pcdimm_info->hotpluggable && pcdimm_info->hotplugged) {
+                    node_mem[pcdimm_info->node].node_plugged_mem +=
+                        pcdimm_info->size;
+                }
                 break;
+            }
+
             default:
                 break;
             }
@@ -614,7 +642,7 @@ static void numa_stat_memory_devices(uint64_t node_mem[])
     qapi_free_MemoryDeviceInfoList(info_list);
 }
 
-void query_numa_node_mem(uint64_t node_mem[])
+void query_numa_node_mem(NumaNodeMem node_mem[])
 {
     int i;
 
@@ -624,7 +652,7 @@ void query_numa_node_mem(uint64_t node_mem[])
 
     numa_stat_memory_devices(node_mem);
     for (i = 0; i < nb_numa_nodes; i++) {
-        node_mem[i] += numa_info[i].node_mem;
+        node_mem[i].node_mem += numa_info[i].node_mem;
     }
 }
 

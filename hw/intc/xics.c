@@ -40,11 +40,17 @@
 
 void icp_pic_print_info(ICPState *icp, Monitor *mon)
 {
+    ICPStateClass *icpc = ICP_GET_CLASS(icp);
     int cpu_index = icp->cs ? icp->cs->cpu_index : -1;
 
     if (!icp->output) {
         return;
     }
+
+    if (icpc->synchronize_state) {
+        icpc->synchronize_state(icp);
+    }
+
     monitor_printf(mon, "CPU %d XIRR=%08x (%p) PP=%02x MFRR=%02x\n",
                    cpu_index, icp->xirr, icp->xirr_owner,
                    icp->pending_priority, icp->mfrr);
@@ -52,6 +58,7 @@ void icp_pic_print_info(ICPState *icp, Monitor *mon)
 
 void ics_pic_print_info(ICSState *ics, Monitor *mon)
 {
+    ICSStateClass *icsc = ICS_BASE_GET_CLASS(ics);
     uint32_t i;
 
     monitor_printf(mon, "ICS %4x..%4x %p\n",
@@ -59,6 +66,10 @@ void ics_pic_print_info(ICSState *ics, Monitor *mon)
 
     if (!ics->irqs) {
         return;
+    }
+
+    if (icsc->synchronize_state) {
+        icsc->synchronize_state(ics);
     }
 
     for (i = 0; i < ics->nr_irqs; i++) {
@@ -241,7 +252,7 @@ static void icp_irq(ICSState *ics, int server, int nr, uint8_t priority)
     }
 }
 
-static void icp_dispatch_pre_save(void *opaque)
+static int icp_dispatch_pre_save(void *opaque)
 {
     ICPState *icp = opaque;
     ICPStateClass *info = ICP_GET_CLASS(icp);
@@ -249,6 +260,8 @@ static void icp_dispatch_pre_save(void *opaque)
     if (info->pre_save) {
         info->pre_save(icp);
     }
+
+    return 0;
 }
 
 static int icp_dispatch_post_load(void *opaque, int version_id)
@@ -306,8 +319,8 @@ static void icp_realize(DeviceState *dev, Error **errp)
 
     obj = object_property_get_link(OBJECT(dev), ICP_PROP_XICS, &err);
     if (!obj) {
-        error_setg(errp, "%s: required link '" ICP_PROP_XICS "' not found: %s",
-                   __func__, error_get_pretty(err));
+        error_propagate(errp, err);
+        error_prepend(errp, "required link '" ICP_PROP_XICS "' not found: ");
         return;
     }
 
@@ -315,8 +328,8 @@ static void icp_realize(DeviceState *dev, Error **errp)
 
     obj = object_property_get_link(OBJECT(dev), ICP_PROP_CPU, &err);
     if (!obj) {
-        error_setg(errp, "%s: required link '" ICP_PROP_CPU "' not found: %s",
-                   __func__, error_get_pretty(err));
+        error_propagate(errp, err);
+        error_prepend(errp, "required link '" ICP_PROP_CPU "' not found: ");
         return;
     }
 
@@ -533,7 +546,7 @@ static void ics_simple_reset(void *dev)
     }
 }
 
-static void ics_simple_dispatch_pre_save(void *opaque)
+static int ics_simple_dispatch_pre_save(void *opaque)
 {
     ICSState *ics = opaque;
     ICSStateClass *info = ICS_BASE_GET_CLASS(ics);
@@ -541,6 +554,8 @@ static void ics_simple_dispatch_pre_save(void *opaque)
     if (info->pre_save) {
         info->pre_save(ics);
     }
+
+    return 0;
 }
 
 static int ics_simple_dispatch_post_load(void *opaque, int version_id)
@@ -641,8 +656,8 @@ static void ics_base_realize(DeviceState *dev, Error **errp)
 
     obj = object_property_get_link(OBJECT(dev), ICS_PROP_XICS, &err);
     if (!obj) {
-        error_setg(errp, "%s: required link '" ICS_PROP_XICS "' not found: %s",
-                   __func__, error_get_pretty(err));
+        error_propagate(errp, err);
+        error_prepend(errp, "required link '" ICS_PROP_XICS "' not found: ");
         return;
     }
     ics->xics = XICS_FABRIC(obj);

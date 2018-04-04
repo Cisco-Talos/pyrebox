@@ -66,10 +66,26 @@
 #define ARMV7M_EXCP_MEM     4
 #define ARMV7M_EXCP_BUS     5
 #define ARMV7M_EXCP_USAGE   6
+#define ARMV7M_EXCP_SECURE  7
 #define ARMV7M_EXCP_SVC     11
 #define ARMV7M_EXCP_DEBUG   12
 #define ARMV7M_EXCP_PENDSV  14
 #define ARMV7M_EXCP_SYSTICK 15
+
+/* For M profile, some registers are banked secure vs non-secure;
+ * these are represented as a 2-element array where the first element
+ * is the non-secure copy and the second is the secure copy.
+ * When the CPU does not have implement the security extension then
+ * only the first element is used.
+ * This means that the copy for the current security state can be
+ * accessed via env->registerfield[env->v7m.secure] (whether the security
+ * extension is implemented or not).
+ */
+enum {
+    M_REG_NS = 0,
+    M_REG_S = 1,
+    M_REG_NUM_BANKS = 2,
+};
 
 /* ARM-specific interrupt pending bits.  */
 #define CPU_INTERRUPT_FIQ   CPU_INTERRUPT_TGT_EXT_1
@@ -406,18 +422,37 @@ typedef struct CPUARMState {
     } cp15;
 
     struct {
+        /* M profile has up to 4 stack pointers:
+         * a Main Stack Pointer and a Process Stack Pointer for each
+         * of the Secure and Non-Secure states. (If the CPU doesn't support
+         * the security extension then it has only two SPs.)
+         * In QEMU we always store the currently active SP in regs[13],
+         * and the non-active SP for the current security state in
+         * v7m.other_sp. The stack pointers for the inactive security state
+         * are stored in other_ss_msp and other_ss_psp.
+         * switch_v7m_security_state() is responsible for rearranging them
+         * when we change security state.
+         */
         uint32_t other_sp;
-        uint32_t vecbase;
-        uint32_t basepri;
-        uint32_t control;
-        uint32_t ccr; /* Configuration and Control */
-        uint32_t cfsr; /* Configurable Fault Status */
+        uint32_t other_ss_msp;
+        uint32_t other_ss_psp;
+        uint32_t vecbase[M_REG_NUM_BANKS];
+        uint32_t basepri[M_REG_NUM_BANKS];
+        uint32_t control[M_REG_NUM_BANKS];
+        uint32_t ccr[M_REG_NUM_BANKS]; /* Configuration and Control */
+        uint32_t cfsr[M_REG_NUM_BANKS]; /* Configurable Fault Status */
         uint32_t hfsr; /* HardFault Status */
         uint32_t dfsr; /* Debug Fault Status Register */
-        uint32_t mmfar; /* MemManage Fault Address */
+        uint32_t sfsr; /* Secure Fault Status Register */
+        uint32_t mmfar[M_REG_NUM_BANKS]; /* MemManage Fault Address */
         uint32_t bfar; /* BusFault Address */
-        unsigned mpu_ctrl; /* MPU_CTRL (some bits kept in sctlr_el[1]) */
+        uint32_t sfar; /* Secure Fault Address Register */
+        unsigned mpu_ctrl[M_REG_NUM_BANKS]; /* MPU_CTRL */
         int exception;
+        uint32_t primask[M_REG_NUM_BANKS];
+        uint32_t faultmask[M_REG_NUM_BANKS];
+        uint32_t aircr; /* only holds r/w state if security extn implemented */
+        uint32_t secure; /* Is CPU in Secure state? (not guest visible) */
     } v7m;
 
     /* Information associated with an exception about to be taken:
@@ -517,8 +552,29 @@ typedef struct CPUARMState {
         uint32_t *drbar;
         uint32_t *drsr;
         uint32_t *dracr;
-        uint32_t rnr;
+        uint32_t rnr[M_REG_NUM_BANKS];
     } pmsav7;
+
+    /* PMSAv8 MPU */
+    struct {
+        /* The PMSAv8 implementation also shares some PMSAv7 config
+         * and state:
+         *  pmsav7.rnr (region number register)
+         *  pmsav7_dregion (number of configured regions)
+         */
+        uint32_t *rbar[M_REG_NUM_BANKS];
+        uint32_t *rlar[M_REG_NUM_BANKS];
+        uint32_t mair0[M_REG_NUM_BANKS];
+        uint32_t mair1[M_REG_NUM_BANKS];
+    } pmsav8;
+
+    /* v8M SAU */
+    struct {
+        uint32_t *rbar;
+        uint32_t *rlar;
+        uint32_t rnr;
+        uint32_t ctrl;
+    } sau;
 
     void *nvic;
     const struct arm_boot_info *boot_info;
@@ -583,6 +639,8 @@ struct ARMCPU {
     qemu_irq gt_timer_outputs[NUM_GTIMERS];
     /* GPIO output for GICv3 maintenance interrupt signal */
     qemu_irq gicv3_maintenance_interrupt;
+    /* GPIO output for the PMU interrupt */
+    qemu_irq pmu_interrupt;
 
     /* MemoryRegion to use for secure physical accesses */
     MemoryRegion *secure_memory;
@@ -613,6 +671,8 @@ struct ARMCPU {
     bool has_mpu;
     /* PMSAv7 MPU number of supported regions */
     uint32_t pmsav7_dregion;
+    /* v8M SAU number of supported regions */
+    uint32_t sau_sregion;
 
     /* PSCI conduit used to invoke PSCI methods
      * 0 - disabled, 1 - smc, 2 - hvc
@@ -748,7 +808,6 @@ int aarch64_cpu_gdb_read_register(CPUState *cpu, uint8_t *buf, int reg);
 int aarch64_cpu_gdb_write_register(CPUState *cpu, uint8_t *buf, int reg);
 #endif
 
-ARMCPU *cpu_arm_init(const char *cpu_model);
 target_ulong do_arm_semihosting(CPUARMState *env);
 void aarch64_sync_32_to_64(CPUARMState *env);
 void aarch64_sync_64_to_32(CPUARMState *env);
@@ -883,6 +942,22 @@ void pmccntr_sync(CPUARMState *env);
 /* Mask of bits which may be set by exception return copying them from SPSR */
 #define CPSR_ERET_MASK (~CPSR_RESERVED)
 
+/* Bit definitions for M profile XPSR. Most are the same as CPSR. */
+#define XPSR_EXCP 0x1ffU
+#define XPSR_SPREALIGN (1U << 9) /* Only set in exception stack frames */
+#define XPSR_IT_2_7 CPSR_IT_2_7
+#define XPSR_GE CPSR_GE
+#define XPSR_SFPA (1U << 20) /* Only set in exception stack frames */
+#define XPSR_T (1U << 24) /* Not the same as CPSR_T ! */
+#define XPSR_IT_0_1 CPSR_IT_0_1
+#define XPSR_Q CPSR_Q
+#define XPSR_V CPSR_V
+#define XPSR_C CPSR_C
+#define XPSR_Z CPSR_Z
+#define XPSR_N CPSR_N
+#define XPSR_NZCV CPSR_NZCV
+#define XPSR_IT CPSR_IT
+
 #define TTBCR_N      (7U << 0) /* TTBCR.EAE==0 */
 #define TTBCR_T0SZ   (7U << 0) /* TTBCR.EAE==1 */
 #define TTBCR_PD0    (1U << 4)
@@ -927,6 +1002,11 @@ void pmccntr_sync(CPUARMState *env);
 #define PSTATE_MODE_EL1h 5
 #define PSTATE_MODE_EL1t 4
 #define PSTATE_MODE_EL0t 0
+
+/* Write a new value to v7m.exception, thus transitioning into or out
+ * of Handler mode; this may result in a change of active stack pointer.
+ */
+void write_v7m_exception(CPUARMState *env, uint32_t new_exc);
 
 /* Map EL and handler into a PSTATE_MODE.  */
 static inline unsigned int aarch64_pstate_mode(unsigned int el, bool handler)
@@ -987,26 +1067,29 @@ static inline uint32_t xpsr_read(CPUARMState *env)
 /* Set the xPSR.  Note that some bits of mask must be all-set or all-clear.  */
 static inline void xpsr_write(CPUARMState *env, uint32_t val, uint32_t mask)
 {
-    if (mask & CPSR_NZCV) {
-        env->ZF = (~val) & CPSR_Z;
+    if (mask & XPSR_NZCV) {
+        env->ZF = (~val) & XPSR_Z;
         env->NF = val;
         env->CF = (val >> 29) & 1;
         env->VF = (val << 3) & 0x80000000;
     }
-    if (mask & CPSR_Q)
-        env->QF = ((val & CPSR_Q) != 0);
-    if (mask & (1 << 24))
-        env->thumb = ((val & (1 << 24)) != 0);
-    if (mask & CPSR_IT_0_1) {
+    if (mask & XPSR_Q) {
+        env->QF = ((val & XPSR_Q) != 0);
+    }
+    if (mask & XPSR_T) {
+        env->thumb = ((val & XPSR_T) != 0);
+    }
+    if (mask & XPSR_IT_0_1) {
         env->condexec_bits &= ~3;
         env->condexec_bits |= (val >> 25) & 3;
     }
-    if (mask & CPSR_IT_2_7) {
+    if (mask & XPSR_IT_2_7) {
         env->condexec_bits &= 3;
         env->condexec_bits |= (val >> 8) & 0xfc;
     }
-    if (mask & 0x1ff) {
-        env->v7m.exception = val & 0x1ff;
+    if (mask & XPSR_EXCP) {
+        /* Note that this only happens on exception exit */
+        write_v7m_exception(env, val & XPSR_EXCP);
     }
 }
 
@@ -1136,6 +1219,17 @@ FIELD(V7M_CCR, STKALIGN, 9, 1)
 FIELD(V7M_CCR, DC, 16, 1)
 FIELD(V7M_CCR, IC, 17, 1)
 
+/* V7M AIRCR bits */
+FIELD(V7M_AIRCR, VECTRESET, 0, 1)
+FIELD(V7M_AIRCR, VECTCLRACTIVE, 1, 1)
+FIELD(V7M_AIRCR, SYSRESETREQ, 2, 1)
+FIELD(V7M_AIRCR, SYSRESETREQS, 3, 1)
+FIELD(V7M_AIRCR, PRIGROUP, 8, 3)
+FIELD(V7M_AIRCR, BFHFNMINS, 13, 1)
+FIELD(V7M_AIRCR, PRIS, 14, 1)
+FIELD(V7M_AIRCR, ENDIANNESS, 15, 1)
+FIELD(V7M_AIRCR, VECTKEY, 16, 16)
+
 /* V7M CFSR bits for MMFSR */
 FIELD(V7M_CFSR, IACCVIOL, 0, 1)
 FIELD(V7M_CFSR, DACCVIOL, 1, 1)
@@ -1161,6 +1255,11 @@ FIELD(V7M_CFSR, NOCP, 16 + 3, 1)
 FIELD(V7M_CFSR, UNALIGNED, 16 + 8, 1)
 FIELD(V7M_CFSR, DIVBYZERO, 16 + 9, 1)
 
+/* V7M CFSR bit masks covering all of the subregister bits */
+FIELD(V7M_CFSR, MMFSR, 0, 8)
+FIELD(V7M_CFSR, BFSR, 8, 8)
+FIELD(V7M_CFSR, UFSR, 16, 16)
+
 /* V7M HFSR bits */
 FIELD(V7M_HFSR, VECTTBL, 1, 1)
 FIELD(V7M_HFSR, FORCED, 30, 1)
@@ -1172,6 +1271,16 @@ FIELD(V7M_DFSR, BKPT, 1, 1)
 FIELD(V7M_DFSR, DWTTRAP, 2, 1)
 FIELD(V7M_DFSR, VCATCH, 3, 1)
 FIELD(V7M_DFSR, EXTERNAL, 4, 1)
+
+/* V7M SFSR bits */
+FIELD(V7M_SFSR, INVEP, 0, 1)
+FIELD(V7M_SFSR, INVIS, 1, 1)
+FIELD(V7M_SFSR, INVER, 2, 1)
+FIELD(V7M_SFSR, AUVIOL, 3, 1)
+FIELD(V7M_SFSR, INVTRAN, 4, 1)
+FIELD(V7M_SFSR, LSPERR, 5, 1)
+FIELD(V7M_SFSR, SFARVALID, 6, 1)
+FIELD(V7M_SFSR, LSERR, 7, 1)
 
 /* v7M MPU_CTRL bits */
 FIELD(V7M_MPU_CTRL, ENABLE, 0, 1)
@@ -1229,6 +1338,8 @@ enum arm_features {
     ARM_FEATURE_THUMB_DSP, /* DSP insns supported in the Thumb encodings */
     ARM_FEATURE_PMU, /* has PMU support */
     ARM_FEATURE_VBAR, /* has cp15 VBAR */
+    ARM_FEATURE_M_SECURITY, /* M profile Security Extension */
+    ARM_FEATURE_JAZELLE, /* has (trivial) Jazelle implementation */
 };
 
 static inline int arm_feature(CPUARMState *env, int feature)
@@ -1380,19 +1491,67 @@ static inline bool armv7m_nvic_can_take_pending_exception(void *opaque)
     return true;
 }
 #endif
-void armv7m_nvic_set_pending(void *opaque, int irq);
-void armv7m_nvic_acknowledge_irq(void *opaque);
+/**
+ * armv7m_nvic_set_pending: mark the specified exception as pending
+ * @opaque: the NVIC
+ * @irq: the exception number to mark pending
+ * @secure: false for non-banked exceptions or for the nonsecure
+ * version of a banked exception, true for the secure version of a banked
+ * exception.
+ *
+ * Marks the specified exception as pending. Note that we will assert()
+ * if @secure is true and @irq does not specify one of the fixed set
+ * of architecturally banked exceptions.
+ */
+void armv7m_nvic_set_pending(void *opaque, int irq, bool secure);
+/**
+ * armv7m_nvic_acknowledge_irq: make highest priority pending exception active
+ * @opaque: the NVIC
+ *
+ * Move the current highest priority pending exception from the pending
+ * state to the active state, and update v7m.exception to indicate that
+ * it is the exception currently being handled.
+ *
+ * Returns: true if exception should be taken to Secure state, false for NS
+ */
+bool armv7m_nvic_acknowledge_irq(void *opaque);
 /**
  * armv7m_nvic_complete_irq: complete specified interrupt or exception
  * @opaque: the NVIC
  * @irq: the exception number to complete
+ * @secure: true if this exception was secure
  *
  * Returns: -1 if the irq was not active
  *           1 if completing this irq brought us back to base (no active irqs)
  *           0 if there is still an irq active after this one was completed
  * (Ignoring -1, this is the same as the RETTOBASE value before completion.)
  */
-int armv7m_nvic_complete_irq(void *opaque, int irq);
+int armv7m_nvic_complete_irq(void *opaque, int irq, bool secure);
+/**
+ * armv7m_nvic_raw_execution_priority: return the raw execution priority
+ * @opaque: the NVIC
+ *
+ * Returns: the raw execution priority as defined by the v8M architecture.
+ * This is the execution priority minus the effects of AIRCR.PRIS,
+ * and minus any PRIMASK/FAULTMASK/BASEPRI priority boosting.
+ * (v8M ARM ARM I_PKLD.)
+ */
+int armv7m_nvic_raw_execution_priority(void *opaque);
+/**
+ * armv7m_nvic_neg_prio_requested: return true if the requested execution
+ * priority is negative for the specified security state.
+ * @opaque: the NVIC
+ * @secure: the security state to test
+ * This corresponds to the pseudocode IsReqExecPriNeg().
+ */
+#ifndef CONFIG_USER_ONLY
+bool armv7m_nvic_neg_prio_requested(void *opaque, bool secure);
+#else
+static inline bool armv7m_nvic_neg_prio_requested(void *opaque, bool secure)
+{
+    return false;
+}
+#endif
 
 /* Interface for defining coprocessor registers.
  * Registers are defined in tables of arm_cp_reginfo structs
@@ -1610,13 +1769,20 @@ static inline int arm_highest_el(CPUARMState *env)
     return 1;
 }
 
+/* Return true if a v7M CPU is in Handler mode */
+static inline bool arm_v7m_is_handler_mode(CPUARMState *env)
+{
+    return env->v7m.exception != 0;
+}
+
 /* Return the current Exception Level (as per ARMv8; note that this differs
  * from the ARMv7 Privilege Level).
  */
 static inline int arm_current_el(CPUARMState *env)
 {
     if (arm_feature(env, ARM_FEATURE_M)) {
-        return !((env->v7m.exception == 0) && (env->v7m.control & 1));
+        return arm_v7m_is_handler_mode(env) ||
+            !(env->v7m.control[env->v7m.secure] & 1);
     }
 
     if (is_a64(env)) {
@@ -2001,7 +2167,10 @@ static inline bool arm_excp_unmasked(CPUState *cs, unsigned int excp_idx,
     return unmasked || pstate_unmasked;
 }
 
-#define cpu_init(cpu_model) CPU(cpu_arm_init(cpu_model))
+#define cpu_init(cpu_model) cpu_generic_init(TYPE_ARM_CPU, cpu_model)
+
+#define ARM_CPU_TYPE_SUFFIX "-" TYPE_ARM_CPU
+#define ARM_CPU_TYPE_NAME(name) (name ARM_CPU_TYPE_SUFFIX)
 
 #define cpu_signal_handler cpu_arm_signal_handler
 #define cpu_list arm_cpu_list
@@ -2060,6 +2229,10 @@ static inline bool arm_excp_unmasked(CPUState *cs, unsigned int excp_idx,
  *  Execution priority negative (this is like privileged, but the
  *  MPU HFNMIENA bit means that it may have different access permission
  *  check results to normal privileged code, so can't share a TLB).
+ * If the CPU supports the v8M Security Extension then there are also:
+ *  Secure User
+ *  Secure Privileged
+ *  Secure, execution priority negative
  *
  * The ARMMMUIdx and the mmu index value used by the core QEMU TLB code
  * are not quite the same -- different CPU types (most notably M profile
@@ -2097,6 +2270,9 @@ typedef enum ARMMMUIdx {
     ARMMMUIdx_MUser = 0 | ARM_MMU_IDX_M,
     ARMMMUIdx_MPriv = 1 | ARM_MMU_IDX_M,
     ARMMMUIdx_MNegPri = 2 | ARM_MMU_IDX_M,
+    ARMMMUIdx_MSUser = 3 | ARM_MMU_IDX_M,
+    ARMMMUIdx_MSPriv = 4 | ARM_MMU_IDX_M,
+    ARMMMUIdx_MSNegPri = 5 | ARM_MMU_IDX_M,
     /* Indexes below here don't have TLBs and are used only for AT system
      * instructions or for the first stage of an S12 page table walk.
      */
@@ -2118,6 +2294,9 @@ typedef enum ARMMMUIdxBit {
     ARMMMUIdxBit_MUser = 1 << 0,
     ARMMMUIdxBit_MPriv = 1 << 1,
     ARMMMUIdxBit_MNegPri = 1 << 2,
+    ARMMMUIdxBit_MSUser = 1 << 3,
+    ARMMMUIdxBit_MSPriv = 1 << 4,
+    ARMMMUIdxBit_MSNegPri = 1 << 5,
 } ARMMMUIdxBit;
 
 #define MMU_USER_IDX 0
@@ -2143,10 +2322,31 @@ static inline int arm_mmu_idx_to_el(ARMMMUIdx mmu_idx)
     case ARM_MMU_IDX_A:
         return mmu_idx & 3;
     case ARM_MMU_IDX_M:
-        return mmu_idx == ARMMMUIdx_MUser ? 0 : 1;
+        return (mmu_idx == ARMMMUIdx_MUser || mmu_idx == ARMMMUIdx_MSUser)
+            ? 0 : 1;
     default:
         g_assert_not_reached();
     }
+}
+
+/* Return the MMU index for a v7M CPU in the specified security state */
+static inline ARMMMUIdx arm_v7m_mmu_idx_for_secstate(CPUARMState *env,
+                                                     bool secstate)
+{
+    int el = arm_current_el(env);
+    ARMMMUIdx mmu_idx;
+
+    if (el == 0) {
+        mmu_idx = secstate ? ARMMMUIdx_MSUser : ARMMMUIdx_MUser;
+    } else {
+        mmu_idx = secstate ? ARMMMUIdx_MSPriv : ARMMMUIdx_MPriv;
+    }
+
+    if (armv7m_nvic_neg_prio_requested(env->nvic, secstate)) {
+        mmu_idx = secstate ? ARMMMUIdx_MSNegPri : ARMMMUIdx_MNegPri;
+    }
+
+    return mmu_idx;
 }
 
 /* Determine the current mmu_idx to use for normal loads/stores */
@@ -2155,15 +2355,7 @@ static inline int cpu_mmu_index(CPUARMState *env, bool ifetch)
     int el = arm_current_el(env);
 
     if (arm_feature(env, ARM_FEATURE_M)) {
-        ARMMMUIdx mmu_idx = el == 0 ? ARMMMUIdx_MUser : ARMMMUIdx_MPriv;
-
-        /* Execution priority is negative if FAULTMASK is set or
-         * we're in a HardFault or NMI handler.
-         */
-        if ((env->v7m.exception > 0 && env->v7m.exception <= 3)
-            || env->daif & PSTATE_F) {
-            return arm_to_core_mmu_idx(ARMMMUIdx_MNegPri);
-        }
+        ARMMMUIdx mmu_idx = arm_v7m_mmu_idx_for_secstate(env, env->v7m.secure);
 
         return arm_to_core_mmu_idx(mmu_idx);
     }
@@ -2616,7 +2808,7 @@ static inline void cpu_get_tb_cpu_state(CPUARMState *env, target_ulong *pc,
     }
     *flags |= fp_exception_el(env) << ARM_TBFLAG_FPEXC_EL_SHIFT;
 
-    if (env->v7m.exception != 0) {
+    if (arm_v7m_is_handler_mode(env)) {
         *flags |= ARM_TBFLAG_HANDLER_MASK;
     }
 

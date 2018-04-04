@@ -66,11 +66,6 @@ static uint64_t translate_kernel_address(void *opaque, uint64_t addr)
     return (addr & 0x0fffffff) + KERNEL_LOAD_ADDR;
 }
 
-static hwaddr round_page(hwaddr addr)
-{
-    return (addr + TARGET_PAGE_SIZE - 1) & TARGET_PAGE_MASK;
-}
-
 static void ppc_heathrow_reset(void *opaque)
 {
     PowerPCCPU *cpu = opaque;
@@ -113,14 +108,8 @@ static void ppc_heathrow_init(MachineState *machine)
     linux_boot = (kernel_filename != NULL);
 
     /* init CPUs */
-    if (machine->cpu_model == NULL)
-        machine->cpu_model = "G3";
     for (i = 0; i < smp_cpus; i++) {
-        cpu = cpu_ppc_init(machine->cpu_model);
-        if (cpu == NULL) {
-            fprintf(stderr, "Unable to find PowerPC CPU definition\n");
-            exit(1);
-        }
+        cpu = POWERPC_CPU(cpu_create(machine->cpu_type));
         env = &cpu->env;
 
         /* Set time-base frequency to 16.6 Mhz */
@@ -190,7 +179,7 @@ static void ppc_heathrow_init(MachineState *machine)
         }
         /* load initrd */
         if (initrd_filename) {
-            initrd_base = round_page(kernel_base + kernel_size + KERNEL_GAP);
+            initrd_base = TARGET_PAGE_ALIGN(kernel_base + kernel_size + KERNEL_GAP);
             initrd_size = load_image_targphys(initrd_filename, initrd_base,
                                               ram_size - initrd_base);
             if (initrd_size < 0) {
@@ -198,11 +187,11 @@ static void ppc_heathrow_init(MachineState *machine)
                              initrd_filename);
                 exit(1);
             }
-            cmdline_base = round_page(initrd_base + initrd_size);
+            cmdline_base = TARGET_PAGE_ALIGN(initrd_base + initrd_size);
         } else {
             initrd_base = 0;
             initrd_size = 0;
-            cmdline_base = round_page(kernel_base + kernel_size + KERNEL_GAP);
+            cmdline_base = TARGET_PAGE_ALIGN(kernel_base + kernel_size + KERNEL_GAP);
         }
         ppc_boot_device = 'm';
     } else {
@@ -379,8 +368,10 @@ static int heathrow_kvm_type(const char *arg)
     return 2;
 }
 
-static void heathrow_machine_init(MachineClass *mc)
+static void heathrow_class_init(ObjectClass *oc, void *data)
 {
+    MachineClass *mc = MACHINE_CLASS(oc);
+
     mc->desc = "Heathrow based PowerMAC";
     mc->init = ppc_heathrow_init;
     mc->block_default_type = IF_IDE;
@@ -391,6 +382,18 @@ static void heathrow_machine_init(MachineClass *mc)
     /* TOFIX "cad" when Mac floppy is implemented */
     mc->default_boot_order = "cd";
     mc->kvm_type = heathrow_kvm_type;
+    mc->default_cpu_type = POWERPC_CPU_TYPE_NAME("750_v3.1");
 }
 
-DEFINE_MACHINE("g3beige", heathrow_machine_init)
+static const TypeInfo ppc_heathrow_machine_info = {
+    .name          = MACHINE_TYPE_NAME("g3beige"),
+    .parent        = TYPE_MACHINE,
+    .class_init    = heathrow_class_init
+};
+
+static void ppc_heathrow_register_types(void)
+{
+    type_register_static(&ppc_heathrow_machine_info);
+}
+
+type_init(ppc_heathrow_register_types);

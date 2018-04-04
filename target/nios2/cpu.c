@@ -69,27 +69,17 @@ static void nios2_cpu_initfn(Object *obj)
     CPUState *cs = CPU(obj);
     Nios2CPU *cpu = NIOS2_CPU(obj);
     CPUNios2State *env = &cpu->env;
-    static bool tcg_initialized;
 
     cs->env_ptr = env;
 
 #if !defined(CONFIG_USER_ONLY)
     mmu_init(env);
 #endif
-
-    if (tcg_enabled() && !tcg_initialized) {
-        tcg_initialized = true;
-        nios2_tcg_init();
-    }
 }
 
-Nios2CPU *cpu_nios2_init(const char *cpu_model)
+static ObjectClass *nios2_cpu_class_by_name(const char *cpu_model)
 {
-    Nios2CPU *cpu = NIOS2_CPU(object_new(TYPE_NIOS2_CPU));
-
-    object_property_set_bool(OBJECT(cpu), true, "realized", NULL);
-
-    return cpu;
+    return object_class_by_name(TYPE_NIOS2_CPU);
 }
 
 static void nios2_cpu_realizefn(DeviceState *dev, Error **errp)
@@ -203,6 +193,7 @@ static void nios2_cpu_class_init(ObjectClass *oc, void *data)
     ncc->parent_reset = cc->reset;
     cc->reset = nios2_cpu_reset;
 
+    cc->class_by_name = nios2_cpu_class_by_name;
     cc->has_work = nios2_cpu_has_work;
     cc->do_interrupt = nios2_cpu_do_interrupt;
     cc->cpu_exec_interrupt = nios2_cpu_exec_interrupt;
@@ -218,6 +209,7 @@ static void nios2_cpu_class_init(ObjectClass *oc, void *data)
     cc->gdb_read_register = nios2_cpu_gdb_read_register;
     cc->gdb_write_register = nios2_cpu_gdb_write_register;
     cc->gdb_num_core_regs = 49;
+    cc->tcg_initialize = nios2_tcg_init;
 }
 
 static const TypeInfo nios2_cpu_type_info = {

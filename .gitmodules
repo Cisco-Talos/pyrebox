@@ -22,9 +22,6 @@
 [submodule "roms/sgabios"]
 	path = roms/sgabios
 	url = git://git.qemu-project.org/sgabios.git
-[submodule "pixman"]
-	path = pixman
-	url = git://anongit.freedesktop.org/pixman
 [submodule "dtc"]
 	path = dtc
 	url = git://git.qemu-project.org/dtc.git
@@ -37,3 +34,9 @@
 [submodule "roms/QemuMacDrivers"]
 	path = roms/QemuMacDrivers
 	url = git://git.qemu.org/QemuMacDrivers.git
+[submodule "ui/keycodemapdb"]
+	path = ui/keycodemapdb
+	url = git://git.qemu.org/keycodemapdb.git
+[submodule "capstone"]
+	path = capstone
+	url = git://git.qemu.org/capstone.git

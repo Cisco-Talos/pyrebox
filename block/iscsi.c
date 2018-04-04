@@ -2,7 +2,7 @@
  * QEMU Block driver for iSCSI images
  *
  * Copyright (c) 2010-2011 Ronnie Sahlberg <ronniesahlberg@gmail.com>
- * Copyright (c) 2012-2016 Peter Lieven <pl@kamp.de>
+ * Copyright (c) 2012-2017 Peter Lieven <pl@kamp.de>
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -34,15 +34,20 @@
 #include "qemu/bitops.h"
 #include "qemu/bitmap.h"
 #include "block/block_int.h"
-#include "block/scsi.h"
+#include "scsi/constants.h"
 #include "qemu/iov.h"
 #include "qemu/uuid.h"
 #include "qmp-commands.h"
 #include "qapi/qmp/qstring.h"
 #include "crypto/secret.h"
+#include "scsi/utils.h"
 
+/* Conflict between scsi/utils.h and libiscsi! :( */
+#define SCSI_XFER_NONE ISCSI_XFER_NONE
 #include <iscsi/iscsi.h>
 #include <iscsi/scsi-lowlevel.h>
+#undef SCSI_XFER_NONE
+QEMU_BUILD_BUG_ON((int)SCSI_XFER_NONE != (int)ISCSI_XFER_NONE);
 
 #ifdef __linux__
 #include <scsi/sg.h>
@@ -209,47 +214,9 @@ static inline unsigned exp_random(double mean)
 
 static int iscsi_translate_sense(struct scsi_sense *sense)
 {
-    int ret;
-
-    switch (sense->key) {
-    case SCSI_SENSE_NOT_READY:
-        return -EBUSY;
-    case SCSI_SENSE_DATA_PROTECTION:
-        return -EACCES;
-    case SCSI_SENSE_COMMAND_ABORTED:
-        return -ECANCELED;
-    case SCSI_SENSE_ILLEGAL_REQUEST:
-        /* Parse ASCQ */
-        break;
-    default:
-        return -EIO;
-    }
-    switch (sense->ascq) {
-    case SCSI_SENSE_ASCQ_PARAMETER_LIST_LENGTH_ERROR:
-    case SCSI_SENSE_ASCQ_INVALID_OPERATION_CODE:
-    case SCSI_SENSE_ASCQ_INVALID_FIELD_IN_CDB:
-    case SCSI_SENSE_ASCQ_INVALID_FIELD_IN_PARAMETER_LIST:
-        ret = -EINVAL;
-        break;
-    case SCSI_SENSE_ASCQ_LBA_OUT_OF_RANGE:
-        ret = -ENOSPC;
-        break;
-    case SCSI_SENSE_ASCQ_LOGICAL_UNIT_NOT_SUPPORTED:
-        ret = -ENOTSUP;
-        break;
-    case SCSI_SENSE_ASCQ_MEDIUM_NOT_PRESENT:
-    case SCSI_SENSE_ASCQ_MEDIUM_NOT_PRESENT_TRAY_CLOSED:
-    case SCSI_SENSE_ASCQ_MEDIUM_NOT_PRESENT_TRAY_OPEN:
-        ret = -ENOMEDIUM;
-        break;
-    case SCSI_SENSE_ASCQ_WRITE_PROTECTED:
-        ret = -EACCES;
-        break;
-    default:
-        ret = -EIO;
-        break;
-    }
-    return ret;
+    return - scsi_sense_to_errno(sense->key,
+                                 (sense->ascq & 0xFF00) >> 8,
+                                 sense->ascq & 0xFF);
 }
 
 /* Called (via iscsi_service) with QemuMutex held.  */
@@ -1161,6 +1128,9 @@ retry:
         goto retry;
     }
 
+    iscsi_allocmap_set_invalid(iscsilun, offset >> BDRV_SECTOR_BITS,
+                               bytes >> BDRV_SECTOR_BITS);
+
     if (iTask.status == SCSI_STATUS_CHECK_CONDITION) {
         /* the target might fail with a check condition if it
            is not happy with the alignment of the UNMAP request
@@ -1172,9 +1142,6 @@ retry:
         r = iTask.err_code;
         goto out_unlock;
     }
-
-    iscsi_allocmap_set_invalid(iscsilun, offset >> BDRV_SECTOR_BITS,
-                               bytes >> BDRV_SECTOR_BITS);
 
 out_unlock:
     qemu_mutex_unlock(&iscsilun->mutex);
@@ -2087,7 +2054,7 @@ static int iscsi_truncate(BlockDriverState *bs, int64_t offset,
 
     if (prealloc != PREALLOC_MODE_OFF) {
         error_setg(errp, "Unsupported preallocation mode '%s'",
-                   PreallocMode_lookup[prealloc]);
+                   PreallocMode_str(prealloc));
         return -ENOTSUP;
     }
 

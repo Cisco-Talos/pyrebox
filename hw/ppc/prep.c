@@ -517,14 +517,8 @@ static void ppc_prep_init(MachineState *machine)
     linux_boot = (kernel_filename != NULL);
 
     /* init CPUs */
-    if (machine->cpu_model == NULL)
-        machine->cpu_model = "602";
     for (i = 0; i < smp_cpus; i++) {
-        cpu = cpu_ppc_init(machine->cpu_model);
-        if (cpu == NULL) {
-            fprintf(stderr, "Unable to find PowerPC CPU definition\n");
-            exit(1);
-        }
+        cpu = POWERPC_CPU(cpu_create(machine->cpu_type));
         env = &cpu->env;
 
         if (env->flags & POWERPC_FLAG_RTC_CLK) {
@@ -687,6 +681,7 @@ static void prep_machine_init(MachineClass *mc)
     mc->block_default_type = IF_IDE;
     mc->max_cpus = MAX_CPUS;
     mc->default_boot_order = "cad";
+    mc->default_cpu_type = POWERPC_CPU_TYPE_NAME("602");
 }
 
 static int prep_set_cmos_checksum(DeviceState *dev, void *opaque)
@@ -721,15 +716,7 @@ static void ibm_40p_init(MachineState *machine)
     char boot_device;
 
     /* init CPU */
-    if (!machine->cpu_model) {
-        machine->cpu_model = "604";
-    }
-    cpu = cpu_ppc_init(machine->cpu_model);
-    if (!cpu) {
-        error_report("could not initialize CPU '%s'",
-                     machine->cpu_model);
-        exit(1);
-    }
+    cpu = POWERPC_CPU(cpu_create(machine->cpu_type));
     env = &cpu->env;
     if (PPC_INPUT(env) != PPC_FLAGS_INPUT_6xx) {
         error_report("only 6xx bus is supported on this machine");
@@ -902,6 +889,7 @@ static void ibm_40p_machine_init(MachineClass *mc)
     mc->default_ram_size = 128 * M_BYTE;
     mc->block_default_type = IF_SCSI;
     mc->default_boot_order = "c";
+    mc->default_cpu_type = POWERPC_CPU_TYPE_NAME("604");
 }
 
 DEFINE_MACHINE("40p", ibm_40p_machine_init)

@@ -287,10 +287,6 @@ class TestParallelOps(iotests.QMPTestCase):
         result = self.vm.qmp('block-stream', device='node6', base=self.imgs[4], job_id='stream-node6-v2')
         self.assert_qmp(result, 'error/class', 'GenericError')
 
-        # This fails because block-commit needs to block node6, the overlay of the 'top' image
-        result = self.vm.qmp('block-stream', device='node7', base=self.imgs[5], job_id='stream-node6-v3')
-        self.assert_qmp(result, 'error/class', 'GenericError')
-
         # This fails because block-commit currently blocks the active layer even if it's not used
         result = self.vm.qmp('block-stream', device='drive0', base=self.imgs[5], job_id='stream-drive0')
         self.assert_qmp(result, 'error/class', 'GenericError')
@@ -670,6 +666,7 @@ class TestENOSPC(TestErrors):
                 if event['event'] == 'BLOCK_JOB_ERROR':
                     self.assert_qmp(event, 'data/device', 'drive0')
                     self.assert_qmp(event, 'data/operation', 'read')
+                    error = True
 
                     result = self.vm.qmp('query-block-jobs')
                     self.assert_qmp(result, 'return[0]/paused', True)
@@ -680,9 +677,11 @@ class TestENOSPC(TestErrors):
                     self.assert_qmp(result, 'return', {})
 
                     result = self.vm.qmp('query-block-jobs')
+                    if result == {'return': []}:
+                        # Race; likely already finished. Check.
+                        continue
                     self.assert_qmp(result, 'return[0]/paused', False)
                     self.assert_qmp(result, 'return[0]/io-status', 'ok')
-                    error = True
                 elif event['event'] == 'BLOCK_JOB_COMPLETED':
                     self.assertTrue(error, 'job completed unexpectedly')
                     self.assert_qmp(event, 'data/type', 'stream')
@@ -796,13 +795,14 @@ class TestSetSpeed(iotests.QMPTestCase):
 
         self.assert_no_active_block_jobs()
 
+        self.vm.pause_drive('drive0')
         result = self.vm.qmp('block-stream', device='drive0')
         self.assert_qmp(result, 'return', {})
 
         result = self.vm.qmp('block-job-set-speed', device='drive0', speed=-1)
         self.assert_qmp(result, 'error/class', 'GenericError')
 
-        self.cancel_and_wait()
+        self.cancel_and_wait(resume=True)
 
 if __name__ == '__main__':
     iotests.main(supported_fmts=['qcow2', 'qed'])

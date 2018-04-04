@@ -196,7 +196,7 @@ static const VMStateDescription vmstate_schdev_orb = {
 };
 
 static int subch_dev_post_load(void *opaque, int version_id);
-static void subch_dev_pre_save(void *opaque);
+static int subch_dev_pre_save(void *opaque);
 
 const char err_hint_devno[] = "Devno mismatch, tried to load wrong section!"
     " Likely reason: some sequences of plug and unplug  can break"
@@ -249,7 +249,7 @@ static int post_load_ind_addr(void *opaque, int version_id)
     return 0;
 }
 
-static void pre_save_ind_addr(void *opaque)
+static int pre_save_ind_addr(void *opaque)
 {
     IndAddrPtrTmp *ptmp = opaque;
     IndAddr *ind_addr = *(ptmp->parent);
@@ -261,6 +261,8 @@ static void pre_save_ind_addr(void *opaque)
         ptmp->len = 0;
         ptmp->addr = 0L;
     }
+
+    return 0;
 }
 
 const VMStateDescription vmstate_ind_addr_tmp = {
@@ -358,12 +360,14 @@ static ChannelSubSys channel_subsys = {
         QTAILQ_HEAD_INITIALIZER(channel_subsys.indicator_addresses),
 };
 
-static void subch_dev_pre_save(void *opaque)
+static int subch_dev_pre_save(void *opaque)
 {
     SubchDev *s = opaque;
 
     /* Prepare remote_schid for save */
     s->migrated_schid = s->schid;
+
+    return 0;
 }
 
 static int subch_dev_post_load(void *opaque, int version_id)
@@ -484,7 +488,7 @@ int css_create_css_image(uint8_t cssid, bool default_image)
     if (channel_subsys.css[cssid]) {
         return -EBUSY;
     }
-    channel_subsys.css[cssid] = g_malloc0(sizeof(CssImage));
+    channel_subsys.css[cssid] = g_new0(CssImage, 1);
     if (default_image) {
         channel_subsys.default_cssid = cssid;
     }
@@ -783,6 +787,183 @@ static CCW1 copy_ccw_from_guest(hwaddr addr, bool fmt1)
     }
     return ret;
 }
+/**
+ * If out of bounds marks the stream broken. If broken returns -EINVAL,
+ * otherwise the requested length (may be zero)
+ */
+static inline int cds_check_len(CcwDataStream *cds, int len)
+{
+    if (cds->at_byte + len > cds->count) {
+        cds->flags |= CDS_F_STREAM_BROKEN;
+    }
+    return cds->flags & CDS_F_STREAM_BROKEN ? -EINVAL : len;
+}
+
+static inline bool cds_ccw_addrs_ok(hwaddr addr, int len, bool ccw_fmt1)
+{
+    return (addr + len) < (ccw_fmt1 ? (1UL << 31) : (1UL << 24));
+}
+
+static int ccw_dstream_rw_noflags(CcwDataStream *cds, void *buff, int len,
+                                  CcwDataStreamOp op)
+{
+    int ret;
+
+    ret = cds_check_len(cds, len);
+    if (ret <= 0) {
+        return ret;
+    }
+    if (!cds_ccw_addrs_ok(cds->cda, len, cds->flags & CDS_F_FMT)) {
+        return -EINVAL; /* channel program check */
+    }
+    if (op == CDS_OP_A) {
+        goto incr;
+    }
+    ret = address_space_rw(&address_space_memory, cds->cda,
+                           MEMTXATTRS_UNSPECIFIED, buff, len, op);
+    if (ret != MEMTX_OK) {
+        cds->flags |= CDS_F_STREAM_BROKEN;
+        return -EINVAL;
+    }
+incr:
+    cds->at_byte += len;
+    cds->cda += len;
+    return 0;
+}
+
+/* returns values between 1 and bsz, where bsz is a power of 2 */
+static inline uint16_t ida_continuous_left(hwaddr cda, uint64_t bsz)
+{
+    return bsz - (cda & (bsz - 1));
+}
+
+static inline uint64_t ccw_ida_block_size(uint8_t flags)
+{
+    if ((flags & CDS_F_C64) && !(flags & CDS_F_I2K)) {
+        return 1ULL << 12;
+    }
+    return 1ULL << 11;
+}
+
+static inline int ida_read_next_idaw(CcwDataStream *cds)
+{
+    union {uint64_t fmt2; uint32_t fmt1; } idaw;
+    int ret;
+    hwaddr idaw_addr;
+    bool idaw_fmt2 = cds->flags & CDS_F_C64;
+    bool ccw_fmt1 = cds->flags & CDS_F_FMT;
+
+    if (idaw_fmt2) {
+        idaw_addr = cds->cda_orig + sizeof(idaw.fmt2) * cds->at_idaw;
+        if (idaw_addr & 0x07 || !cds_ccw_addrs_ok(idaw_addr, 0, ccw_fmt1)) {
+            return -EINVAL; /* channel program check */
+        }
+        ret = address_space_rw(&address_space_memory, idaw_addr,
+                               MEMTXATTRS_UNSPECIFIED, (void *) &idaw.fmt2,
+                               sizeof(idaw.fmt2), false);
+        cds->cda = be64_to_cpu(idaw.fmt2);
+    } else {
+        idaw_addr = cds->cda_orig + sizeof(idaw.fmt1) * cds->at_idaw;
+        if (idaw_addr & 0x03 || !cds_ccw_addrs_ok(idaw_addr, 0, ccw_fmt1)) {
+            return -EINVAL; /* channel program check */
+        }
+        ret = address_space_rw(&address_space_memory, idaw_addr,
+                               MEMTXATTRS_UNSPECIFIED, (void *) &idaw.fmt1,
+                               sizeof(idaw.fmt1), false);
+        cds->cda = be64_to_cpu(idaw.fmt1);
+        if (cds->cda & 0x80000000) {
+            return -EINVAL; /* channel program check */
+        }
+    }
+    ++(cds->at_idaw);
+    if (ret != MEMTX_OK) {
+        /* assume inaccessible address */
+        return -EINVAL; /* channel program check */
+    }
+    return 0;
+}
+
+static int ccw_dstream_rw_ida(CcwDataStream *cds, void *buff, int len,
+                              CcwDataStreamOp op)
+{
+    uint64_t bsz = ccw_ida_block_size(cds->flags);
+    int ret = 0;
+    uint16_t cont_left, iter_len;
+
+    ret = cds_check_len(cds, len);
+    if (ret <= 0) {
+        return ret;
+    }
+    if (!cds->at_idaw) {
+        /* read first idaw */
+        ret = ida_read_next_idaw(cds);
+        if (ret) {
+            goto err;
+        }
+        cont_left = ida_continuous_left(cds->cda, bsz);
+    } else {
+        cont_left = ida_continuous_left(cds->cda, bsz);
+        if (cont_left == bsz) {
+            ret = ida_read_next_idaw(cds);
+            if (ret) {
+                goto err;
+            }
+            if (cds->cda & (bsz - 1)) {
+                ret = -EINVAL; /* channel program check */
+                goto err;
+            }
+        }
+    }
+    do {
+        iter_len = MIN(len, cont_left);
+        if (op != CDS_OP_A) {
+            ret = address_space_rw(&address_space_memory, cds->cda,
+                                   MEMTXATTRS_UNSPECIFIED, buff, iter_len, op);
+            if (ret != MEMTX_OK) {
+                /* assume inaccessible address */
+                ret = -EINVAL; /* channel program check */
+                goto err;
+            }
+        }
+        cds->at_byte += iter_len;
+        cds->cda += iter_len;
+        len -= iter_len;
+        if (!len) {
+            break;
+        }
+        ret = ida_read_next_idaw(cds);
+        if (ret) {
+            goto err;
+        }
+        cont_left = bsz;
+    } while (true);
+    return ret;
+err:
+    cds->flags |= CDS_F_STREAM_BROKEN;
+    return ret;
+}
+
+void ccw_dstream_init(CcwDataStream *cds, CCW1 const *ccw, ORB const *orb)
+{
+    /*
+     * We don't support MIDA (an optional facility) yet and we
+     * catch this earlier. Just for expressing the precondition.
+     */
+    g_assert(!(orb->ctrl1 & ORB_CTRL1_MASK_MIDAW));
+    cds->flags = (orb->ctrl0 & ORB_CTRL0_MASK_I2K ? CDS_F_I2K : 0) |
+                 (orb->ctrl0 & ORB_CTRL0_MASK_C64 ? CDS_F_C64 : 0) |
+                 (orb->ctrl0 & ORB_CTRL0_MASK_FMT ? CDS_F_FMT : 0) |
+                 (ccw->flags & CCW_FLAG_IDA ? CDS_F_IDA : 0);
+
+    cds->count = ccw->count;
+    cds->cda_orig = ccw->cda;
+    ccw_dstream_rewind(cds);
+    if (!(cds->flags & CDS_F_IDA)) {
+        cds->op_handler = ccw_dstream_rw_noflags;
+    } else {
+        cds->op_handler = ccw_dstream_rw_ida;
+    }
+}
 
 static int css_interpret_ccw(SubchDev *sch, hwaddr ccw_addr,
                              bool suspend_allowed)
@@ -793,7 +974,7 @@ static int css_interpret_ccw(SubchDev *sch, hwaddr ccw_addr,
     CCW1 ccw;
 
     if (!ccw_addr) {
-        return -EIO;
+        return -EINVAL; /* channel-program check */
     }
     /* Check doubleword aligned and 31 or 24 (fmt 0) bit addressable. */
     if (ccw_addr & (sch->ccw_fmt_1 ? 0x80000007 : 0xff000007)) {
@@ -835,6 +1016,7 @@ static int css_interpret_ccw(SubchDev *sch, hwaddr ccw_addr,
     }
 
     /* Look at the command. */
+    ccw_dstream_init(&sch->cds, &ccw, &(sch->orb));
     switch (ccw.cmd_code) {
     case CCW_CMD_NOOP:
         /* Nothing to do. */
@@ -848,8 +1030,8 @@ static int css_interpret_ccw(SubchDev *sch, hwaddr ccw_addr,
             }
         }
         len = MIN(ccw.count, sizeof(sch->sense_data));
-        cpu_physical_memory_write(ccw.cda, sch->sense_data, len);
-        sch->curr_status.scsw.count = ccw.count - len;
+        ccw_dstream_write_buf(&sch->cds, sch->sense_data, len);
+        sch->curr_status.scsw.count = ccw_dstream_residual_count(&sch->cds);
         memset(sch->sense_data, 0, sizeof(sch->sense_data));
         ret = 0;
         break;
@@ -875,8 +1057,8 @@ static int css_interpret_ccw(SubchDev *sch, hwaddr ccw_addr,
         } else {
             sense_id.reserved = 0;
         }
-        cpu_physical_memory_write(ccw.cda, &sense_id, len);
-        sch->curr_status.scsw.count = ccw.count - len;
+        ccw_dstream_write_buf(&sch->cds, &sense_id, len);
+        sch->curr_status.scsw.count = ccw_dstream_residual_count(&sch->cds);
         ret = 0;
         break;
     }
@@ -980,22 +1162,6 @@ static void sch_handle_start_func_virtual(SubchDev *sch)
                     SCSW_STCTL_ALERT | SCSW_STCTL_STATUS_PEND;
             s->cpa = sch->channel_prog + 8;
             break;
-        case -EFAULT:
-            /* memory problem, generate channel data check */
-            s->ctrl &= ~SCSW_ACTL_START_PEND;
-            s->cstat = SCSW_CSTAT_DATA_CHECK;
-            s->ctrl &= ~SCSW_CTRL_MASK_STCTL;
-            s->ctrl |= SCSW_STCTL_PRIMARY | SCSW_STCTL_SECONDARY |
-                    SCSW_STCTL_ALERT | SCSW_STCTL_STATUS_PEND;
-            s->cpa = sch->channel_prog + 8;
-            break;
-        case -EBUSY:
-            /* subchannel busy, generate deferred cc 1 */
-            s->flags &= ~SCSW_FLAGS_MASK_CC;
-            s->flags |= (1 << 8);
-            s->ctrl &= ~SCSW_CTRL_MASK_STCTL;
-            s->ctrl |= SCSW_STCTL_ALERT | SCSW_STCTL_STATUS_PEND;
-            break;
         case -EINPROGRESS:
             /* channel program has been suspended */
             s->ctrl &= ~SCSW_ACTL_START_PEND;
@@ -1015,12 +1181,11 @@ static void sch_handle_start_func_virtual(SubchDev *sch)
 
 }
 
-static int sch_handle_start_func_passthrough(SubchDev *sch)
+static IOInstEnding sch_handle_start_func_passthrough(SubchDev *sch)
 {
 
     PMCW *p = &sch->curr_status.pmcw;
     SCSW *s = &sch->curr_status.scsw;
-    int ret;
 
     ORB *orb = &sch->orb;
     if (!(s->ctrl & SCSW_ACTL_SUSP)) {
@@ -1034,31 +1199,12 @@ static int sch_handle_start_func_passthrough(SubchDev *sch)
      */
     if (!(orb->ctrl0 & ORB_CTRL0_MASK_PFCH) ||
         !(orb->ctrl0 & ORB_CTRL0_MASK_C64)) {
-        return -EINVAL;
+        warn_report("vfio-ccw requires PFCH and C64 flags set");
+        sch_gen_unit_exception(sch);
+        css_inject_io_interrupt(sch);
+        return IOINST_CC_EXPECTED;
     }
-
-    ret = s390_ccw_cmd_request(orb, s, sch->driver_data);
-    switch (ret) {
-    /* Currently we don't update control block and just return the cc code. */
-    case 0:
-        break;
-    case -EBUSY:
-        break;
-    case -ENODEV:
-        break;
-    case -EACCES:
-        /* Let's reflect an inaccessible host device by cc 3. */
-        ret = -ENODEV;
-        break;
-    default:
-       /*
-        * All other return codes will trigger a program check,
-        * or set cc to 1.
-        */
-       break;
-    };
-
-    return ret;
+    return s390_ccw_cmd_request(sch);
 }
 
 /*
@@ -1067,7 +1213,7 @@ static int sch_handle_start_func_passthrough(SubchDev *sch)
  * read/writes) asynchronous later on if we start supporting more than
  * our current very simple devices.
  */
-int do_subchannel_work_virtual(SubchDev *sch)
+IOInstEnding do_subchannel_work_virtual(SubchDev *sch)
 {
 
     SCSW *s = &sch->curr_status.scsw;
@@ -1079,44 +1225,35 @@ int do_subchannel_work_virtual(SubchDev *sch)
     } else if (s->ctrl & SCSW_FCTL_START_FUNC) {
         /* Triggered by both ssch and rsch. */
         sch_handle_start_func_virtual(sch);
-    } else {
-        /* Cannot happen. */
-        return 0;
     }
     css_inject_io_interrupt(sch);
-    return 0;
+    /* inst must succeed if this func is called */
+    return IOINST_CC_EXPECTED;
 }
 
-int do_subchannel_work_passthrough(SubchDev *sch)
+IOInstEnding do_subchannel_work_passthrough(SubchDev *sch)
 {
-    int ret;
     SCSW *s = &sch->curr_status.scsw;
 
     if (s->ctrl & SCSW_FCTL_CLEAR_FUNC) {
         /* TODO: Clear handling */
         sch_handle_clear_func(sch);
-        ret = 0;
     } else if (s->ctrl & SCSW_FCTL_HALT_FUNC) {
         /* TODO: Halt handling */
         sch_handle_halt_func(sch);
-        ret = 0;
     } else if (s->ctrl & SCSW_FCTL_START_FUNC) {
-        ret = sch_handle_start_func_passthrough(sch);
-    } else {
-        /* Cannot happen. */
-        return -ENODEV;
+        return sch_handle_start_func_passthrough(sch);
     }
-
-    return ret;
+    return IOINST_CC_EXPECTED;
 }
 
-static int do_subchannel_work(SubchDev *sch)
+static IOInstEnding do_subchannel_work(SubchDev *sch)
 {
-    if (sch->do_subchannel_work) {
-        return sch->do_subchannel_work(sch);
-    } else {
-        return -EINVAL;
+    if (!sch->do_subchannel_work) {
+        return IOINST_CC_STATUS_PRESENT;
     }
+    g_assert(sch->curr_status.scsw.ctrl & SCSW_CTRL_MASK_FCTL);
+    return sch->do_subchannel_work(sch);
 }
 
 static void copy_pmcw_to_guest(PMCW *dest, const PMCW *src)
@@ -1210,28 +1347,24 @@ static void copy_schib_from_guest(SCHIB *dest, const SCHIB *src)
     }
 }
 
-int css_do_msch(SubchDev *sch, const SCHIB *orig_schib)
+IOInstEnding css_do_msch(SubchDev *sch, const SCHIB *orig_schib)
 {
     SCSW *s = &sch->curr_status.scsw;
     PMCW *p = &sch->curr_status.pmcw;
     uint16_t oldflags;
-    int ret;
     SCHIB schib;
 
     if (!(sch->curr_status.pmcw.flags & PMCW_FLAGS_MASK_DNV)) {
-        ret = 0;
-        goto out;
+        return IOINST_CC_EXPECTED;
     }
 
     if (s->ctrl & SCSW_STCTL_STATUS_PEND) {
-        ret = -EINPROGRESS;
-        goto out;
+        return IOINST_CC_STATUS_PRESENT;
     }
 
     if (s->ctrl &
         (SCSW_FCTL_START_FUNC|SCSW_FCTL_HALT_FUNC|SCSW_FCTL_CLEAR_FUNC)) {
-        ret = -EBUSY;
-        goto out;
+        return IOINST_CC_BUSY;
     }
 
     copy_schib_from_guest(&schib, orig_schib);
@@ -1258,22 +1391,20 @@ int css_do_msch(SubchDev *sch, const SCHIB *orig_schib)
         && (p->flags & PMCW_FLAGS_MASK_ENA) == 0) {
         sch->disable_cb(sch);
     }
-
-    ret = 0;
-
-out:
-    return ret;
+    return IOINST_CC_EXPECTED;
 }
 
-int css_do_xsch(SubchDev *sch)
+IOInstEnding css_do_xsch(SubchDev *sch)
 {
     SCSW *s = &sch->curr_status.scsw;
     PMCW *p = &sch->curr_status.pmcw;
-    int ret;
 
     if (~(p->flags) & (PMCW_FLAGS_MASK_DNV | PMCW_FLAGS_MASK_ENA)) {
-        ret = -ENODEV;
-        goto out;
+        return IOINST_CC_NOT_OPERATIONAL;
+    }
+
+    if (s->ctrl & SCSW_CTRL_MASK_STCTL) {
+        return IOINST_CC_STATUS_PRESENT;
     }
 
     if (!(s->ctrl & SCSW_CTRL_MASK_FCTL) ||
@@ -1281,13 +1412,7 @@ int css_do_xsch(SubchDev *sch)
         (!(s->ctrl &
            (SCSW_ACTL_RESUME_PEND | SCSW_ACTL_START_PEND | SCSW_ACTL_SUSP))) ||
         (s->ctrl & SCSW_ACTL_SUBCH_ACTIVE)) {
-        ret = -EINPROGRESS;
-        goto out;
-    }
-
-    if (s->ctrl & SCSW_CTRL_MASK_STCTL) {
-        ret = -EBUSY;
-        goto out;
+        return IOINST_CC_BUSY;
     }
 
     /* Cancel the current operation. */
@@ -1299,56 +1424,43 @@ int css_do_xsch(SubchDev *sch)
     sch->last_cmd_valid = false;
     s->dstat = 0;
     s->cstat = 0;
-    ret = 0;
-
-out:
-    return ret;
+    return IOINST_CC_EXPECTED;
 }
 
-int css_do_csch(SubchDev *sch)
+IOInstEnding css_do_csch(SubchDev *sch)
 {
     SCSW *s = &sch->curr_status.scsw;
     PMCW *p = &sch->curr_status.pmcw;
-    int ret;
 
     if (~(p->flags) & (PMCW_FLAGS_MASK_DNV | PMCW_FLAGS_MASK_ENA)) {
-        ret = -ENODEV;
-        goto out;
+        return IOINST_CC_NOT_OPERATIONAL;
     }
 
     /* Trigger the clear function. */
     s->ctrl &= ~(SCSW_CTRL_MASK_FCTL | SCSW_CTRL_MASK_ACTL);
     s->ctrl |= SCSW_FCTL_CLEAR_FUNC | SCSW_ACTL_CLEAR_PEND;
 
-    do_subchannel_work(sch);
-    ret = 0;
-
-out:
-    return ret;
+    return do_subchannel_work(sch);
 }
 
-int css_do_hsch(SubchDev *sch)
+IOInstEnding css_do_hsch(SubchDev *sch)
 {
     SCSW *s = &sch->curr_status.scsw;
     PMCW *p = &sch->curr_status.pmcw;
-    int ret;
 
     if (~(p->flags) & (PMCW_FLAGS_MASK_DNV | PMCW_FLAGS_MASK_ENA)) {
-        ret = -ENODEV;
-        goto out;
+        return IOINST_CC_NOT_OPERATIONAL;
     }
 
     if (((s->ctrl & SCSW_CTRL_MASK_STCTL) == SCSW_STCTL_STATUS_PEND) ||
         (s->ctrl & (SCSW_STCTL_PRIMARY |
                     SCSW_STCTL_SECONDARY |
                     SCSW_STCTL_ALERT))) {
-        ret = -EINPROGRESS;
-        goto out;
+        return IOINST_CC_STATUS_PRESENT;
     }
 
     if (s->ctrl & (SCSW_FCTL_HALT_FUNC | SCSW_FCTL_CLEAR_FUNC)) {
-        ret = -EBUSY;
-        goto out;
+        return IOINST_CC_BUSY;
     }
 
     /* Trigger the halt function. */
@@ -1361,11 +1473,7 @@ int css_do_hsch(SubchDev *sch)
     }
     s->ctrl |= SCSW_ACTL_HALT_PEND;
 
-    do_subchannel_work(sch);
-    ret = 0;
-
-out:
-    return ret;
+    return do_subchannel_work(sch);
 }
 
 static void css_update_chnmon(SubchDev *sch)
@@ -1403,27 +1511,23 @@ static void css_update_chnmon(SubchDev *sch)
     }
 }
 
-int css_do_ssch(SubchDev *sch, ORB *orb)
+IOInstEnding css_do_ssch(SubchDev *sch, ORB *orb)
 {
     SCSW *s = &sch->curr_status.scsw;
     PMCW *p = &sch->curr_status.pmcw;
-    int ret;
 
     if (~(p->flags) & (PMCW_FLAGS_MASK_DNV | PMCW_FLAGS_MASK_ENA)) {
-        ret = -ENODEV;
-        goto out;
+        return IOINST_CC_NOT_OPERATIONAL;
     }
 
     if (s->ctrl & SCSW_STCTL_STATUS_PEND) {
-        ret = -EINPROGRESS;
-        goto out;
+        return IOINST_CC_STATUS_PRESENT;
     }
 
     if (s->ctrl & (SCSW_FCTL_START_FUNC |
                    SCSW_FCTL_HALT_FUNC |
                    SCSW_FCTL_CLEAR_FUNC)) {
-        ret = -EBUSY;
-        goto out;
+        return IOINST_CC_BUSY;
     }
 
     /* If monitoring is active, update counter. */
@@ -1436,10 +1540,7 @@ int css_do_ssch(SubchDev *sch, ORB *orb)
     s->ctrl |= (SCSW_FCTL_START_FUNC | SCSW_ACTL_START_PEND);
     s->flags &= ~SCSW_FLAGS_MASK_PNO;
 
-    ret = do_subchannel_work(sch);
-
-out:
-    return ret;
+    return do_subchannel_work(sch);
 }
 
 static void copy_irb_to_guest(IRB *dest, const IRB *src, PMCW *pmcw,
@@ -1612,7 +1713,7 @@ void css_undo_stcrw(CRW *crw)
 {
     CrwContainer *crw_cont;
 
-    crw_cont = g_try_malloc0(sizeof(CrwContainer));
+    crw_cont = g_try_new0(CrwContainer, 1);
     if (!crw_cont) {
         channel_subsys.crws_lost = true;
         return;
@@ -1686,27 +1787,23 @@ void css_do_schm(uint8_t mbk, int update, int dct, uint64_t mbo)
     }
 }
 
-int css_do_rsch(SubchDev *sch)
+IOInstEnding css_do_rsch(SubchDev *sch)
 {
     SCSW *s = &sch->curr_status.scsw;
     PMCW *p = &sch->curr_status.pmcw;
-    int ret;
 
     if (~(p->flags) & (PMCW_FLAGS_MASK_DNV | PMCW_FLAGS_MASK_ENA)) {
-        ret = -ENODEV;
-        goto out;
+        return IOINST_CC_NOT_OPERATIONAL;
     }
 
     if (s->ctrl & SCSW_STCTL_STATUS_PEND) {
-        ret = -EINPROGRESS;
-        goto out;
+        return IOINST_CC_STATUS_PRESENT;
     }
 
     if (((s->ctrl & SCSW_CTRL_MASK_FCTL) != SCSW_FCTL_START_FUNC) ||
         (s->ctrl & SCSW_ACTL_RESUME_PEND) ||
         (!(s->ctrl & SCSW_ACTL_SUSP))) {
-        ret = -EINVAL;
-        goto out;
+        return IOINST_CC_BUSY;
     }
 
     /* If monitoring is active, update counter. */
@@ -1715,11 +1812,7 @@ int css_do_rsch(SubchDev *sch)
     }
 
     s->ctrl |= SCSW_ACTL_RESUME_PEND;
-    do_subchannel_work(sch);
-    ret = 0;
-
-out:
-    return ret;
+    return do_subchannel_work(sch);
 }
 
 int css_do_rchp(uint8_t cssid, uint8_t chpid)
@@ -1750,10 +1843,10 @@ int css_do_rchp(uint8_t cssid, uint8_t chpid)
     }
 
     /* We don't really use a channel path, so we're done here. */
-    css_queue_crw(CRW_RSC_CHP, CRW_ERC_INIT,
+    css_queue_crw(CRW_RSC_CHP, CRW_ERC_INIT, 1,
                   channel_subsys.max_cssid > 0 ? 1 : 0, chpid);
     if (channel_subsys.max_cssid > 0) {
-        css_queue_crw(CRW_RSC_CHP, CRW_ERC_INIT, 0, real_cssid << 8);
+        css_queue_crw(CRW_RSC_CHP, CRW_ERC_INIT, 1, 0, real_cssid << 8);
     }
     return 0;
 }
@@ -2019,7 +2112,7 @@ void css_subch_assign(uint8_t cssid, uint8_t ssid, uint16_t schid,
     css = channel_subsys.css[cssid];
 
     if (!css->sch_set[ssid]) {
-        css->sch_set[ssid] = g_malloc0(sizeof(SubchSet));
+        css->sch_set[ssid] = g_new0(SubchSet, 1);
     }
     s_set = css->sch_set[ssid];
 
@@ -2033,18 +2126,22 @@ void css_subch_assign(uint8_t cssid, uint8_t ssid, uint16_t schid,
     }
 }
 
-void css_queue_crw(uint8_t rsc, uint8_t erc, int chain, uint16_t rsid)
+void css_queue_crw(uint8_t rsc, uint8_t erc, int solicited,
+                   int chain, uint16_t rsid)
 {
     CrwContainer *crw_cont;
 
     trace_css_crw(rsc, erc, rsid, chain ? "(chained)" : "");
     /* TODO: Maybe use a static crw pool? */
-    crw_cont = g_try_malloc0(sizeof(CrwContainer));
+    crw_cont = g_try_new0(CrwContainer, 1);
     if (!crw_cont) {
         channel_subsys.crws_lost = true;
         return;
     }
     crw_cont->crw.flags = (rsc << 8) | erc;
+    if (solicited) {
+        crw_cont->crw.flags |= CRW_FLAGS_MASK_S;
+    }
     if (chain) {
         crw_cont->crw.flags |= CRW_FLAGS_MASK_C;
     }
@@ -2091,9 +2188,9 @@ void css_generate_sch_crws(uint8_t cssid, uint8_t ssid, uint16_t schid,
     }
     chain_crw = (channel_subsys.max_ssid > 0) ||
             (channel_subsys.max_cssid > 0);
-    css_queue_crw(CRW_RSC_SUBCH, CRW_ERC_IPI, chain_crw ? 1 : 0, schid);
+    css_queue_crw(CRW_RSC_SUBCH, CRW_ERC_IPI, 0, chain_crw ? 1 : 0, schid);
     if (chain_crw) {
-        css_queue_crw(CRW_RSC_SUBCH, CRW_ERC_IPI, 0,
+        css_queue_crw(CRW_RSC_SUBCH, CRW_ERC_IPI, 0, 0,
                       (guest_cssid << 8) | (ssid << 4));
     }
     /* RW_ERC_IPI --> clear pending interrupts */
@@ -2108,7 +2205,7 @@ void css_generate_chp_crws(uint8_t cssid, uint8_t chpid)
 void css_generate_css_crws(uint8_t cssid)
 {
     if (!channel_subsys.sei_pending) {
-        css_queue_crw(CRW_RSC_CSS, 0, 0, cssid);
+        css_queue_crw(CRW_RSC_CSS, CRW_ERC_EVENT, 0, 0, cssid);
     }
     channel_subsys.sei_pending = true;
 }
@@ -2328,7 +2425,7 @@ SubchDev *css_create_sch(CssDevId bus_id, bool is_virtual, bool squash_mcss,
         }
     }
 
-    sch = g_malloc0(sizeof(*sch));
+    sch = g_new0(SubchDev, 1);
     sch->cssid = bus_id.cssid;
     sch->ssid = bus_id.ssid;
     sch->devno = bus_id.devid;

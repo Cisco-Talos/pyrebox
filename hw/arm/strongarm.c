@@ -406,11 +406,13 @@ static void strongarm_rtc_init(Object *obj)
     sysbus_init_mmio(dev, &s->iomem);
 }
 
-static void strongarm_rtc_pre_save(void *opaque)
+static int strongarm_rtc_pre_save(void *opaque)
 {
     StrongARMRTCState *s = opaque;
 
     strongarm_rtc_hzupdate(s);
+
+    return 0;
 }
 
 static int strongarm_rtc_post_load(void *opaque, int version_id)
@@ -1581,28 +1583,19 @@ static const TypeInfo strongarm_ssp_info = {
 
 /* Main CPU functions */
 StrongARMState *sa1110_init(MemoryRegion *sysmem,
-                            unsigned int sdram_size, const char *rev)
+                            unsigned int sdram_size, const char *cpu_type)
 {
     StrongARMState *s;
     int i;
 
     s = g_new0(StrongARMState, 1);
 
-    if (!rev) {
-        rev = "sa1110-b5";
-    }
-
-    if (strncmp(rev, "sa1110", 6)) {
+    if (strncmp(cpu_type, "sa1110", 6)) {
         error_report("Machine requires a SA1110 processor.");
         exit(1);
     }
 
-    s->cpu = cpu_arm_init(rev);
-
-    if (!s->cpu) {
-        error_report("Unable to find CPU definition");
-        exit(1);
-    }
+    s->cpu = ARM_CPU(cpu_create(cpu_type));
 
     memory_region_allocate_system_memory(&s->sdram, NULL, "strongarm.sdram",
                                          sdram_size);

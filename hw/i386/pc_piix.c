@@ -378,11 +378,6 @@ static void pc_compat_0_13(MachineState *machine)
 
 static void pc_init_isa(MachineState *machine)
 {
-    if (!machine->cpu_model) {
-        machine->cpu_model = "486";
-    }
-    x86_cpu_change_kvm_default("kvm-pv-eoi", NULL);
-    enable_compat_apic_id_mode();
     pc_init1(machine, TYPE_I440FX_PCI_HOST_BRIDGE, TYPE_I440FX_PCI_DEVICE);
 }
 
@@ -431,16 +426,27 @@ static void pc_i440fx_machine_options(MachineClass *m)
 {
     m->family = "pc_piix";
     m->desc = "Standard PC (i440FX + PIIX, 1996)";
-    m->hot_add_cpu = pc_hot_add_cpu;
     m->default_machine_opts = "firmware=bios-256k.bin";
     m->default_display = "std";
 }
 
-static void pc_i440fx_2_10_machine_options(MachineClass *m)
+static void pc_i440fx_2_11_machine_options(MachineClass *m)
 {
     pc_i440fx_machine_options(m);
     m->alias = "pc";
     m->is_default = 1;
+}
+
+DEFINE_I440FX_MACHINE(v2_11, "pc-i440fx-2.11", NULL,
+                      pc_i440fx_2_11_machine_options);
+
+static void pc_i440fx_2_10_machine_options(MachineClass *m)
+{
+    pc_i440fx_2_11_machine_options(m);
+    m->is_default = 0;
+    m->alias = NULL;
+    SET_MACHINE_COMPAT(m, PC_COMPAT_2_10);
+    m->auto_enable_numa_with_memhp = false;
 }
 
 DEFINE_I440FX_MACHINE(v2_10, "pc-i440fx-2.10", NULL,
@@ -449,8 +455,6 @@ DEFINE_I440FX_MACHINE(v2_10, "pc-i440fx-2.10", NULL,
 static void pc_i440fx_2_9_machine_options(MachineClass *m)
 {
     pc_i440fx_2_10_machine_options(m);
-    m->is_default = 0;
-    m->alias = NULL;
     SET_MACHINE_COMPAT(m, PC_COMPAT_2_9);
     m->numa_auto_assign_ram = numa_legacy_auto_assign_ram;
 }
@@ -1049,6 +1053,10 @@ static TypeInfo isa_bridge_info = {
     .parent        = TYPE_PCI_DEVICE,
     .instance_size = sizeof(PCIDevice),
     .class_init = isa_bridge_class_init,
+    .interfaces = (InterfaceInfo[]) {
+        { INTERFACE_CONVENTIONAL_PCI_DEVICE },
+        { },
+    },
 };
 
 static void pt_graphics_register_types(void)
@@ -1104,6 +1112,7 @@ static void isapc_machine_options(MachineClass *m)
     pcmc->gigabyte_align = false;
     pcmc->smbios_legacy_mode = true;
     pcmc->has_reserved_memory = false;
+    m->default_cpu_type = X86_CPU_TYPE_NAME("486");
 }
 
 DEFINE_PC_MACHINE(isapc, "isapc", pc_init_isa,
@@ -1116,7 +1125,6 @@ static void xenfv_machine_options(MachineClass *m)
     m->desc = "Xen Fully-virtualized PC";
     m->max_cpus = HVM_MAX_VCPUS;
     m->default_machine_opts = "accel=xen";
-    m->hot_add_cpu = pc_hot_add_cpu;
 }
 
 DEFINE_PC_MACHINE(xenfv, "xenfv", pc_xen_hvm_init,

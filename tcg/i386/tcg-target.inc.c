@@ -22,7 +22,7 @@
  * THE SOFTWARE.
  */
 
-#include "tcg-be-ldst.h"
+#include "tcg-pool.inc.c"
 
 #ifdef CONFIG_DEBUG_TCG
 static const char * const tcg_target_reg_names[TCG_TARGET_NB_REGS] = {
@@ -193,23 +193,15 @@ static const char *target_parse_constraint(TCGArgConstraint *ct,
         break;
     case 'q':
         ct->ct |= TCG_CT_REG;
-        if (TCG_TARGET_REG_BITS == 64) {
-            tcg_regset_set32(ct->u.regs, 0, 0xffff);
-        } else {
-            tcg_regset_set32(ct->u.regs, 0, 0xf);
-        }
+        ct->u.regs = TCG_TARGET_REG_BITS == 64 ? 0xffff : 0xf;
         break;
     case 'Q':
         ct->ct |= TCG_CT_REG;
-        tcg_regset_set32(ct->u.regs, 0, 0xf);
+        ct->u.regs = 0xf;
         break;
     case 'r':
         ct->ct |= TCG_CT_REG;
-        if (TCG_TARGET_REG_BITS == 64) {
-            tcg_regset_set32(ct->u.regs, 0, 0xffff);
-        } else {
-            tcg_regset_set32(ct->u.regs, 0, 0xff);
-        }
+        ct->u.regs = TCG_TARGET_REG_BITS == 64 ? 0xffff : 0xff;
         break;
     case 'W':
         /* With TZCNT/LZCNT, we can have operand-size as an input.  */
@@ -219,11 +211,7 @@ static const char *target_parse_constraint(TCGArgConstraint *ct,
         /* qemu_ld/st address constraint */
     case 'L':
         ct->ct |= TCG_CT_REG;
-        if (TCG_TARGET_REG_BITS == 64) {
-            tcg_regset_set32(ct->u.regs, 0, 0xffff);
-        } else {
-            tcg_regset_set32(ct->u.regs, 0, 0xff);
-        }
+        ct->u.regs = TCG_TARGET_REG_BITS == 64 ? 0xffff : 0xff;
         tcg_regset_reset_reg(ct->u.regs, TCG_REG_L0);
         tcg_regset_reset_reg(ct->u.regs, TCG_REG_L1);
         break;
@@ -1182,9 +1170,14 @@ static void tcg_out_branch(TCGContext *s, int call, tcg_insn_unit *dest)
         tcg_out_opc(s, call ? OPC_CALL_Jz : OPC_JMP_long, 0, 0, 0);
         tcg_out32(s, disp);
     } else {
-        tcg_out_movi(s, TCG_TYPE_PTR, TCG_REG_R10, (uintptr_t)dest);
-        tcg_out_modrm(s, OPC_GRP5,
-                      call ? EXT5_CALLN_Ev : EXT5_JMPN_Ev, TCG_REG_R10);
+        /* rip-relative addressing into the constant pool.
+           This is 6 + 8 = 14 bytes, as compared to using an
+           an immediate load 10 + 6 = 16 bytes, plus we may
+           be able to re-use the pool constant for more calls.  */
+        tcg_out_opc(s, OPC_GRP5, 0, 0, 0);
+        tcg_out8(s, (call ? EXT5_CALLN_Ev : EXT5_JMPN_Ev) << 3 | 5);
+        new_pool_label(s, (uintptr_t)dest, R_386_PC32, s->code_ptr, -4);
+        tcg_out32(s, 0);
     }
 }
 
@@ -1214,6 +1207,8 @@ static void tcg_out_nopn(TCGContext *s, int n)
 }
 
 #if defined(CONFIG_SOFTMMU)
+#include "tcg-ldst.inc.c"
+
 /* helper signature: helper_ret_ld_mmu(CPUState *env, target_ulong addr,
  *                                     int mmu_idx, uintptr_t ra)
  */
@@ -2504,7 +2499,7 @@ static const TCGTargetOpDef *tcg_target_op_def(TCGOpcode op)
     return NULL;
 }
 
-static int tcg_target_callee_save_regs[] = {
+static const int tcg_target_callee_save_regs[] = {
 #if TCG_TARGET_REG_BITS == 64
     TCG_REG_RBP,
     TCG_REG_RBX,
@@ -2595,6 +2590,11 @@ static void tcg_target_qemu_prologue(TCGContext *s)
 #endif
 }
 
+static void tcg_out_nop_fill(tcg_insn_unit *p, int count)
+{
+    memset(p, 0x90, count);
+}
+
 static void tcg_target_init(TCGContext *s)
 {
 #ifdef CONFIG_CPUID_H
@@ -2631,13 +2631,13 @@ static void tcg_target_init(TCGContext *s)
 #endif /* CONFIG_CPUID_H */
 
     if (TCG_TARGET_REG_BITS == 64) {
-        tcg_regset_set32(tcg_target_available_regs[TCG_TYPE_I32], 0, 0xffff);
-        tcg_regset_set32(tcg_target_available_regs[TCG_TYPE_I64], 0, 0xffff);
+        tcg_target_available_regs[TCG_TYPE_I32] = 0xffff;
+        tcg_target_available_regs[TCG_TYPE_I64] = 0xffff;
     } else {
-        tcg_regset_set32(tcg_target_available_regs[TCG_TYPE_I32], 0, 0xff);
+        tcg_target_available_regs[TCG_TYPE_I32] = 0xff;
     }
 
-    tcg_regset_clear(tcg_target_call_clobber_regs);
+    tcg_target_call_clobber_regs = 0;
     tcg_regset_set_reg(tcg_target_call_clobber_regs, TCG_REG_EAX);
     tcg_regset_set_reg(tcg_target_call_clobber_regs, TCG_REG_EDX);
     tcg_regset_set_reg(tcg_target_call_clobber_regs, TCG_REG_ECX);
@@ -2652,7 +2652,7 @@ static void tcg_target_init(TCGContext *s)
         tcg_regset_set_reg(tcg_target_call_clobber_regs, TCG_REG_R11);
     }
 
-    tcg_regset_clear(s->reserved_regs);
+    s->reserved_regs = 0;
     tcg_regset_set_reg(s->reserved_regs, TCG_REG_CALL_STACK);
 }
 

@@ -77,7 +77,7 @@
 #define MAX_IDE_BUS 2
 #define CFG_ADDR 0xf0000510
 #define TBFREQ (100UL * 1000UL * 1000UL)
-#define CLOCKFREQ (266UL * 1000UL * 1000UL)
+#define CLOCKFREQ (900UL * 1000UL * 1000UL)
 #define BUSFREQ (100UL * 1000UL * 1000UL)
 
 #define NDRV_VGA_FILENAME "qemu_vga.ndrv"
@@ -122,11 +122,6 @@ static void fw_cfg_boot_set(void *opaque, const char *boot_device,
 static uint64_t translate_kernel_address(void *opaque, uint64_t addr)
 {
     return (addr & 0x0fffffff) + KERNEL_LOAD_ADDR;
-}
-
-static hwaddr round_page(hwaddr addr)
-{
-    return (addr + TARGET_PAGE_SIZE - 1) & TARGET_PAGE_MASK;
 }
 
 static void ppc_core99_reset(void *opaque)
@@ -179,19 +174,8 @@ static void ppc_core99_init(MachineState *machine)
     linux_boot = (kernel_filename != NULL);
 
     /* init CPUs */
-    if (machine->cpu_model == NULL) {
-#ifdef TARGET_PPC64
-        machine->cpu_model = "970fx";
-#else
-        machine->cpu_model = "G4";
-#endif
-    }
     for (i = 0; i < smp_cpus; i++) {
-        cpu = cpu_ppc_init(machine->cpu_model);
-        if (cpu == NULL) {
-            fprintf(stderr, "Unable to find PowerPC CPU definition\n");
-            exit(1);
-        }
+        cpu = POWERPC_CPU(cpu_create(machine->cpu_type));
         env = &cpu->env;
 
         /* Set time-base frequency to 100 Mhz */
@@ -255,7 +239,7 @@ static void ppc_core99_init(MachineState *machine)
         }
         /* load initrd */
         if (initrd_filename) {
-            initrd_base = round_page(kernel_base + kernel_size + KERNEL_GAP);
+            initrd_base = TARGET_PAGE_ALIGN(kernel_base + kernel_size + KERNEL_GAP);
             initrd_size = load_image_targphys(initrd_filename, initrd_base,
                                               ram_size - initrd_base);
             if (initrd_size < 0) {
@@ -263,11 +247,11 @@ static void ppc_core99_init(MachineState *machine)
                              initrd_filename);
                 exit(1);
             }
-            cmdline_base = round_page(initrd_base + initrd_size);
+            cmdline_base = TARGET_PAGE_ALIGN(initrd_base + initrd_size);
         } else {
             initrd_base = 0;
             initrd_size = 0;
-            cmdline_base = round_page(kernel_base + kernel_size + KERNEL_GAP);
+            cmdline_base = TARGET_PAGE_ALIGN(kernel_base + kernel_size + KERNEL_GAP);
         }
         ppc_boot_device = 'm';
     } else {
@@ -350,7 +334,7 @@ static void ppc_core99_init(MachineState *machine)
     pic = g_new0(qemu_irq, 64);
 
     dev = qdev_create(NULL, TYPE_OPENPIC);
-    qdev_prop_set_uint32(dev, "model", OPENPIC_MODEL_RAVEN);
+    qdev_prop_set_uint32(dev, "model", OPENPIC_MODEL_KEYLARGO);
     qdev_init_nofail(dev);
     s = SYS_BUS_DEVICE(dev);
     pic_mem = s->mmio[0].memory;
@@ -528,6 +512,11 @@ static void core99_machine_class_init(ObjectClass *oc, void *data)
     mc->max_cpus = MAX_CPUS;
     mc->default_boot_order = "cd";
     mc->kvm_type = core99_kvm_type;
+#ifdef TARGET_PPC64
+    mc->default_cpu_type = POWERPC_CPU_TYPE_NAME("970fx_v3.1");
+#else
+    mc->default_cpu_type = POWERPC_CPU_TYPE_NAME("7400_v2.9");
+#endif
 }
 
 static const TypeInfo core99_machine_info = {

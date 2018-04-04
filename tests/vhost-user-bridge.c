@@ -277,6 +277,7 @@ vubr_backend_recv_cb(int sock, void *ctx)
     DPRINT("    hdrlen = %d\n", hdrlen);
 
     if (!vu_queue_enabled(dev, vq) ||
+        !vu_queue_started(dev, vq) ||
         !vu_queue_avail_bytes(dev, vq, hdrlen, 0)) {
         DPRINT("Got UDP packet, but no available descriptors on RX virtq.\n");
         return;
@@ -466,11 +467,18 @@ vubr_panic(VuDev *dev, const char *msg)
     vubr->quit = 1;
 }
 
+static bool
+vubr_queue_is_processed_in_order(VuDev *dev, int qidx)
+{
+    return true;
+}
+
 static const VuDevIface vuiface = {
     .get_features = vubr_get_features,
     .set_features = vubr_set_features,
     .process_msg = vubr_process_msg,
     .queue_set_started = vubr_queue_set_started,
+    .queue_is_processed_in_order = vubr_queue_is_processed_in_order,
 };
 
 static void
