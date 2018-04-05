@@ -58,7 +58,9 @@ void import_module(Monitor* mon, const QDict* qdict)
     py_import = PyDict_GetItemString(py_global_dict, "import_module");
     py_args_tuple = PyTuple_New(1);
     PyTuple_SetItem(py_args_tuple, 0, module_path); 
-    PyObject_CallObject(py_import,py_args_tuple);
+    PyObject* ret = PyObject_CallObject(py_import,py_args_tuple);
+    Py_XDECREF(ret);
+    Py_DECREF(py_args_tuple);
   }
 
 }
@@ -78,7 +80,9 @@ void unload_module(Monitor* mon, const QDict* qdict)
     py_import = PyDict_GetItemString(py_global_dict, "unload_module");
     py_args_tuple = PyTuple_New(1);
     PyTuple_SetItem(py_args_tuple, 0, module_hdl); 
-    PyObject_CallObject(py_import,py_args_tuple);
+    PyObject* ret = PyObject_CallObject(py_import,py_args_tuple);
+    Py_XDECREF(ret);
+    Py_DECREF(py_args_tuple);
     commit_deferred_callback_removes();
   }
 
@@ -98,7 +102,9 @@ void reload_module(Monitor* mon, const QDict* qdict)
     py_import = PyDict_GetItemString(py_global_dict, "reload_module");
     py_args_tuple = PyTuple_New(1);
     PyTuple_SetItem(py_args_tuple, 0, module_hdl); 
-    PyObject_CallObject(py_import,py_args_tuple);
+    PyObject* ret = PyObject_CallObject(py_import,py_args_tuple);
+    Py_XDECREF(ret);
+    Py_DECREF(py_args_tuple);
     commit_deferred_callback_removes();
   }
 }
@@ -113,13 +119,13 @@ void list_modules(Monitor* mon, const QDict* qdict)
     py_global_dict = PyModule_GetDict(py_main_module);
     //Call the module import function
     py_import = PyDict_GetItemString(py_global_dict, "list_modules");
-    PyObject_CallObject(py_import,0);
+    PyObject* ret = PyObject_CallObject(py_import,0);
+    Py_XDECREF(ret);
 
 }
 
 void pyrebox_shell(Monitor* mon, const QDict* qdict)
 {
-
     PyObject* py_main_module, *py_global_dict;
     PyObject* py_import;//,*py_args_tuple;
     // Get a reference to the main module and global dictionary
@@ -127,6 +133,6 @@ void pyrebox_shell(Monitor* mon, const QDict* qdict)
     py_global_dict = PyModule_GetDict(py_main_module);
     //Call the module import function
     py_import = PyDict_GetItemString(py_global_dict, "pyrebox_ipython_shell");
-    PyObject_CallObject(py_import,0);
-
+    PyObject* ret = PyObject_CallObject(py_import,0);
+    Py_XDECREF(ret);
 }

@@ -856,7 +856,8 @@ void CallbackManager::deliver_callback(callback_type_t type, callback_params_t p
 
     for (list<Callback*>::iterator it = callbacks_needed.begin(); it != callbacks_needed.end(); ++it)
     {
-        PyObject_CallObject((*it)->get_callback_function(),arg);
+        PyObject* ret = PyObject_CallObject((*it)->get_callback_function(),arg);
+        Py_XDECREF(ret);
     }
     //Once all callbacks have been triggered, just decref the arguments
     Py_XDECREF(arg);

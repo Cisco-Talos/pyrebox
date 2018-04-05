@@ -134,10 +134,15 @@ int pyrebox_init(const char *pyrebox_conf_str){
   if (vol_profile == 0 || vol_profile == Py_None){
       return 1;
   }
+  Py_DECREF(py_args_tuple);
+
   PyObject* vol_prof_repr = PyObject_Repr(vol_profile);
   const char* s = PyString_AsString(vol_prof_repr);
   //Set the vol profile in vmi.cpp
   vmi_init(s);
+
+  // Now, we can decref vol_profile
+  Py_XDECREF(vol_profile);
 
   py_args_tuple = PyTuple_New(0);
   //Now that we initialized the VMI, init the plugins
@@ -146,6 +151,11 @@ int pyrebox_init(const char *pyrebox_conf_str){
   if (result == 0 || result == Py_None){
       return 1;
   }
+  // We can decref the args tuple
+  Py_DECREF(py_args_tuple);
+  // We can decref the result
+  Py_XDECREF(result);
+
   return 0;
 };
 
