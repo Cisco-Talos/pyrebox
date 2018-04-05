@@ -149,6 +149,9 @@ def unload_module(_id):
             modules[_id].unload()
         else:
             pp_warning("[*]  The module number specified (%d) has not been imported\n" % _id)
+            pp_warning("[*]  Possible ids:")
+            for i in modules:
+                pp_warning("    %s - %s" % (str(i),str(type(i))))
     except Exception as e:
         pp_error("[!] Could not reload python module due to exception\n")
         pp_error("    %s\n" % str(e))
@@ -161,6 +164,11 @@ def list_modules():
         t.add_row([mod, modules[mod].get_module_name(), "Yes" if modules[mod].is_loaded() else "No"])
     pp_print(str(t) + "\n")
 
+def get_loaded_modules():
+    mods = []
+    for mod in modules:
+        mods.append({"module_handle": mod, "module_name": modules[mod].get_module_name(), "is_loaded": modules[mod].is_loaded()})
+    return mods
 
 def pyrebox_shell():
     finished = False

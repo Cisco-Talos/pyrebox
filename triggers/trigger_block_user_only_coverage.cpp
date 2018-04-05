@@ -28,11 +28,14 @@
 #include <list>
 #include <string>
 #include <Python.h>
+
 extern "C"{
     #include "qemu_glue.h"
-    #include "trigger_helpers.h"
 }
 #include "callbacks.h"
+extern "C"{
+    #include "trigger_helpers.h"
+}
 #include "utils.h"
 
 extern "C"{

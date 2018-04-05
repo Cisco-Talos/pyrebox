@@ -659,8 +659,57 @@ def va_to_sym(pgd, addr):
     # Finally, return None if the symbol is not found
     return None
 
-# ================================================== CLASSES  =============
 
+def import_module(module_name):
+    """ Import a module given its name (e.g. scripts.script_example)
+
+        :param module_name: The module name following python notation. 
+                            E.g.: scripts.script_example
+        :type module_name: str 
+
+        :return: None 
+        :rtype: None 
+    """
+    import c_api
+    c_api.import_module(module_name)
+
+
+def unload_module(module_handle):
+    """ Unload a module given its handle. 
+
+        :param module_handle: The module handle. 
+        :type module_name: int 
+
+        :return: None 
+        :rtype: None 
+    """
+    import c_api
+    c_api.unload_module(module_handle)
+
+
+def reload_module(module_handle):
+    """ Reload a module given its handle. 
+
+        :param module_handle: The module handle.
+        :type module_handle: int
+
+        :return: None 
+        :rtype: None 
+    """
+    import c_api
+    c_api.reload_module(module_handle)
+
+def get_loaded_modules():
+    """ Returns a dictionary of modules loaded in pyrebox.
+
+        :return: Dictionary with the keys: "module_handle", "module_name", "is_loaded"
+        :rtype: dict 
+    """
+    import c_api
+    return c_api.get_loaded_modules()
+
+
+# ================================================== CLASSES  =============
 
 class CallbackManager:
     '''
@@ -698,6 +747,14 @@ class CallbackManager:
         self.remove_module_callbacks = {}
 
         self.module_hdl = module_hdl
+
+    def get_module_handle(self):
+        """ Returns the module handle associated to this callback manager
+            
+            :return: The handle of the module this callback manager is bound to.
+            :rtype: int
+        """
+        return self.module_hdl
 
     def generate_callback_name(self, name):
         """ Generates a unique callback name given an initial name

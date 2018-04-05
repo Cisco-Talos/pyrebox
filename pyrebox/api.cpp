@@ -875,6 +875,111 @@ PyObject* py_get_os_bits(PyObject *dummy, PyObject *args){
     return result;
 }
 
+PyObject* py_import_module(PyObject *dummy, PyObject *args){
+    char* name;
+    int length;
+    if (PyArg_ParseTuple(args, "s#",&name,&length)){
+
+        PyObject* py_main_module, *py_global_dict;
+        PyObject* py_import,*py_args_tuple;
+        PyObject *module_path = PyString_FromString(name);
+        // Get a reference to the main module and global dictionary
+        py_main_module = PyImport_AddModule("__main__");
+        py_global_dict = PyModule_GetDict(py_main_module);
+        //Call the module import function
+        py_import = PyDict_GetItemString(py_global_dict, "import_module");
+        py_args_tuple = PyTuple_New(1);
+        PyTuple_SetItem(py_args_tuple, 0, module_path); 
+        PyObject* ret = PyObject_CallObject(py_import,py_args_tuple);
+        Py_XDECREF(ret);
+        Py_DECREF(py_args_tuple);
+        Py_INCREF(Py_None);
+        return Py_None;
+    }
+    else
+    {
+        PyErr_SetString(PyExc_ValueError, "Incorrect function parameter: module name");
+        return 0;
+    }
+}
+
+PyObject* py_unload_module(PyObject *dummy, PyObject *args){
+    unsigned int module_id;
+    if (PyArg_ParseTuple(args, "I",&module_id)){
+        PyObject* py_main_module, *py_global_dict;
+        PyObject* py_import,*py_args_tuple;
+        PyObject *module_hdl = PyInt_FromLong(module_id);
+        // Get a reference to the main module and global dictionary
+        py_main_module = PyImport_AddModule("__main__");
+        py_global_dict = PyModule_GetDict(py_main_module);
+        //Call the module import function
+        py_import = PyDict_GetItemString(py_global_dict, "unload_module");
+        py_args_tuple = PyTuple_New(1);
+        PyTuple_SetItem(py_args_tuple, 0, module_hdl); 
+        PyObject* ret = PyObject_CallObject(py_import,py_args_tuple);
+        Py_XDECREF(ret);
+        Py_DECREF(py_args_tuple);
+        commit_deferred_callback_removes();
+        Py_INCREF(Py_None);
+        return Py_None;
+    }
+    else
+    {
+        PyErr_SetString(PyExc_ValueError, "Incorrect function parameter: module_id");
+    }
+    return 0;
+}
+
+PyObject* py_reload_module(PyObject *dummy, PyObject *args){
+    unsigned int module_id;
+    if (PyArg_ParseTuple(args, "I",&module_id)){
+        PyObject* py_main_module, *py_global_dict;
+        PyObject* py_import,*py_args_tuple;
+        PyObject *module_hdl = PyInt_FromLong(module_id);
+        // Get a reference to the main module and global dictionary
+        py_main_module = PyImport_AddModule("__main__");
+        py_global_dict = PyModule_GetDict(py_main_module);
+        //Call the module import function
+        py_import = PyDict_GetItemString(py_global_dict, "reload_module");
+        py_args_tuple = PyTuple_New(1);
+        PyTuple_SetItem(py_args_tuple, 0, module_hdl);
+        PyObject* ret = PyObject_CallObject(py_import,py_args_tuple);
+        Py_XDECREF(ret);
+        Py_DECREF(py_args_tuple);
+        commit_deferred_callback_removes();
+        Py_INCREF(Py_None);
+        return Py_None;
+    }
+    else
+    {
+        PyErr_SetString(PyExc_ValueError, "Incorrect function parameter: module_id");
+    }
+    return 0;
+}
+
+PyObject* py_get_loaded_modules(PyObject *dummy, PyObject *args){
+    PyObject* py_main_module, *py_global_dict;
+    PyObject* py_import,*py_args_tuple;
+    // Get a reference to the main module and global dictionary
+    py_main_module = PyImport_AddModule("__main__");
+    py_global_dict = PyModule_GetDict(py_main_module);
+    //Call the module import function
+    py_import = PyDict_GetItemString(py_global_dict, "get_loaded_modules");
+    py_args_tuple = PyTuple_New(0);
+    PyObject* ret = PyObject_CallObject(py_import,py_args_tuple);
+    //Dec ref the argument list
+    Py_DECREF(py_args_tuple);
+    //Dont decrement the reference for the return, cause we pass
+    //it as result
+    if (ret){
+        return ret;
+    } else {
+        Py_INCREF(Py_None);
+        return Py_None;
+    }
+}
+
+
 PyMethodDef api_methods[] = {
       {"register_callback", register_callback, METH_VARARGS, "register_callback"}, 
       {"unregister_callback", unregister_callback, METH_VARARGS, "unregister_callback"},
@@ -908,6 +1013,10 @@ PyMethodDef api_methods[] = {
       {"get_num_cpus",py_get_num_cpus, METH_VARARGS, "get_num_cpus"},
       {"plugin_print_internal",py_print_plugin, METH_VARARGS, "plugin_print_internal"},
       {"get_os_bits",py_get_os_bits,METH_VARARGS,"get_os_bits"},
+      {"import_module",py_import_module,METH_VARARGS,"import_module"},
+      {"unload_module",py_unload_module,METH_VARARGS,"unload_module"},
+      {"reload_module",py_reload_module,METH_VARARGS,"reload_module"},
+      {"get_loaded_modules",py_get_loaded_modules,METH_VARARGS,"get_loaded_modules"},
       { NULL, NULL, 0, NULL }
     };
 
