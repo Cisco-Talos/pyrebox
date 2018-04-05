@@ -3,29 +3,12 @@
 # This code is licensed under the GPL version 2 or later.  See
 # the COPYING file in the top-level directory.
 
-echo $@ >> /tmp/PYRE_EXEC
-
-echo "IM HERE1" >> /tmp/PYRE_EXEC
-
 substat=".git-submodule-status"
 
-echo "IM HERE2" >> /tmp/PYRE_EXEC
-
 command=$1
-
-echo "IM HERE3" >> /tmp/PYRE_EXEC
-
 shift
-
-echo "IM HERE4" >> /tmp/PYRE_EXEC
-
 maybe_modules="$@"
-
-echo "IM HERE5" >> /tmp/PYRE_EXEC
-
 test -z "$GIT" && GIT=git
-
-echo "IM HERE6" >> /tmp/PYRE_EXEC
 
 error() {
     echo "$0: $*"
@@ -60,9 +43,6 @@ do
         echo "warn: ignoring non-existent submodule $m"
     fi
 done
-
-echo $modules >> /tmp/PYRE_EXEC
-
 #if test -n "$maybe_modules" && ! test -e ".git"
 #then
 #    echo "$0: unexpectedly called with submodules but no git checkout exists"
