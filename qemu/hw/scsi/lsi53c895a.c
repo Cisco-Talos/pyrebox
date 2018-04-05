@@ -2083,7 +2083,7 @@ static void lsi_scsi_reset(DeviceState *dev)
     lsi_soft_reset(s);
 }
 
-static void lsi_pre_save(void *opaque)
+static int lsi_pre_save(void *opaque)
 {
     LSIState *s = opaque;
 
@@ -2092,6 +2092,8 @@ static void lsi_pre_save(void *opaque)
         assert(s->current->dma_len == 0);
     }
     assert(QTAILQ_EMPTY(&s->queue));
+
+    return 0;
 }
 
 static const VMStateDescription vmstate_lsi_scsi = {
@@ -2244,6 +2246,10 @@ static const TypeInfo lsi_info = {
     .parent        = TYPE_PCI_DEVICE,
     .instance_size = sizeof(LSIState),
     .class_init    = lsi_class_init,
+    .interfaces = (InterfaceInfo[]) {
+        { INTERFACE_CONVENTIONAL_PCI_DEVICE },
+        { },
+    },
 };
 
 static void lsi53c810_class_init(ObjectClass *klass, void *data)

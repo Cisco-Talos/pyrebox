@@ -223,7 +223,14 @@ void aio_set_fd_handler(AioContext *ctx,
             return;
         }
 
-        g_source_remove_poll(&ctx->source, &node->pfd);
+        /* If the GSource is in the process of being destroyed then
+         * g_source_remove_poll() causes an assertion failure.  Skip
+         * removal in that case, because glib cleans up its state during
+         * destruction anyway.
+         */
+        if (!g_source_is_destroyed(&ctx->source)) {
+            g_source_remove_poll(&ctx->source, &node->pfd);
+        }
 
         /* If the lock is held, just mark the node as deleted */
         if (qemu_lockcnt_count(&ctx->list_lock)) {
@@ -694,13 +701,6 @@ bool aio_poll(AioContext *ctx, bool blocking)
 
 void aio_context_setup(AioContext *ctx)
 {
-    /* TODO remove this in final patch submission */
-    if (getenv("QEMU_AIO_POLL_MAX_NS")) {
-        fprintf(stderr, "The QEMU_AIO_POLL_MAX_NS environment variable has "
-                "been replaced with -object iothread,poll-max-ns=NUM\n");
-        exit(1);
-    }
-
 #ifdef CONFIG_EPOLL_CREATE1
     assert(!ctx->epollfd);
     ctx->epollfd = epoll_create1(EPOLL_CLOEXEC);

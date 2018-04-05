@@ -31,6 +31,7 @@
 #include "exec/helper-proto.h"
 #include "mmu.h"
 #include "exec/cpu_ldst.h"
+#include "exec/translator.h"
 #include "crisv32-decode.h"
 
 #include "exec/helper-gen.h"
@@ -50,7 +51,11 @@
 #define BUG() (gen_BUG(dc, __FILE__, __LINE__))
 #define BUG_ON(x) ({if (x) BUG();})
 
-#define DISAS_SWI 5
+/* is_jmp field values */
+#define DISAS_JUMP    DISAS_TARGET_0 /* only pc was modified dynamically */
+#define DISAS_UPDATE  DISAS_TARGET_1 /* cpu state was modified dynamically */
+#define DISAS_TB_JUMP DISAS_TARGET_2 /* only pc was modified statically */
+#define DISAS_SWI     DISAS_TARGET_3
 
 /* Used by the decoder.  */
 #define EXTRACT_FIELD(src, start, end) \
@@ -61,7 +66,6 @@
 #define CC_MASK_NZVC 0xf
 #define CC_MASK_RNZV 0x10e
 
-static TCGv_env cpu_env;
 static TCGv cpu_R[16];
 static TCGv cpu_PR[16];
 static TCGv cc_x;
@@ -834,7 +838,7 @@ static void cris_alu(DisasContext *dc, int op,
         }
         tcg_gen_or_tl(d, d, tmp);
     }
-    if (!TCGV_EQUAL(tmp, d)) {
+    if (tmp != d) {
         tcg_temp_free(tmp);
     }
 }
@@ -1157,7 +1161,7 @@ static inline void t_gen_sext(TCGv d, TCGv s, int size)
         tcg_gen_ext8s_i32(d, s);
     } else if (size == 2) {
         tcg_gen_ext16s_i32(d, s);
-    } else if (!TCGV_EQUAL(d, s)) {
+    } else {
         tcg_gen_mov_tl(d, s);
     }
 }
@@ -1168,7 +1172,7 @@ static inline void t_gen_zext(TCGv d, TCGv s, int size)
         tcg_gen_ext8u_i32(d, s);
     } else if (size == 2) {
         tcg_gen_ext16u_i32(d, s);
-    } else if (!TCGV_EQUAL(d, s)) {
+    } else {
         tcg_gen_mov_tl(d, s);
     }
 }
@@ -3136,7 +3140,7 @@ void gen_intermediate_code(CPUState *cs, struct TranslationBlock *tb)
 
     next_page_start = (pc_start & TARGET_PAGE_MASK) + TARGET_PAGE_SIZE;
     num_insns = 0;
-    max_insns = tb->cflags & CF_COUNT_MASK;
+    max_insns = tb_cflags(tb) & CF_COUNT_MASK;
     if (max_insns == 0) {
         max_insns = CF_COUNT_MASK;
     }
@@ -3166,7 +3170,7 @@ void gen_intermediate_code(CPUState *cs, struct TranslationBlock *tb)
         /* Pretty disas.  */
         LOG_DIS("%8.8x:\t", dc->pc);
 
-        if (num_insns == max_insns && (tb->cflags & CF_LAST_IO)) {
+        if (num_insns == max_insns && (tb_cflags(tb) & CF_LAST_IO)) {
             gen_io_start();
         }
         dc->clear_x = 1;
@@ -3239,7 +3243,7 @@ void gen_intermediate_code(CPUState *cs, struct TranslationBlock *tb)
 
     npc = dc->pc;
 
-        if (tb->cflags & CF_LAST_IO)
+        if (tb_cflags(tb) & CF_LAST_IO)
             gen_io_end();
     /* Force an update if the per-tb cpu state has changed.  */
     if (dc->is_jmp == DISAS_NEXT
@@ -3292,8 +3296,7 @@ void gen_intermediate_code(CPUState *cs, struct TranslationBlock *tb)
         qemu_log_lock();
         qemu_log("--------------\n");
         qemu_log("IN: %s\n", lookup_symbol(pc_start));
-        log_target_disas(cs, pc_start, dc->pc - pc_start,
-                         env->pregs[PR_VR]);
+        log_target_disas(cs, pc_start, dc->pc - pc_start);
         qemu_log("\nisize=%d osize=%d\n",
                  dc->pc - pc_start, tcg_op_buf_count());
         qemu_log_unlock();
@@ -3363,8 +3366,6 @@ void cris_initialize_tcg(void)
 {
     int i;
 
-    cpu_env = tcg_global_reg_new_ptr(TCG_AREG0, "env");
-    tcg_ctx.tcg_env = cpu_env;
     cc_x = tcg_global_mem_new(cpu_env,
                               offsetof(CPUCRISState, cc_x), "cc_x");
     cc_src = tcg_global_mem_new(cpu_env,

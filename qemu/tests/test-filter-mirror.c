@@ -17,17 +17,18 @@
 
 static void test_mirror(void)
 {
-#ifndef _WIN32
-/* socketpair(PF_UNIX) which does not exist on windows */
-
     int send_sock[2], recv_sock;
-    char *cmdline;
     uint32_t ret = 0, len = 0;
     char send_buf[] = "Hello! filter-mirror~";
     char sock_path[] = "filter-mirror.XXXXXX";
     char *recv_buf;
     uint32_t size = sizeof(send_buf);
     size = htonl(size);
+    const char *devstr = "e1000";
+
+    if (g_str_equal(qtest_get_arch(), "s390x")) {
+        devstr = "virtio-net-ccw";
+    }
 
     ret = socketpair(PF_UNIX, SOCK_STREAM, 0, send_sock);
     g_assert_cmpint(ret, !=, -1);
@@ -35,13 +36,12 @@ static void test_mirror(void)
     ret = mkstemp(sock_path);
     g_assert_cmpint(ret, !=, -1);
 
-    cmdline = g_strdup_printf("-netdev socket,id=qtest-bn0,fd=%d "
-                 "-device e1000,netdev=qtest-bn0,id=qtest-e0 "
-                 "-chardev socket,id=mirror0,path=%s,server,nowait "
-                 "-object filter-mirror,id=qtest-f0,netdev=qtest-bn0,queue=tx,outdev=mirror0 "
-                 , send_sock[1], sock_path);
-    qtest_start(cmdline);
-    g_free(cmdline);
+    global_qtest = qtest_startf(
+        "-netdev socket,id=qtest-bn0,fd=%d "
+        "-device %s,netdev=qtest-bn0,id=qtest-e0 "
+        "-chardev socket,id=mirror0,path=%s,server,nowait "
+        "-object filter-mirror,id=qtest-f0,netdev=qtest-bn0,queue=tx,outdev=mirror0 "
+        , send_sock[1], devstr, sock_path);
 
     recv_sock = unix_connect(sock_path, NULL);
     g_assert_cmpint(recv_sock, !=, -1);
@@ -74,8 +74,6 @@ static void test_mirror(void)
     g_free(recv_buf);
     close(recv_sock);
     unlink(sock_path);
-
-#endif
 }
 
 int main(int argc, char **argv)

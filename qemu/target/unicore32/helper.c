@@ -27,11 +27,6 @@
 #define DPRINTF(fmt, ...) do {} while (0)
 #endif
 
-UniCore32CPU *uc32_cpu_init(const char *cpu_model)
-{
-    return UNICORE32_CPU(cpu_generic_init(TYPE_UNICORE32_CPU, cpu_model));
-}
-
 #ifndef CONFIG_USER_ONLY
 void helper_cp0_set(CPUUniCore32State *env, uint32_t val, uint32_t creg,
         uint32_t cop)
@@ -168,6 +163,12 @@ uint32_t helper_cp0_get(CPUUniCore32State *env, uint32_t creg, uint32_t cop)
 }
 
 #ifdef CONFIG_CURSES
+
+/* KEY_EVENT is defined in wincon.h and in curses.h. Avoid redefinition. */
+#undef KEY_EVENT
+#include <curses.h>
+#undef KEY_EVENT
+
 /*
  * FIXME:
  *     1. curses windows will be blank when switching back

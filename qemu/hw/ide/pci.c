@@ -31,6 +31,7 @@
 #include "sysemu/dma.h"
 #include "qemu/error-report.h"
 #include "hw/ide/pci.h"
+#include "trace.h"
 
 #define BMDMA_PAGE_SIZE 4096
 
@@ -196,9 +197,7 @@ static void bmdma_reset(IDEDMA *dma)
 {
     BMDMAState *bm = DO_UPCAST(BMDMAState, dma, dma);
 
-#ifdef DEBUG_IDE
-    printf("ide: dma_reset\n");
-#endif
+    trace_bmdma_reset();
     bmdma_cancel(bm);
     bm->cmd = 0;
     bm->status = 0;
@@ -227,9 +226,7 @@ static void bmdma_irq(void *opaque, int n, int level)
 
 void bmdma_cmd_writeb(BMDMAState *bm, uint32_t val)
 {
-#ifdef DEBUG_IDE
-    printf("%s: 0x%08x\n", __func__, val);
-#endif
+    trace_bmdma_cmd_writeb(val);
 
     /* Ignore writes to SSBM if it keeps the old value */
     if ((val & BM_CMD_START) != (bm->cmd & BM_CMD_START)) {
@@ -258,9 +255,7 @@ static uint64_t bmdma_addr_read(void *opaque, hwaddr addr,
     uint64_t data;
 
     data = (bm->addr >> (addr * 8)) & mask;
-#ifdef DEBUG_IDE
-    printf("%s: 0x%08x\n", __func__, (unsigned)data);
-#endif
+    trace_bmdma_addr_read(data);
     return data;
 }
 
@@ -271,9 +266,7 @@ static void bmdma_addr_write(void *opaque, hwaddr addr,
     int shift = addr * 8;
     uint32_t mask = (1ULL << (width * 8)) - 1;
 
-#ifdef DEBUG_IDE
-    printf("%s: 0x%08x\n", __func__, (unsigned)data);
-#endif
+    trace_bmdma_addr_write(data);
     bm->addr &= ~(mask << shift);
     bm->addr |= ((data & mask) << shift) & ~3;
 }
@@ -303,7 +296,7 @@ static bool ide_bmdma_status_needed(void *opaque)
     return ((bm->status & abused_bits) != 0);
 }
 
-static void ide_bmdma_pre_save(void *opaque)
+static int ide_bmdma_pre_save(void *opaque)
 {
     BMDMAState *bm = opaque;
     uint8_t abused_bits = BM_MIGRATION_COMPAT_STATUS_BITS;
@@ -317,6 +310,8 @@ static void ide_bmdma_pre_save(void *opaque)
     bm->migration_retry_nsector = bm->bus->retry_nsector;
     bm->migration_compat_status =
         (bm->status & ~abused_bits) | (bm->bus->error_status & abused_bits);
+
+    return 0;
 }
 
 /* This function accesses bm->bus->error_status which is loaded only after
@@ -458,6 +453,10 @@ static const TypeInfo pci_ide_type_info = {
     .parent = TYPE_PCI_DEVICE,
     .instance_size = sizeof(PCIIDEState),
     .abstract = true,
+    .interfaces = (InterfaceInfo[]) {
+        { INTERFACE_CONVENTIONAL_PCI_DEVICE },
+        { },
+    },
 };
 
 static void pci_ide_register_types(void)

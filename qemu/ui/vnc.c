@@ -60,6 +60,7 @@ static QTAILQ_HEAD(, VncDisplay) vnc_displays =
 
 static int vnc_cursor_define(VncState *vs);
 static void vnc_release_modifiers(VncState *vs);
+static void vnc_update_throttle_offset(VncState *vs);
 
 static void vnc_set_share_mode(VncState *vs, VncShareMode mode)
 {
@@ -131,7 +132,7 @@ static void vnc_init_basic_info(SocketAddress *addr,
     case SOCKET_ADDRESS_TYPE_VSOCK:
     case SOCKET_ADDRESS_TYPE_FD:
         error_setg(errp, "Unsupported socket address type %s",
-                   SocketAddressType_lookup[addr->type]);
+                   SocketAddressType_str(addr->type));
         break;
     default:
         abort();
@@ -416,7 +417,7 @@ VncInfo *qmp_query_vnc(Error **errp)
         case SOCKET_ADDRESS_TYPE_VSOCK:
         case SOCKET_ADDRESS_TYPE_FD:
             error_setg(errp, "Unsupported socket address type %s",
-                       SocketAddressType_lookup[addr->type]);
+                       SocketAddressType_str(addr->type));
             goto out_error;
         default:
             abort();
@@ -596,7 +597,7 @@ VncInfo2List *qmp_query_vnc_servers(Error **errp)
    3) resolutions > 1024
 */
 
-static int vnc_update_client(VncState *vs, int has_dirty, bool sync);
+static int vnc_update_client(VncState *vs, int has_dirty);
 static void vnc_disconnect_start(VncState *vs);
 
 static void vnc_colordepth(VncState *vs);
@@ -671,6 +672,11 @@ static void vnc_desktop_resize(VncState *vs)
         vs->client_height == pixman_image_get_height(vs->vd->server)) {
         return;
     }
+
+    assert(pixman_image_get_width(vs->vd->server) < 65536 &&
+           pixman_image_get_width(vs->vd->server) >= 0);
+    assert(pixman_image_get_height(vs->vd->server) < 65536 &&
+           pixman_image_get_height(vs->vd->server) >= 0);
     vs->client_width = pixman_image_get_width(vs->vd->server);
     vs->client_height = pixman_image_get_height(vs->vd->server);
     vnc_lock_output(vs);
@@ -766,6 +772,7 @@ static void vnc_dpy_switch(DisplayChangeListener *dcl,
         vnc_set_area_dirty(vs->dirty, vd, 0, 0,
                            vnc_width(vd),
                            vnc_height(vd));
+        vnc_update_throttle_offset(vs);
     }
 }
 
@@ -961,85 +968,168 @@ static int find_and_clear_dirty_height(VncState *vs,
     return h;
 }
 
-static int vnc_update_client(VncState *vs, int has_dirty, bool sync)
+/*
+ * Figure out how much pending data we should allow in the output
+ * buffer before we throttle incremental display updates, and/or
+ * drop audio samples.
+ *
+ * We allow for equiv of 1 full display's worth of FB updates,
+ * and 1 second of audio samples. If audio backlog was larger
+ * than that the client would already suffering awful audio
+ * glitches, so dropping samples is no worse really).
+ */
+static void vnc_update_throttle_offset(VncState *vs)
 {
+    size_t offset =
+        vs->client_width * vs->client_height * vs->client_pf.bytes_per_pixel;
+
+    if (vs->audio_cap) {
+        int freq = vs->as.freq;
+        /* We don't limit freq when reading settings from client, so
+         * it could be upto MAX_INT in size. 48khz is a sensible
+         * upper bound for trustworthy clients */
+        int bps;
+        if (freq > 48000) {
+            freq = 48000;
+        }
+        switch (vs->as.fmt) {
+        default:
+        case  AUD_FMT_U8:
+        case  AUD_FMT_S8:
+            bps = 1;
+            break;
+        case  AUD_FMT_U16:
+        case  AUD_FMT_S16:
+            bps = 2;
+            break;
+        case  AUD_FMT_U32:
+        case  AUD_FMT_S32:
+            bps = 4;
+            break;
+        }
+        offset += freq * bps * vs->as.nchannels;
+    }
+
+    /* Put a floor of 1MB on offset, so that if we have a large pending
+     * buffer and the display is resized to a small size & back again
+     * we don't suddenly apply a tiny send limit
+     */
+    offset = MAX(offset, 1024 * 1024);
+
+    if (vs->throttle_output_offset != offset) {
+        trace_vnc_client_throttle_threshold(
+            vs, vs->ioc, vs->throttle_output_offset, offset, vs->client_width,
+            vs->client_height, vs->client_pf.bytes_per_pixel, vs->audio_cap);
+    }
+
+    vs->throttle_output_offset = offset;
+}
+
+static bool vnc_should_update(VncState *vs)
+{
+    switch (vs->update) {
+    case VNC_STATE_UPDATE_NONE:
+        break;
+    case VNC_STATE_UPDATE_INCREMENTAL:
+        /* Only allow incremental updates if the pending send queue
+         * is less than the permitted threshold, and the job worker
+         * is completely idle.
+         */
+        if (vs->output.offset < vs->throttle_output_offset &&
+            vs->job_update == VNC_STATE_UPDATE_NONE) {
+            return true;
+        }
+        trace_vnc_client_throttle_incremental(
+            vs, vs->ioc, vs->job_update, vs->output.offset);
+        break;
+    case VNC_STATE_UPDATE_FORCE:
+        /* Only allow forced updates if the pending send queue
+         * does not contain a previous forced update, and the
+         * job worker is completely idle.
+         *
+         * Note this means we'll queue a forced update, even if
+         * the output buffer size is otherwise over the throttle
+         * output limit.
+         */
+        if (vs->force_update_offset == 0 &&
+            vs->job_update == VNC_STATE_UPDATE_NONE) {
+            return true;
+        }
+        trace_vnc_client_throttle_forced(
+            vs, vs->ioc, vs->job_update, vs->force_update_offset);
+        break;
+    }
+    return false;
+}
+
+static int vnc_update_client(VncState *vs, int has_dirty)
+{
+    VncDisplay *vd = vs->vd;
+    VncJob *job;
+    int y;
+    int height, width;
+    int n = 0;
+
     if (vs->disconnecting) {
         vnc_disconnect_finish(vs);
         return 0;
     }
 
     vs->has_dirty += has_dirty;
-    if (vs->need_update && !vs->disconnecting) {
-        VncDisplay *vd = vs->vd;
-        VncJob *job;
-        int y;
-        int height, width;
-        int n = 0;
+    if (!vnc_should_update(vs)) {
+        return 0;
+    }
 
-        if (vs->output.offset && !vs->audio_cap && !vs->force_update)
-            /* kernel send buffers are full -> drop frames to throttle */
-            return 0;
+    if (!vs->has_dirty && vs->update != VNC_STATE_UPDATE_FORCE) {
+        return 0;
+    }
 
-        if (!vs->has_dirty && !vs->audio_cap && !vs->force_update)
-            return 0;
+    /*
+     * Send screen updates to the vnc client using the server
+     * surface and server dirty map.  guest surface updates
+     * happening in parallel don't disturb us, the next pass will
+     * send them to the client.
+     */
+    job = vnc_job_new(vs);
 
-        /*
-         * Send screen updates to the vnc client using the server
-         * surface and server dirty map.  guest surface updates
-         * happening in parallel don't disturb us, the next pass will
-         * send them to the client.
-         */
-        job = vnc_job_new(vs);
+    height = pixman_image_get_height(vd->server);
+    width = pixman_image_get_width(vd->server);
 
-        height = pixman_image_get_height(vd->server);
-        width = pixman_image_get_width(vd->server);
-
-        y = 0;
-        for (;;) {
-            int x, h;
-            unsigned long x2;
-            unsigned long offset = find_next_bit((unsigned long *) &vs->dirty,
-                                                 height * VNC_DIRTY_BPL(vs),
-                                                 y * VNC_DIRTY_BPL(vs));
-            if (offset == height * VNC_DIRTY_BPL(vs)) {
-                /* no more dirty bits */
+    y = 0;
+    for (;;) {
+        int x, h;
+        unsigned long x2;
+        unsigned long offset = find_next_bit((unsigned long *) &vs->dirty,
+                                             height * VNC_DIRTY_BPL(vs),
+                                             y * VNC_DIRTY_BPL(vs));
+        if (offset == height * VNC_DIRTY_BPL(vs)) {
+            /* no more dirty bits */
+            break;
+        }
+        y = offset / VNC_DIRTY_BPL(vs);
+        x = offset % VNC_DIRTY_BPL(vs);
+        x2 = find_next_zero_bit((unsigned long *) &vs->dirty[y],
+                                VNC_DIRTY_BPL(vs), x);
+        bitmap_clear(vs->dirty[y], x, x2 - x);
+        h = find_and_clear_dirty_height(vs, y, x, x2, height);
+        x2 = MIN(x2, width / VNC_DIRTY_PIXELS_PER_BIT);
+        if (x2 > x) {
+            n += vnc_job_add_rect(job, x * VNC_DIRTY_PIXELS_PER_BIT, y,
+                                  (x2 - x) * VNC_DIRTY_PIXELS_PER_BIT, h);
+        }
+        if (!x && x2 == width / VNC_DIRTY_PIXELS_PER_BIT) {
+            y += h;
+            if (y == height) {
                 break;
             }
-            y = offset / VNC_DIRTY_BPL(vs);
-            x = offset % VNC_DIRTY_BPL(vs);
-            x2 = find_next_zero_bit((unsigned long *) &vs->dirty[y],
-                                    VNC_DIRTY_BPL(vs), x);
-            bitmap_clear(vs->dirty[y], x, x2 - x);
-            h = find_and_clear_dirty_height(vs, y, x, x2, height);
-            x2 = MIN(x2, width / VNC_DIRTY_PIXELS_PER_BIT);
-            if (x2 > x) {
-                n += vnc_job_add_rect(job, x * VNC_DIRTY_PIXELS_PER_BIT, y,
-                                      (x2 - x) * VNC_DIRTY_PIXELS_PER_BIT, h);
-            }
-            if (!x && x2 == width / VNC_DIRTY_PIXELS_PER_BIT) {
-                y += h;
-                if (y == height) {
-                    break;
-                }
-            }
         }
-
-        vnc_job_push(job);
-        if (sync) {
-            vnc_jobs_join(vs);
-        }
-        vs->force_update = 0;
-        vs->has_dirty = 0;
-        return n;
     }
 
-    if (vs->disconnecting) {
-        vnc_disconnect_finish(vs);
-    } else if (sync) {
-        vnc_jobs_join(vs);
-    }
-
-    return 0;
+    vs->job_update = vs->update;
+    vs->update = VNC_STATE_UPDATE_NONE;
+    vnc_job_push(job);
+    vs->has_dirty = 0;
+    return n;
 }
 
 /* audio */
@@ -1077,11 +1167,15 @@ static void audio_capture(void *opaque, void *buf, int size)
     VncState *vs = opaque;
 
     vnc_lock_output(vs);
-    vnc_write_u8(vs, VNC_MSG_SERVER_QEMU);
-    vnc_write_u8(vs, VNC_MSG_SERVER_QEMU_AUDIO);
-    vnc_write_u16(vs, VNC_MSG_SERVER_QEMU_AUDIO_DATA);
-    vnc_write_u32(vs, size);
-    vnc_write(vs, buf, size);
+    if (vs->output.offset < vs->throttle_output_offset) {
+        vnc_write_u8(vs, VNC_MSG_SERVER_QEMU);
+        vnc_write_u8(vs, VNC_MSG_SERVER_QEMU_AUDIO);
+        vnc_write_u16(vs, VNC_MSG_SERVER_QEMU_AUDIO_DATA);
+        vnc_write_u32(vs, size);
+        vnc_write(vs, buf, size);
+    } else {
+        trace_vnc_client_throttle_audio(vs, vs->ioc, vs->output.offset);
+    }
     vnc_unlock_output(vs);
     vnc_flush(vs);
 }
@@ -1118,9 +1212,11 @@ static void vnc_disconnect_start(VncState *vs)
     if (vs->disconnecting) {
         return;
     }
+    trace_vnc_client_disconnect_start(vs, vs->ioc);
     vnc_set_share_mode(vs, VNC_SHARE_MODE_DISCONNECTED);
     if (vs->ioc_tag) {
         g_source_remove(vs->ioc_tag);
+        vs->ioc_tag = 0;
     }
     qio_channel_close(vs->ioc, NULL);
     vs->disconnecting = TRUE;
@@ -1129,6 +1225,8 @@ static void vnc_disconnect_start(VncState *vs)
 void vnc_disconnect_finish(VncState *vs)
 {
     int i;
+
+    trace_vnc_client_disconnect_finish(vs, vs->ioc);
 
     vnc_jobs_join(vs); /* Wait encoding jobs */
 
@@ -1179,15 +1277,16 @@ void vnc_disconnect_finish(VncState *vs)
     g_free(vs);
 }
 
-ssize_t vnc_client_io_error(VncState *vs, ssize_t ret, Error **errp)
+size_t vnc_client_io_error(VncState *vs, ssize_t ret, Error **errp)
 {
     if (ret <= 0) {
         if (ret == 0) {
-            VNC_DEBUG("Closing down client sock: EOF\n");
+            trace_vnc_client_eof(vs, vs->ioc);
             vnc_disconnect_start(vs);
         } else if (ret != QIO_CHANNEL_ERR_BLOCK) {
-            VNC_DEBUG("Closing down client sock: ret %zd (%s)\n",
-                      ret, errp ? error_get_pretty(*errp) : "Unknown");
+            trace_vnc_client_io_error(vs, vs->ioc,
+                                      errp ? error_get_pretty(*errp) :
+                                      "Unknown");
             vnc_disconnect_start(vs);
         }
 
@@ -1221,9 +1320,9 @@ void vnc_client_error(VncState *vs)
  *
  * Returns the number of bytes written, which may be less than
  * the requested 'datalen' if the socket would block. Returns
- * -1 on error, and disconnects the client socket.
+ * 0 on I/O error, and disconnects the client socket.
  */
-ssize_t vnc_client_write_buf(VncState *vs, const uint8_t *data, size_t datalen)
+size_t vnc_client_write_buf(VncState *vs, const uint8_t *data, size_t datalen)
 {
     Error *err = NULL;
     ssize_t ret;
@@ -1241,12 +1340,13 @@ ssize_t vnc_client_write_buf(VncState *vs, const uint8_t *data, size_t datalen)
  * will switch the FD poll() handler back to read monitoring.
  *
  * Returns the number of bytes written, which may be less than
- * the buffered output data if the socket would block. Returns
- * -1 on error, and disconnects the client socket.
+ * the buffered output data if the socket would block.  Returns
+ * 0 on I/O error, and disconnects the client socket.
  */
-static ssize_t vnc_client_write_plain(VncState *vs)
+static size_t vnc_client_write_plain(VncState *vs)
 {
-    ssize_t ret;
+    size_t offset;
+    size_t ret;
 
 #ifdef CONFIG_VNC_SASL
     VNC_DEBUG("Write Plain: Pending output %p size %zd offset %zd. Wait SSF %d\n",
@@ -1265,7 +1365,20 @@ static ssize_t vnc_client_write_plain(VncState *vs)
     if (!ret)
         return 0;
 
+    if (ret >= vs->force_update_offset) {
+        if (vs->force_update_offset != 0) {
+            trace_vnc_client_unthrottle_forced(vs, vs->ioc);
+        }
+        vs->force_update_offset = 0;
+    } else {
+        vs->force_update_offset -= ret;
+    }
+    offset = vs->output.offset;
     buffer_advance(&vs->output, ret);
+    if (offset >= vs->throttle_output_offset &&
+        vs->output.offset < vs->throttle_output_offset) {
+        trace_vnc_client_unthrottle_incremental(vs, vs->ioc, vs->output.offset);
+    }
 
     if (vs->output.offset == 0) {
         if (vs->ioc_tag) {
@@ -1334,9 +1447,9 @@ void vnc_read_when(VncState *vs, VncReadEvent *func, size_t expecting)
  *
  * Returns the number of bytes read, which may be less than
  * the requested 'datalen' if the socket would block. Returns
- * -1 on error, and disconnects the client socket.
+ * 0 on I/O error or EOF, and disconnects the client socket.
  */
-ssize_t vnc_client_read_buf(VncState *vs, uint8_t *data, size_t datalen)
+size_t vnc_client_read_buf(VncState *vs, uint8_t *data, size_t datalen)
 {
     ssize_t ret;
     Error *err = NULL;
@@ -1352,12 +1465,13 @@ ssize_t vnc_client_read_buf(VncState *vs, uint8_t *data, size_t datalen)
  * when not using any SASL SSF encryption layers. Will read as much
  * data as possible without blocking.
  *
- * Returns the number of bytes read. Returns -1 on error, and
- * disconnects the client socket.
+ * Returns the number of bytes read, which may be less than
+ * the requested 'datalen' if the socket would block. Returns
+ * 0 on I/O error or EOF, and disconnects the client socket.
  */
-static ssize_t vnc_client_read_plain(VncState *vs)
+static size_t vnc_client_read_plain(VncState *vs)
 {
-    ssize_t ret;
+    size_t ret;
     VNC_DEBUG("Read plain %p size %zd offset %zd\n",
               vs->input.buffer, vs->input.capacity, vs->input.offset);
     buffer_reserve(&vs->input, 4096);
@@ -1383,7 +1497,7 @@ static void vnc_jobs_bh(void *opaque)
  */
 static int vnc_client_read(VncState *vs)
 {
-    ssize_t ret;
+    size_t ret;
 
 #ifdef CONFIG_VNC_SASL
     if (vs->sasl.conn && vs->sasl.runSSF)
@@ -1434,8 +1548,39 @@ gboolean vnc_client_io(QIOChannel *ioc G_GNUC_UNUSED,
 }
 
 
+/*
+ * Scale factor to apply to vs->throttle_output_offset when checking for
+ * hard limit. Worst case normal usage could be x2, if we have a complete
+ * incremental update and complete forced update in the output buffer.
+ * So x3 should be good enough, but we pick x5 to be conservative and thus
+ * (hopefully) never trigger incorrectly.
+ */
+#define VNC_THROTTLE_OUTPUT_LIMIT_SCALE 5
+
 void vnc_write(VncState *vs, const void *data, size_t len)
 {
+    if (vs->disconnecting) {
+        return;
+    }
+    /* Protection against malicious client/guest to prevent our output
+     * buffer growing without bound if client stops reading data. This
+     * should rarely trigger, because we have earlier throttling code
+     * which stops issuing framebuffer updates and drops audio data
+     * if the throttle_output_offset value is exceeded. So we only reach
+     * this higher level if a huge number of pseudo-encodings get
+     * triggered while data can't be sent on the socket.
+     *
+     * NB throttle_output_offset can be zero during early protocol
+     * handshake, or from the job thread's VncState clone
+     */
+    if (vs->throttle_output_offset != 0 &&
+        vs->output.offset > (vs->throttle_output_offset *
+                             VNC_THROTTLE_OUTPUT_LIMIT_SCALE)) {
+        trace_vnc_client_output_limit(vs, vs->ioc, vs->output.offset,
+                                      vs->throttle_output_offset);
+        vnc_disconnect_start(vs);
+        return;
+    }
     buffer_reserve(&vs->output, len);
 
     if (vs->ioc != NULL && buffer_empty(&vs->output)) {
@@ -1839,7 +1984,7 @@ static void vnc_release_modifiers(VncState *vs)
 
 static const char *code2name(int keycode)
 {
-    return QKeyCode_lookup[qemu_input_key_number_to_qcode(keycode)];
+    return QKeyCode_str(qemu_input_key_number_to_qcode(keycode));
 }
 
 static void key_event(VncState *vs, int down, uint32_t sym)
@@ -1871,14 +2016,14 @@ static void ext_key_event(VncState *vs, int down,
 static void framebuffer_update_request(VncState *vs, int incremental,
                                        int x, int y, int w, int h)
 {
-    vs->need_update = 1;
-
     if (incremental) {
-        return;
+        if (vs->update != VNC_STATE_UPDATE_FORCE) {
+            vs->update = VNC_STATE_UPDATE_INCREMENTAL;
+        }
+    } else {
+        vs->update = VNC_STATE_UPDATE_FORCE;
+        vnc_set_area_dirty(vs->dirty, vs->vd, x, y, w, h);
     }
-
-    vs->force_update = 1;
-    vnc_set_area_dirty(vs->dirty, vs->vd, x, y, w, h);
 }
 
 static void send_ext_key_event_ack(VncState *vs)
@@ -2276,6 +2421,7 @@ static int protocol_client_msg(VncState *vs, uint8_t *data, size_t len)
         break;
     }
 
+    vnc_update_throttle_offset(vs);
     vnc_read_when(vs, protocol_client_msg, 1);
     return 0;
 }
@@ -2349,6 +2495,10 @@ static int protocol_client_init(VncState *vs, uint8_t *data, size_t len)
         return 0;
     }
 
+    assert(pixman_image_get_width(vs->vd->server) < 65536 &&
+           pixman_image_get_width(vs->vd->server) >= 0);
+    assert(pixman_image_get_height(vs->vd->server) < 65536 &&
+           pixman_image_get_height(vs->vd->server) >= 0);
     vs->client_width = pixman_image_get_width(vs->vd->server);
     vs->client_height = pixman_image_get_height(vs->vd->server);
     vnc_write_u16(vs, vs->client_width);
@@ -2402,11 +2552,11 @@ static int protocol_client_auth_vnc(VncState *vs, uint8_t *data, size_t len)
     Error *err = NULL;
 
     if (!vs->vd->password) {
-        VNC_DEBUG("No password configured on server");
+        trace_vnc_auth_fail(vs, vs->auth, "password is not set", "");
         goto reject;
     }
     if (vs->vd->expires < now) {
-        VNC_DEBUG("Password is expired");
+        trace_vnc_auth_fail(vs, vs->auth, "password is expired", "");
         goto reject;
     }
 
@@ -2423,8 +2573,8 @@ static int protocol_client_auth_vnc(VncState *vs, uint8_t *data, size_t len)
         key, G_N_ELEMENTS(key),
         &err);
     if (!cipher) {
-        VNC_DEBUG("Cannot initialize cipher %s",
-                  error_get_pretty(err));
+        trace_vnc_auth_fail(vs, vs->auth, "cannot create cipher",
+                            error_get_pretty(err));
         error_free(err);
         goto reject;
     }
@@ -2434,18 +2584,18 @@ static int protocol_client_auth_vnc(VncState *vs, uint8_t *data, size_t len)
                                response,
                                VNC_AUTH_CHALLENGE_SIZE,
                                &err) < 0) {
-        VNC_DEBUG("Cannot encrypt challenge %s",
-                  error_get_pretty(err));
+        trace_vnc_auth_fail(vs, vs->auth, "cannot encrypt challenge response",
+                            error_get_pretty(err));
         error_free(err);
         goto reject;
     }
 
     /* Compare expected vs actual challenge response */
     if (memcmp(response, data, VNC_AUTH_CHALLENGE_SIZE) != 0) {
-        VNC_DEBUG("Client challenge response did not match\n");
+        trace_vnc_auth_fail(vs, vs->auth, "mis-matched challenge response", "");
         goto reject;
     } else {
-        VNC_DEBUG("Accepting VNC challenge response\n");
+        trace_vnc_auth_pass(vs, vs->auth);
         vnc_write_u32(vs, 0); /* Accept auth */
         vnc_flush(vs);
 
@@ -2484,7 +2634,7 @@ static int protocol_client_auth(VncState *vs, uint8_t *data, size_t len)
     /* We only advertise 1 auth scheme at a time, so client
      * must pick the one we sent. Verify this */
     if (data[0] != vs->auth) { /* Reject auth */
-       VNC_DEBUG("Reject auth %d because it didn't match advertized\n", (int)data[0]);
+       trace_vnc_auth_reject(vs, vs->auth, (int)data[0]);
        vnc_write_u32(vs, 1);
        if (vs->minor >= 8) {
            static const char err[] = "Authentication failed";
@@ -2493,36 +2643,33 @@ static int protocol_client_auth(VncState *vs, uint8_t *data, size_t len)
        }
        vnc_client_error(vs);
     } else { /* Accept requested auth */
-       VNC_DEBUG("Client requested auth %d\n", (int)data[0]);
+       trace_vnc_auth_start(vs, vs->auth);
        switch (vs->auth) {
        case VNC_AUTH_NONE:
-           VNC_DEBUG("Accept auth none\n");
            if (vs->minor >= 8) {
                vnc_write_u32(vs, 0); /* Accept auth completion */
                vnc_flush(vs);
            }
+           trace_vnc_auth_pass(vs, vs->auth);
            start_client_init(vs);
            break;
 
        case VNC_AUTH_VNC:
-           VNC_DEBUG("Start VNC auth\n");
            start_auth_vnc(vs);
            break;
 
        case VNC_AUTH_VENCRYPT:
-           VNC_DEBUG("Accept VeNCrypt auth\n");
            start_auth_vencrypt(vs);
            break;
 
 #ifdef CONFIG_VNC_SASL
        case VNC_AUTH_SASL:
-           VNC_DEBUG("Accept SASL auth\n");
            start_auth_sasl(vs);
            break;
 #endif /* CONFIG_VNC_SASL */
 
        default: /* Should not be possible, but just in case */
-           VNC_DEBUG("Reject auth %d server code bug\n", vs->auth);
+           trace_vnc_auth_fail(vs, vs->auth, "Unhandled auth method", "");
            vnc_write_u8(vs, 1);
            if (vs->minor >= 8) {
                static const char err[] = "Authentication failed";
@@ -2567,10 +2714,11 @@ static int protocol_version(VncState *vs, uint8_t *version, size_t len)
         vs->minor = 3;
 
     if (vs->minor == 3) {
+        trace_vnc_auth_start(vs, vs->auth);
         if (vs->auth == VNC_AUTH_NONE) {
-            VNC_DEBUG("Tell client auth none\n");
             vnc_write_u32(vs, vs->auth);
             vnc_flush(vs);
+            trace_vnc_auth_pass(vs, vs->auth);
             start_client_init(vs);
        } else if (vs->auth == VNC_AUTH_VNC) {
             VNC_DEBUG("Tell client VNC auth\n");
@@ -2578,13 +2726,13 @@ static int protocol_version(VncState *vs, uint8_t *version, size_t len)
             vnc_flush(vs);
             start_auth_vnc(vs);
        } else {
-            VNC_DEBUG("Unsupported auth %d for protocol 3.3\n", vs->auth);
+            trace_vnc_auth_fail(vs, vs->auth,
+                                "Unsupported auth method for v3.3", "");
             vnc_write_u32(vs, VNC_AUTH_INVALID);
             vnc_flush(vs);
             vnc_client_error(vs);
        }
     } else {
-        VNC_DEBUG("Telling client we support auth %d\n", vs->auth);
         vnc_write_u8(vs, 1); /* num auth */
         vnc_write_u8(vs, vs->auth);
         vnc_read_when(vs, protocol_client_auth, 1);
@@ -2624,8 +2772,8 @@ static int vnc_refresh_lossy_rect(VncDisplay *vd, int x, int y)
     int stx = x / VNC_STAT_RECT;
     int has_dirty = 0;
 
-    y = y / VNC_STAT_RECT * VNC_STAT_RECT;
-    x = x / VNC_STAT_RECT * VNC_STAT_RECT;
+    y = QEMU_ALIGN_DOWN(y, VNC_STAT_RECT);
+    x = QEMU_ALIGN_DOWN(x, VNC_STAT_RECT);
 
     QTAILQ_FOREACH(vs, &vd->clients, next) {
         int j;
@@ -2714,8 +2862,8 @@ double vnc_update_freq(VncState *vs, int x, int y, int w, int h)
     double total = 0;
     int num = 0;
 
-    x =  (x / VNC_STAT_RECT) * VNC_STAT_RECT;
-    y =  (y / VNC_STAT_RECT) * VNC_STAT_RECT;
+    x =  QEMU_ALIGN_DOWN(x, VNC_STAT_RECT);
+    y =  QEMU_ALIGN_DOWN(y, VNC_STAT_RECT);
 
     for (j = y; j <= y + h; j += VNC_STAT_RECT) {
         for (i = x; i <= x + w; i += VNC_STAT_RECT) {
@@ -2781,7 +2929,7 @@ static int vnc_refresh_server_surface(VncDisplay *vd)
             PIXMAN_FORMAT_BPP(pixman_image_get_format(vd->guest.fb));
         guest_row0 = (uint8_t *)pixman_image_get_data(vd->guest.fb);
         guest_stride = pixman_image_get_stride(vd->guest.fb);
-        guest_ll = pixman_image_get_width(vd->guest.fb) * ((guest_bpp + 7) / 8);
+        guest_ll = pixman_image_get_width(vd->guest.fb) * (DIV_ROUND_UP(guest_bpp, 8));
     }
     line_bytes = MIN(server_stride, guest_ll);
 
@@ -2860,7 +3008,7 @@ static void vnc_refresh(DisplayChangeListener *dcl)
     vnc_unlock_display(vd);
 
     QTAILQ_FOREACH_SAFE(vs, &vd->clients, next, vn) {
-        rects += vnc_update_client(vs, has_dirty, false);
+        rects += vnc_update_client(vs, has_dirty);
         /* vs might be free()ed here */
     }
 
@@ -2884,6 +3032,7 @@ static void vnc_connect(VncDisplay *vd, QIOChannelSocket *sioc,
     bool first_client = QTAILQ_EMPTY(&vd->clients);
     int i;
 
+    trace_vnc_client_connect(vs, sioc);
     vs->sioc = sioc;
     object_ref(OBJECT(vs->sioc));
     vs->ioc = QIO_CHANNEL(sioc);
@@ -2931,6 +3080,9 @@ static void vnc_connect(VncDisplay *vd, QIOChannelSocket *sioc,
     VNC_DEBUG("New client on socket %p\n", vs->sioc);
     update_displaychangelistener(&vd->dcl, VNC_REFRESH_INTERVAL_BASE);
     qio_channel_set_blocking(vs->ioc, false, NULL);
+    if (vs->ioc_tag) {
+        g_source_remove(vs->ioc_tag);
+    }
     if (websocket) {
         vs->websocket = 1;
         if (vd->tlscreds) {
@@ -3937,12 +4089,14 @@ void vnc_display_open(const char *id, Error **errp)
                                sasl, false, errp) < 0) {
         goto fail;
     }
+    trace_vnc_auth_init(vd, 0, vd->auth, vd->subauth);
 
     if (vnc_display_setup_auth(&vd->ws_auth, &vd->ws_subauth,
                                vd->tlscreds, password,
                                sasl, true, errp) < 0) {
         goto fail;
     }
+    trace_vnc_auth_init(vd, 1, vd->ws_auth, vd->ws_subauth);
 
 #ifdef CONFIG_VNC_SASL
     if ((saslErr = sasl_server_init(NULL, "qemu")) != SASL_OK) {

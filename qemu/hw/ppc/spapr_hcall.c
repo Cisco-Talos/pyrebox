@@ -472,7 +472,7 @@ static target_ulong h_resize_hpt_prepare(PowerPCCPU *cpu,
     target_ulong flags = args[0];
     int shift = args[1];
     sPAPRPendingHPT *pending = spapr->pending_hpt;
-    uint64_t current_ram_size = MACHINE(spapr)->ram_size;
+    uint64_t current_ram_size;
     int rc;
 
     if (spapr->resize_hpt == SPAPR_RESIZE_HPT_DISABLED) {
@@ -494,7 +494,7 @@ static target_ulong h_resize_hpt_prepare(PowerPCCPU *cpu,
         return H_PARAMETER;
     }
 
-    current_ram_size = pc_existing_dimms_capacity(&error_fatal);
+    current_ram_size = MACHINE(spapr)->ram_size + get_plugged_memory_size();
 
     /* We only allow the guest to allocate an HPT one order above what
      * we'd normally give them (to stop a small guest claiming a huge
@@ -686,6 +686,37 @@ static int rehash_hpt(PowerPCCPU *cpu,
     return H_SUCCESS;
 }
 
+static void do_push_sregs_to_kvm_pr(CPUState *cs, run_on_cpu_data data)
+{
+    int ret;
+
+    cpu_synchronize_state(cs);
+
+    ret = kvmppc_put_books_sregs(POWERPC_CPU(cs));
+    if (ret < 0) {
+        error_report("failed to push sregs to KVM: %s", strerror(-ret));
+        exit(1);
+    }
+}
+
+static void push_sregs_to_kvm_pr(sPAPRMachineState *spapr)
+{
+    CPUState *cs;
+
+    /*
+     * This is a hack for the benefit of KVM PR - it abuses the SDR1
+     * slot in kvm_sregs to communicate the userspace address of the
+     * HPT
+     */
+    if (!kvm_enabled() || !spapr->htab) {
+        return;
+    }
+
+    CPU_FOREACH(cs) {
+        run_on_cpu(cs, do_push_sregs_to_kvm_pr, RUN_ON_CPU_NULL);
+    }
+}
+
 static target_ulong h_resize_hpt_commit(PowerPCCPU *cpu,
                                         sPAPRMachineState *spapr,
                                         target_ulong opcode,
@@ -733,12 +764,7 @@ static target_ulong h_resize_hpt_commit(PowerPCCPU *cpu,
         spapr->htab = pending->hpt;
         spapr->htab_shift = pending->shift;
 
-        if (kvm_enabled()) {
-            /* For KVM PR, update the HPT pointer */
-            target_ulong sdr1 = (target_ulong)(uintptr_t)spapr->htab
-                | (spapr->htab_shift - 18);
-            kvmppc_update_sdr1(sdr1);
-        }
+        push_sregs_to_kvm_pr(spapr);
 
         pending->hpt = NULL; /* so it's not free()d */
     }
@@ -999,7 +1025,7 @@ static target_ulong h_register_vpa(PowerPCCPU *cpu, sPAPRMachineState *spapr,
     CPUPPCState *tenv;
     PowerPCCPU *tcpu;
 
-    tcpu = ppc_get_vcpu_by_dt_id(procno);
+    tcpu = spapr_find_cpu(procno);
     if (!tcpu) {
         return H_PARAMETER;
     }
@@ -1431,7 +1457,7 @@ static target_ulong h_signal_sys_reset(PowerPCCPU *cpu,
 
     } else {
         /* Unicast */
-        cs = CPU(ppc_get_vcpu_by_dt_id(target));
+        cs = CPU(spapr_find_cpu(target));
         if (cs) {
             run_on_cpu(cs, spapr_do_system_reset_on_cpu, RUN_ON_CPU_NULL);
             return H_SUCCESS;
@@ -1441,7 +1467,8 @@ static target_ulong h_signal_sys_reset(PowerPCCPU *cpu,
 }
 
 static uint32_t cas_check_pvr(sPAPRMachineState *spapr, PowerPCCPU *cpu,
-                              target_ulong *addr, Error **errp)
+                              target_ulong *addr, bool *raw_mode_supported,
+                              Error **errp)
 {
     bool explicit_match = false; /* Matched the CPU's real PVR */
     uint32_t max_compat = spapr->max_compat_pvr;
@@ -1481,6 +1508,8 @@ static uint32_t cas_check_pvr(sPAPRMachineState *spapr, PowerPCCPU *cpu,
         return 0;
     }
 
+    *raw_mode_supported = explicit_match;
+
     /* Parsing finished */
     trace_spapr_cas_pvr(cpu->compat_pvr, explicit_match, best_compat);
 
@@ -1499,8 +1528,9 @@ static target_ulong h_client_architecture_support(PowerPCCPU *cpu,
     sPAPROptionVector *ov1_guest, *ov5_guest, *ov5_cas_old, *ov5_updates;
     bool guest_radix;
     Error *local_err = NULL;
+    bool raw_mode_supported = false;
 
-    cas_pvr = cas_check_pvr(spapr, cpu, &addr, &local_err);
+    cas_pvr = cas_check_pvr(spapr, cpu, &addr, &raw_mode_supported, &local_err);
     if (local_err) {
         error_report_err(local_err);
         return H_HARDWARE;
@@ -1510,8 +1540,14 @@ static target_ulong h_client_architecture_support(PowerPCCPU *cpu,
     if (cpu->compat_pvr != cas_pvr) {
         ppc_set_compat_all(cas_pvr, &local_err);
         if (local_err) {
-            error_report_err(local_err);
-            return H_HARDWARE;
+            /* We fail to set compat mode (likely because running with KVM PR),
+             * but maybe we can fallback to raw mode if the guest supports it.
+             */
+            if (!raw_mode_supported) {
+                error_report_err(local_err);
+                return H_HARDWARE;
+            }
+            local_err = NULL;
         }
     }
 
@@ -1549,21 +1585,12 @@ static target_ulong h_client_architecture_support(PowerPCCPU *cpu,
         }
 
         if (spapr->htab_shift < maxshift) {
-            CPUState *cs;
-
             /* Guest doesn't know about HPT resizing, so we
              * pre-emptively resize for the maximum permitted RAM.  At
              * the point this is called, nothing should have been
              * entered into the existing HPT */
             spapr_reallocate_hpt(spapr, maxshift, &error_fatal);
-            CPU_FOREACH(cs) {
-                if (kvm_enabled()) {
-                    /* For KVM PR, update the HPT pointer */
-                    target_ulong sdr1 = (target_ulong)(uintptr_t)spapr->htab
-                        | (spapr->htab_shift - 18);
-                    kvmppc_update_sdr1(sdr1);
-                }
-            }
+            push_sregs_to_kvm_pr(spapr);
         }
     }
 
@@ -1575,6 +1602,13 @@ static target_ulong h_client_architecture_support(PowerPCCPU *cpu,
      * to worry about this for now.
      */
     ov5_cas_old = spapr_ovec_clone(spapr->ov5_cas);
+
+    /* also clear the radix/hash bit from the current ov5_cas bits to
+     * be in sync with the newly ov5 bits. Else the radix bit will be
+     * seen as being removed and this will generate a reset loop
+     */
+    spapr_ovec_clear(ov5_cas_old, OV5_MMU_RADIX_300);
+
     /* full range of negotiated ov5 capabilities */
     spapr_ovec_intersect(spapr->ov5_cas, spapr->ov5, ov5_guest);
     spapr_ovec_cleanup(ov5_guest);
@@ -1602,6 +1636,12 @@ static target_ulong h_client_architecture_support(PowerPCCPU *cpu,
     spapr->cas_legacy_guest_workaround = !spapr_ovec_test(ov1_guest,
                                                           OV1_PPC_3_00);
     if (!spapr->cas_reboot) {
+        /* If ppc_spapr_reset() did not set up a HPT but one is necessary
+         * (because the guest isn't going to use radix) then set it up here. */
+        if ((spapr->patb_entry & PATBE1_GR) && !guest_radix) {
+            /* legacy hash or new hash: */
+            spapr_setup_hpt_and_vrma(spapr);
+        }
         spapr->cas_reboot =
             (spapr_h_cas_compose_response(spapr, args[1], args[2],
                                           ov5_updates) != 0);
@@ -1610,14 +1650,62 @@ static target_ulong h_client_architecture_support(PowerPCCPU *cpu,
 
     if (spapr->cas_reboot) {
         qemu_system_reset_request(SHUTDOWN_CAUSE_GUEST_RESET);
-    } else {
-        /* If ppc_spapr_reset() did not set up a HPT but one is necessary
-         * (because the guest isn't going to use radix) then set it up here. */
-        if ((spapr->patb_entry & PATBE1_GR) && !guest_radix) {
-            /* legacy hash or new hash: */
-            spapr_setup_hpt_and_vrma(spapr);
-        }
     }
+
+    return H_SUCCESS;
+}
+
+static target_ulong h_get_cpu_characteristics(PowerPCCPU *cpu,
+                                              sPAPRMachineState *spapr,
+                                              target_ulong opcode,
+                                              target_ulong *args)
+{
+    uint64_t characteristics = H_CPU_CHAR_HON_BRANCH_HINTS &
+                               ~H_CPU_CHAR_THR_RECONF_TRIG;
+    uint64_t behaviour = H_CPU_BEHAV_FAVOUR_SECURITY;
+    uint8_t safe_cache = spapr_get_cap(spapr, SPAPR_CAP_CFPC);
+    uint8_t safe_bounds_check = spapr_get_cap(spapr, SPAPR_CAP_SBBC);
+    uint8_t safe_indirect_branch = spapr_get_cap(spapr, SPAPR_CAP_IBS);
+
+    switch (safe_cache) {
+    case SPAPR_CAP_WORKAROUND:
+        characteristics |= H_CPU_CHAR_L1D_FLUSH_ORI30;
+        characteristics |= H_CPU_CHAR_L1D_FLUSH_TRIG2;
+        characteristics |= H_CPU_CHAR_L1D_THREAD_PRIV;
+        behaviour |= H_CPU_BEHAV_L1D_FLUSH_PR;
+        break;
+    case SPAPR_CAP_FIXED:
+        break;
+    default: /* broken */
+        assert(safe_cache == SPAPR_CAP_BROKEN);
+        behaviour |= H_CPU_BEHAV_L1D_FLUSH_PR;
+        break;
+    }
+
+    switch (safe_bounds_check) {
+    case SPAPR_CAP_WORKAROUND:
+        characteristics |= H_CPU_CHAR_SPEC_BAR_ORI31;
+        behaviour |= H_CPU_BEHAV_BNDS_CHK_SPEC_BAR;
+        break;
+    case SPAPR_CAP_FIXED:
+        break;
+    default: /* broken */
+        assert(safe_bounds_check == SPAPR_CAP_BROKEN);
+        behaviour |= H_CPU_BEHAV_BNDS_CHK_SPEC_BAR;
+        break;
+    }
+
+    switch (safe_indirect_branch) {
+    case SPAPR_CAP_FIXED:
+        characteristics |= H_CPU_CHAR_BCCTRL_SERIALISED;
+        break;
+    default: /* broken */
+        assert(safe_indirect_branch == SPAPR_CAP_BROKEN);
+        break;
+    }
+
+    args[0] = characteristics;
+    args[1] = behaviour;
 
     return H_SUCCESS;
 }
@@ -1700,6 +1788,10 @@ static void hypercall_register_types(void)
     spapr_register_hypercall(H_CLEAN_SLB, h_clean_slb);
     spapr_register_hypercall(H_INVALIDATE_PID, h_invalidate_pid);
     spapr_register_hypercall(H_REGISTER_PROC_TBL, h_register_process_table);
+
+    /* hcall-get-cpu-characteristics */
+    spapr_register_hypercall(H_GET_CPU_CHARACTERISTICS,
+                             h_get_cpu_characteristics);
 
     /* "debugger" hcalls (also used by SLOF). Note: We do -not- differenciate
      * here between the "CI" and the "CACHE" variants, they will use whatever

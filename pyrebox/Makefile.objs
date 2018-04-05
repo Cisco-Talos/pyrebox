@@ -21,7 +21,7 @@
 #   
 #-------------------------------------------------------------------------------
 
-PYTHON_CFLAGS = -I/usr/include/python2.7 -I/usr/include/python2.7 -fno-strict-aliasing -DNDEBUG -fwrapv  -fstack-protector --param=ssp-buffer-size=4
+PYTHON_CFLAGS = -I/usr/include/python2.7 -I/usr/include/python2.7 -fno-strict-aliasing -fwrapv  -fstack-protector --param=ssp-buffer-size=4 #-DNDEBUG 
 PYTHON_LIBS = -L/usr/lib/python2.7/config -lpthread -ldl -lutil -lm -lpython2.7 -Wl,-O1 -Wl,-Bsymbolic-functions -Xlinker -export-dynamic
 
 obj-y += process_mgr.o

@@ -20,6 +20,7 @@
 
 #include "qemu/osdep.h"
 #include "cpu.h"
+#include "internal.h"
 #include "exec/address-spaces.h"
 #include "exec/helper-proto.h"
 #include "exec/exec-all.h"
@@ -55,6 +56,17 @@ void tlb_fill(CPUState *cs, target_ulong addr, MMUAccessType access_type,
 #else
 #define HELPER_LOG(x...)
 #endif
+
+static inline bool psw_key_valid(CPUS390XState *env, uint8_t psw_key)
+{
+    uint16_t pkm = env->cregs[3] >> 16;
+
+    if (env->psw.mask & PSW_MASK_PSTATE) {
+        /* PSW key has range 0..15, it is valid if the bit is 1 in the PKM */
+        return pkm & (0x80 >> psw_key);
+    }
+    return true;
+}
 
 /* Reduce the length so that addr + len doesn't cross a page boundary.  */
 static inline uint32_t adj_len_to_page(uint32_t len, uint64_t addr)
@@ -108,20 +120,6 @@ static inline void cpu_stsize_data_ra(CPUS390XState *env, uint64_t addr,
     default:
         abort();
     }
-}
-
-static inline uint64_t wrap_address(CPUS390XState *env, uint64_t a)
-{
-    if (!(env->psw.mask & PSW_MASK_64)) {
-        if (!(env->psw.mask & PSW_MASK_32)) {
-            /* 24-Bit mode */
-            a &= 0x00ffffff;
-        } else {
-            /* 31-Bit mode */
-            a &= 0x7fffffff;
-        }
-    }
-    return a;
 }
 
 static void fast_memset(CPUS390XState *env, uint64_t dest, uint8_t byte,
@@ -1363,8 +1361,8 @@ uint32_t HELPER(trXX)(CPUS390XState *env, uint32_t r1, uint32_t r2,
     return cc;
 }
 
-void HELPER(cdsg)(CPUS390XState *env, uint64_t addr,
-                  uint32_t r1, uint32_t r3)
+static void do_cdsg(CPUS390XState *env, uint64_t addr,
+                    uint32_t r1, uint32_t r3, bool parallel)
 {
     uintptr_t ra = GETPC();
     Int128 cmpv = int128_make128(env->regs[r1 + 1], env->regs[r1]);
@@ -1372,7 +1370,7 @@ void HELPER(cdsg)(CPUS390XState *env, uint64_t addr,
     Int128 oldv;
     bool fail;
 
-    if (parallel_cpus) {
+    if (parallel) {
 #ifndef CONFIG_ATOMIC128
         cpu_loop_exit_atomic(ENV_GET_CPU(env), ra);
 #else
@@ -1404,7 +1402,20 @@ void HELPER(cdsg)(CPUS390XState *env, uint64_t addr,
     env->regs[r1 + 1] = int128_getlo(oldv);
 }
 
-uint32_t HELPER(csst)(CPUS390XState *env, uint32_t r3, uint64_t a1, uint64_t a2)
+void HELPER(cdsg)(CPUS390XState *env, uint64_t addr,
+                  uint32_t r1, uint32_t r3)
+{
+    do_cdsg(env, addr, r1, r3, false);
+}
+
+void HELPER(cdsg_parallel)(CPUS390XState *env, uint64_t addr,
+                           uint32_t r1, uint32_t r3)
+{
+    do_cdsg(env, addr, r1, r3, true);
+}
+
+static uint32_t do_csst(CPUS390XState *env, uint32_t r3, uint64_t a1,
+                        uint64_t a2, bool parallel)
 {
 #if !defined(CONFIG_USER_ONLY) || defined(CONFIG_ATOMIC128)
     uint32_t mem_idx = cpu_mmu_index(env, false);
@@ -1440,7 +1451,7 @@ uint32_t HELPER(csst)(CPUS390XState *env, uint32_t r3, uint64_t a1, uint64_t a2)
        the complete operation is not.  Therefore we do not need to assert serial
        context in order to implement this.  That said, restart early if we can't
        support either operation that is supposed to be atomic.  */
-    if (parallel_cpus) {
+    if (parallel) {
         int mask = 0;
 #if !defined(CONFIG_ATOMIC64)
         mask = -8;
@@ -1464,7 +1475,7 @@ uint32_t HELPER(csst)(CPUS390XState *env, uint32_t r3, uint64_t a1, uint64_t a2)
             uint32_t cv = env->regs[r3];
             uint32_t ov;
 
-            if (parallel_cpus) {
+            if (parallel) {
 #ifdef CONFIG_USER_ONLY
                 uint32_t *haddr = g2h(a1);
                 ov = atomic_cmpxchg__nocheck(haddr, cv, nv);
@@ -1487,7 +1498,7 @@ uint32_t HELPER(csst)(CPUS390XState *env, uint32_t r3, uint64_t a1, uint64_t a2)
             uint64_t cv = env->regs[r3];
             uint64_t ov;
 
-            if (parallel_cpus) {
+            if (parallel) {
 #ifdef CONFIG_ATOMIC64
 # ifdef CONFIG_USER_ONLY
                 uint64_t *haddr = g2h(a1);
@@ -1497,7 +1508,7 @@ uint32_t HELPER(csst)(CPUS390XState *env, uint32_t r3, uint64_t a1, uint64_t a2)
                 ov = helper_atomic_cmpxchgq_be_mmu(env, a1, cv, nv, oi, ra);
 # endif
 #else
-                /* Note that we asserted !parallel_cpus above.  */
+                /* Note that we asserted !parallel above.  */
                 g_assert_not_reached();
 #endif
             } else {
@@ -1517,13 +1528,13 @@ uint32_t HELPER(csst)(CPUS390XState *env, uint32_t r3, uint64_t a1, uint64_t a2)
             Int128 cv = int128_make128(env->regs[r3 + 1], env->regs[r3]);
             Int128 ov;
 
-            if (parallel_cpus) {
+            if (parallel) {
 #ifdef CONFIG_ATOMIC128
                 TCGMemOpIdx oi = make_memop_idx(MO_TEQ | MO_ALIGN_16, mem_idx);
                 ov = helper_atomic_cmpxchgo_be_mmu(env, a1, cv, nv, oi, ra);
                 cc = !int128_eq(ov, cv);
 #else
-                /* Note that we asserted !parallel_cpus above.  */
+                /* Note that we asserted !parallel above.  */
                 g_assert_not_reached();
 #endif
             } else {
@@ -1567,13 +1578,13 @@ uint32_t HELPER(csst)(CPUS390XState *env, uint32_t r3, uint64_t a1, uint64_t a2)
             cpu_stq_data_ra(env, a2, svh, ra);
             break;
         case 4:
-            if (parallel_cpus) {
+            if (parallel) {
 #ifdef CONFIG_ATOMIC128
                 TCGMemOpIdx oi = make_memop_idx(MO_TEQ | MO_ALIGN_16, mem_idx);
                 Int128 sv = int128_make128(svl, svh);
                 helper_atomic_sto_be_mmu(env, a2, sv, oi, ra);
 #else
-                /* Note that we asserted !parallel_cpus above.  */
+                /* Note that we asserted !parallel above.  */
                 g_assert_not_reached();
 #endif
             } else {
@@ -1592,6 +1603,17 @@ uint32_t HELPER(csst)(CPUS390XState *env, uint32_t r3, uint64_t a1, uint64_t a2)
     cpu_restore_state(ENV_GET_CPU(env), ra);
     program_interrupt(env, PGM_SPECIFICATION, 6);
     g_assert_not_reached();
+}
+
+uint32_t HELPER(csst)(CPUS390XState *env, uint32_t r3, uint64_t a1, uint64_t a2)
+{
+    return do_csst(env, r3, a1, a2, false);
+}
+
+uint32_t HELPER(csst_parallel)(CPUS390XState *env, uint32_t r3, uint64_t a1,
+                               uint64_t a2)
+{
+    return do_csst(env, r3, a1, a2, true);
 }
 
 #if !defined(CONFIG_USER_ONLY)
@@ -1689,28 +1711,12 @@ void HELPER(stctl)(CPUS390XState *env, uint32_t r1, uint64_t a2, uint32_t r3)
 uint32_t HELPER(testblock)(CPUS390XState *env, uint64_t real_addr)
 {
     uintptr_t ra = GETPC();
-    CPUState *cs = CPU(s390_env_get_cpu(env));
-    uint64_t abs_addr;
     int i;
 
-    real_addr = wrap_address(env, real_addr);
-    abs_addr = mmu_real2abs(env, real_addr) & TARGET_PAGE_MASK;
-    if (!address_space_access_valid(&address_space_memory, abs_addr,
-                                    TARGET_PAGE_SIZE, true)) {
-        cpu_restore_state(cs, ra);
-        program_interrupt(env, PGM_ADDRESSING, 4);
-        return 1;
-    }
-
-    /* Check low-address protection */
-    if ((env->cregs[0] & CR0_LOWPROT) && real_addr < 0x2000) {
-        cpu_restore_state(cs, ra);
-        program_interrupt(env, PGM_PROTECTION, 4);
-        return 1;
-    }
+    real_addr = wrap_address(env, real_addr) & TARGET_PAGE_MASK;
 
     for (i = 0; i < TARGET_PAGE_SIZE; i += 8) {
-        stq_phys(cs->as, abs_addr + i, 0);
+        cpu_stq_real_ra(env, real_addr + i, 0, ra);
     }
 
     return 0;
@@ -1885,11 +1891,11 @@ void HELPER(idte)(CPUS390XState *env, uint64_t r1, uint64_t r2, uint32_t m4)
         for (i = 0; i < entries; i++) {
             /* addresses are not wrapped in 24/31bit mode but table index is */
             raddr = table + ((index + i) & 0x7ff) * sizeof(entry);
-            entry = ldq_phys(cs->as, raddr);
+            entry = cpu_ldq_real_ra(env, raddr, ra);
             if (!(entry & _REGION_ENTRY_INV)) {
                 /* we are allowed to not store if already invalid */
                 entry |= _REGION_ENTRY_INV;
-                stq_phys(cs->as, raddr, entry);
+                cpu_stq_real_ra(env, raddr, entry, ra);
             }
         }
     }
@@ -1907,6 +1913,7 @@ void HELPER(ipte)(CPUS390XState *env, uint64_t pto, uint64_t vaddr,
                   uint32_t m4)
 {
     CPUState *cs = CPU(s390_env_get_cpu(env));
+    const uintptr_t ra = GETPC();
     uint64_t page = vaddr & TARGET_PAGE_MASK;
     uint64_t pte_addr, pte;
 
@@ -1915,9 +1922,9 @@ void HELPER(ipte)(CPUS390XState *env, uint64_t pto, uint64_t vaddr,
     pte_addr += (vaddr & VADDR_PX) >> 9;
 
     /* Mark the page table entry as invalid */
-    pte = ldq_phys(cs->as, pte_addr);
+    pte = cpu_ldq_real_ra(env, pte_addr, ra);
     pte |= _PAGE_INVALID;
-    stq_phys(cs->as, pte_addr, pte);
+    cpu_stq_real_ra(env, pte_addr, pte, ra);
 
     /* XXX we exploit the fact that Linux passes the exact virtual
        address here - it's not obliged to! */
@@ -1961,24 +1968,18 @@ void HELPER(purge)(CPUS390XState *env)
 /* load using real address */
 uint64_t HELPER(lura)(CPUS390XState *env, uint64_t addr)
 {
-    CPUState *cs = CPU(s390_env_get_cpu(env));
-
-    return (uint32_t)ldl_phys(cs->as, wrap_address(env, addr));
+    return cpu_ldl_real_ra(env, wrap_address(env, addr), GETPC());
 }
 
 uint64_t HELPER(lurag)(CPUS390XState *env, uint64_t addr)
 {
-    CPUState *cs = CPU(s390_env_get_cpu(env));
-
-    return ldq_phys(cs->as, wrap_address(env, addr));
+    return cpu_ldq_real_ra(env, wrap_address(env, addr), GETPC());
 }
 
 /* store using real address */
 void HELPER(stura)(CPUS390XState *env, uint64_t addr, uint64_t v1)
 {
-    CPUState *cs = CPU(s390_env_get_cpu(env));
-
-    stl_phys(cs->as, wrap_address(env, addr), (uint32_t)v1);
+    cpu_stl_real_ra(env, wrap_address(env, addr), (uint32_t)v1, GETPC());
 
     if ((env->psw.mask & PSW_MASK_PER) &&
         (env->cregs[9] & PER_CR9_EVENT_STORE) &&
@@ -1991,9 +1992,7 @@ void HELPER(stura)(CPUS390XState *env, uint64_t addr, uint64_t v1)
 
 void HELPER(sturg)(CPUS390XState *env, uint64_t addr, uint64_t v1)
 {
-    CPUState *cs = CPU(s390_env_get_cpu(env));
-
-    stq_phys(cs->as, wrap_address(env, addr), v1);
+    cpu_stq_real_ra(env, wrap_address(env, addr), v1, GETPC());
 
     if ((env->psw.mask & PSW_MASK_PER) &&
         (env->cregs[9] & PER_CR9_EVENT_STORE) &&
@@ -2036,12 +2035,12 @@ uint64_t HELPER(lra)(CPUS390XState *env, uint64_t addr)
 #endif
 
 /* load pair from quadword */
-uint64_t HELPER(lpq)(CPUS390XState *env, uint64_t addr)
+static uint64_t do_lpq(CPUS390XState *env, uint64_t addr, bool parallel)
 {
     uintptr_t ra = GETPC();
     uint64_t hi, lo;
 
-    if (parallel_cpus) {
+    if (parallel) {
 #ifndef CONFIG_ATOMIC128
         cpu_loop_exit_atomic(ENV_GET_CPU(env), ra);
 #else
@@ -2062,13 +2061,23 @@ uint64_t HELPER(lpq)(CPUS390XState *env, uint64_t addr)
     return hi;
 }
 
+uint64_t HELPER(lpq)(CPUS390XState *env, uint64_t addr)
+{
+    return do_lpq(env, addr, false);
+}
+
+uint64_t HELPER(lpq_parallel)(CPUS390XState *env, uint64_t addr)
+{
+    return do_lpq(env, addr, true);
+}
+
 /* store pair to quadword */
-void HELPER(stpq)(CPUS390XState *env, uint64_t addr,
-                  uint64_t low, uint64_t high)
+static void do_stpq(CPUS390XState *env, uint64_t addr,
+                    uint64_t low, uint64_t high, bool parallel)
 {
     uintptr_t ra = GETPC();
 
-    if (parallel_cpus) {
+    if (parallel) {
 #ifndef CONFIG_ATOMIC128
         cpu_loop_exit_atomic(ENV_GET_CPU(env), ra);
 #else
@@ -2084,6 +2093,18 @@ void HELPER(stpq)(CPUS390XState *env, uint64_t addr,
         cpu_stq_data_ra(env, addr + 0, high, ra);
         cpu_stq_data_ra(env, addr + 8, low, ra);
     }
+}
+
+void HELPER(stpq)(CPUS390XState *env, uint64_t addr,
+                  uint64_t low, uint64_t high)
+{
+    do_stpq(env, addr, low, high, false);
+}
+
+void HELPER(stpq_parallel)(CPUS390XState *env, uint64_t addr,
+                           uint64_t low, uint64_t high)
+{
+    do_stpq(env, addr, low, high, true);
 }
 
 /* Execute instruction.  This instruction executes an insn modified with

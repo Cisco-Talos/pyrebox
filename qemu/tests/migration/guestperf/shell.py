@@ -18,12 +18,15 @@
 #
 
 
-import argparse
-import fnmatch
 import os
 import os.path
-import platform
 import sys
+sys.path.append(os.path.join(os.path.dirname(__file__),
+                             '..', '..', '..', 'scripts'))
+import argparse
+import fnmatch
+import platform
+import logging
 
 from guestperf.hardware import Hardware
 from guestperf.engine import Engine
@@ -145,6 +148,10 @@ class Shell(BaseShell):
 
     def run(self, argv):
         args = self._parser.parse_args(argv)
+        logging.basicConfig(level=(logging.DEBUG if args.debug else
+                                   logging.INFO if args.verbose else
+                                   logging.WARN))
+
 
         engine = self.get_engine(args)
         hardware = self.get_hardware(args)
@@ -177,6 +184,10 @@ class BatchShell(BaseShell):
 
     def run(self, argv):
         args = self._parser.parse_args(argv)
+        logging.basicConfig(level=(logging.DEBUG if args.debug else
+                                   logging.INFO if args.verbose else
+                                   logging.WARN))
+
 
         engine = self.get_engine(args)
         hardware = self.get_hardware(args)
@@ -229,6 +240,10 @@ class PlotShell(object):
 
     def run(self, argv):
         args = self._parser.parse_args(argv)
+        logging.basicConfig(level=(logging.DEBUG if args.debug else
+                                   logging.INFO if args.verbose else
+                                   logging.WARN))
+
 
         if len(args.reports) == 0:
             print >>sys.stderr, "At least one report required"

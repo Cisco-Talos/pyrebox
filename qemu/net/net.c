@@ -100,7 +100,8 @@ static int get_str_sep(char *buf, int buf_size, const char **pp, int sep)
     return 0;
 }
 
-int parse_host_port(struct sockaddr_in *saddr, const char *str)
+int parse_host_port(struct sockaddr_in *saddr, const char *str,
+                    Error **errp)
 {
     char buf[512];
     struct hostent *he;
@@ -108,24 +109,35 @@ int parse_host_port(struct sockaddr_in *saddr, const char *str)
     int port;
 
     p = str;
-    if (get_str_sep(buf, sizeof(buf), &p, ':') < 0)
+    if (get_str_sep(buf, sizeof(buf), &p, ':') < 0) {
+        error_setg(errp, "host address '%s' doesn't contain ':' "
+                   "separating host from port", str);
         return -1;
+    }
     saddr->sin_family = AF_INET;
     if (buf[0] == '\0') {
         saddr->sin_addr.s_addr = 0;
     } else {
         if (qemu_isdigit(buf[0])) {
-            if (!inet_aton(buf, &saddr->sin_addr))
+            if (!inet_aton(buf, &saddr->sin_addr)) {
+                error_setg(errp, "host address '%s' is not a valid "
+                           "IPv4 address", buf);
                 return -1;
+            }
         } else {
-            if ((he = gethostbyname(buf)) == NULL)
+            he = gethostbyname(buf);
+            if (he == NULL) {
+                error_setg(errp, "can't resolve host address '%s'", buf);
                 return - 1;
+            }
             saddr->sin_addr = *(struct in_addr *)he->h_addr;
         }
     }
     port = strtol(p, (char **)&r, 0);
-    if (r == p)
+    if (r == p) {
+        error_setg(errp, "port number '%s' is invalid", p);
         return -1;
+    }
     saddr->sin_port = htons(port);
     return 0;
 }
@@ -1064,7 +1076,7 @@ static int net_client_init1(const void *object, bool is_netdev, Error **errp)
         /* FIXME drop when all init functions store an Error */
         if (errp && !*errp) {
             error_setg(errp, QERR_DEVICE_INIT_FAILED,
-                       NetClientDriver_lookup[netdev->type]);
+                       NetClientDriver_str(netdev->type));
         }
         return -1;
     }
@@ -1288,7 +1300,7 @@ void print_net_client(Monitor *mon, NetClientState *nc)
 
     monitor_printf(mon, "%s: index=%d,type=%s,%s\n", nc->name,
                    nc->queue_index,
-                   NetClientDriver_lookup[nc->info->type],
+                   NetClientDriver_str(nc->info->type),
                    nc->info_str);
     if (!QTAILQ_EMPTY(&nc->filters)) {
         monitor_printf(mon, "filters:\n");
@@ -1481,9 +1493,10 @@ void net_check_clients(void)
 
     QTAILQ_FOREACH(nc, &net_clients, next) {
         if (!nc->peer) {
-            fprintf(stderr, "Warning: %s %s has no peer\n",
-                    nc->info->type == NET_CLIENT_DRIVER_NIC ?
-                    "nic" : "netdev", nc->name);
+            warn_report("%s %s has no peer",
+                        nc->info->type == NET_CLIENT_DRIVER_NIC
+                        ? "nic" : "netdev",
+                        nc->name);
         }
     }
 
@@ -1494,10 +1507,10 @@ void net_check_clients(void)
     for (i = 0; i < MAX_NICS; i++) {
         NICInfo *nd = &nd_table[i];
         if (nd->used && !nd->instantiated) {
-            fprintf(stderr, "Warning: requested NIC (%s, model %s) "
-                    "was not created (not supported by this machine?)\n",
-                    nd->name ? nd->name : "anonymous",
-                    nd->model ? nd->model : "unspecified");
+            warn_report("requested NIC (%s, model %s) "
+                        "was not created (not supported by this machine?)",
+                        nd->name ? nd->name : "anonymous",
+                        nd->model ? nd->model : "unspecified");
         }
     }
 }

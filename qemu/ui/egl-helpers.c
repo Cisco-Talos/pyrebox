@@ -19,6 +19,7 @@
 #include <dirent.h>
 
 #include "qemu/error-report.h"
+#include "ui/console.h"
 #include "ui/egl-helpers.h"
 
 EGLDisplay *qemu_egl_display;
@@ -26,16 +27,23 @@ EGLConfig qemu_egl_config;
 
 /* ------------------------------------------------------------------ */
 
+static void egl_fb_delete_texture(egl_fb *fb)
+{
+    if (!fb->delete_texture) {
+        return;
+    }
+
+    glDeleteTextures(1, &fb->texture);
+    fb->delete_texture = false;
+}
+
 void egl_fb_destroy(egl_fb *fb)
 {
     if (!fb->framebuffer) {
         return;
     }
 
-    if (fb->delete_texture) {
-        glDeleteTextures(1, &fb->texture);
-        fb->delete_texture = false;
-    }
+    egl_fb_delete_texture(fb);
     glDeleteFramebuffers(1, &fb->framebuffer);
 
     fb->width = 0;
@@ -51,11 +59,15 @@ void egl_fb_setup_default(egl_fb *fb, int width, int height)
     fb->framebuffer = 0; /* default framebuffer */
 }
 
-void egl_fb_create_for_tex(egl_fb *fb, int width, int height, GLuint texture)
+void egl_fb_setup_for_tex(egl_fb *fb, int width, int height,
+                          GLuint texture, bool delete)
 {
+    egl_fb_delete_texture(fb);
+
     fb->width = width;
     fb->height = height;
     fb->texture = texture;
+    fb->delete_texture = delete;
     if (!fb->framebuffer) {
         glGenFramebuffers(1, &fb->framebuffer);
     }
@@ -65,7 +77,7 @@ void egl_fb_create_for_tex(egl_fb *fb, int width, int height, GLuint texture)
                               GL_TEXTURE_2D, fb->texture, 0);
 }
 
-void egl_fb_create_new_tex(egl_fb *fb, int width, int height)
+void egl_fb_setup_new_tex(egl_fb *fb, int width, int height)
 {
     GLuint texture;
 
@@ -74,8 +86,7 @@ void egl_fb_create_new_tex(egl_fb *fb, int width, int height)
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height,
                  0, GL_BGRA, GL_UNSIGNED_BYTE, 0);
 
-    egl_fb_create_for_tex(fb, width, height, texture);
-    fb->delete_texture = true;
+    egl_fb_setup_for_tex(fb, width, height, texture, true);
 }
 
 void egl_fb_blit(egl_fb *dst, egl_fb *src, bool flip)
@@ -98,6 +109,33 @@ void egl_fb_read(void *dst, egl_fb *src)
     glReadBuffer(GL_COLOR_ATTACHMENT0_EXT);
     glReadPixels(0, 0, src->width, src->height,
                  GL_BGRA, GL_UNSIGNED_BYTE, dst);
+}
+
+void egl_texture_blit(QemuGLShader *gls, egl_fb *dst, egl_fb *src, bool flip)
+{
+    glBindFramebuffer(GL_FRAMEBUFFER_EXT, dst->framebuffer);
+    glViewport(0, 0, dst->width, dst->height);
+    glEnable(GL_TEXTURE_2D);
+    glBindTexture(GL_TEXTURE_2D, src->texture);
+    qemu_gl_run_texture_blit(gls, flip);
+}
+
+void egl_texture_blend(QemuGLShader *gls, egl_fb *dst, egl_fb *src, bool flip,
+                       int x, int y)
+{
+    glBindFramebuffer(GL_FRAMEBUFFER_EXT, dst->framebuffer);
+    if (flip) {
+        glViewport(x, y, src->width, src->height);
+    } else {
+        glViewport(x, dst->height - src->height - y,
+                   src->width, src->height);
+    }
+    glEnable(GL_TEXTURE_2D);
+    glBindTexture(GL_TEXTURE_2D, src->texture);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    qemu_gl_run_texture_blit(gls, flip);
+    glDisable(GL_BLEND);
 }
 
 /* ---------------------------------------------------------------------- */
@@ -229,6 +267,51 @@ int egl_get_fd_for_texture(uint32_t tex_id, EGLint *stride, EGLint *fourcc)
     eglDestroyImageKHR(qemu_egl_display, image);
 
     return fd;
+}
+
+void egl_dmabuf_import_texture(QemuDmaBuf *dmabuf)
+{
+    EGLImageKHR image = EGL_NO_IMAGE_KHR;
+    EGLint attrs[] = {
+        EGL_DMA_BUF_PLANE0_FD_EXT,      dmabuf->fd,
+        EGL_DMA_BUF_PLANE0_PITCH_EXT,   dmabuf->stride,
+        EGL_DMA_BUF_PLANE0_OFFSET_EXT,  0,
+        EGL_WIDTH,                      dmabuf->width,
+        EGL_HEIGHT,                     dmabuf->height,
+        EGL_LINUX_DRM_FOURCC_EXT,       dmabuf->fourcc,
+        EGL_NONE, /* end of list */
+    };
+
+    if (dmabuf->texture != 0) {
+        return;
+    }
+
+    image = eglCreateImageKHR(qemu_egl_display,
+                              EGL_NO_CONTEXT,
+                              EGL_LINUX_DMA_BUF_EXT,
+                              NULL, attrs);
+    if (image == EGL_NO_IMAGE_KHR) {
+        error_report("eglCreateImageKHR failed");
+        return;
+    }
+
+    glGenTextures(1, &dmabuf->texture);
+    glBindTexture(GL_TEXTURE_2D, dmabuf->texture);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+    glEGLImageTargetTexture2DOES(GL_TEXTURE_2D, (GLeglImageOES)image);
+    eglDestroyImageKHR(qemu_egl_display, image);
+}
+
+void egl_dmabuf_release_texture(QemuDmaBuf *dmabuf)
+{
+    if (dmabuf->texture == 0) {
+        return;
+    }
+
+    glDeleteTextures(1, &dmabuf->texture);
+    dmabuf->texture = 0;
 }
 
 #endif /* CONFIG_OPENGL_DMABUF */

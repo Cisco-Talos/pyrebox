@@ -60,6 +60,39 @@ static inline bool excp_is_internal(int excp)
 FIELD(V7M_CONTROL, NPRIV, 0, 1)
 FIELD(V7M_CONTROL, SPSEL, 1, 1)
 FIELD(V7M_CONTROL, FPCA, 2, 1)
+FIELD(V7M_CONTROL, SFPA, 3, 1)
+
+/* Bit definitions for v7M exception return payload */
+FIELD(V7M_EXCRET, ES, 0, 1)
+FIELD(V7M_EXCRET, RES0, 1, 1)
+FIELD(V7M_EXCRET, SPSEL, 2, 1)
+FIELD(V7M_EXCRET, MODE, 3, 1)
+FIELD(V7M_EXCRET, FTYPE, 4, 1)
+FIELD(V7M_EXCRET, DCRS, 5, 1)
+FIELD(V7M_EXCRET, S, 6, 1)
+FIELD(V7M_EXCRET, RES1, 7, 25) /* including the must-be-1 prefix */
+
+/* Minimum value which is a magic number for exception return */
+#define EXC_RETURN_MIN_MAGIC 0xff000000
+/* Minimum number which is a magic number for function or exception return
+ * when using v8M security extension
+ */
+#define FNC_RETURN_MIN_MAGIC 0xfefffffe
+
+/* We use a few fake FSR values for internal purposes in M profile.
+ * M profile cores don't have A/R format FSRs, but currently our
+ * get_phys_addr() code assumes A/R profile and reports failures via
+ * an A/R format FSR value. We then translate that into the proper
+ * M profile exception and FSR status bit in arm_v7m_cpu_do_interrupt().
+ * Mostly the FSR values we use for this are those defined for v7PMSA,
+ * since we share some of that codepath. A few kinds of fault are
+ * only for M profile and have no A/R equivalent, though, so we have
+ * to pick a value from the reserved range (which we never otherwise
+ * generate) to use for these.
+ * These values will never be visible to the guest.
+ */
+#define M_FAKE_FSR_NSC_EXEC 0xf /* NS executing in S&NSC memory */
+#define M_FAKE_FSR_SFAULT 0xe /* SecureFault INVTRAN, INVEP or AUVIOL */
 
 /*
  * For AArch64, map a given EL to an index in the banked_spsr array.
@@ -395,9 +428,10 @@ static inline uint32_t syn_breakpoint(int same_el)
         | ARM_EL_IL | 0x22;
 }
 
-static inline uint32_t syn_wfx(int cv, int cond, int ti)
+static inline uint32_t syn_wfx(int cv, int cond, int ti, bool is_16bit)
 {
     return (EC_WFX_TRAP << ARM_EL_EC_SHIFT) |
+           (is_16bit ? 0 : (1 << ARM_EL_IL_SHIFT)) |
            (cv << 24) | (cond << 20) | ti;
 }
 
@@ -444,20 +478,33 @@ void arm_handle_psci_call(ARMCPU *cpu);
 #endif
 
 /**
+ * arm_clear_exclusive: clear the exclusive monitor
+ * @env: CPU env
+ * Clear the CPU's exclusive monitor, like the guest CLREX instruction.
+ */
+static inline void arm_clear_exclusive(CPUARMState *env)
+{
+    env->exclusive_addr = -1;
+}
+
+/**
  * ARMMMUFaultInfo: Information describing an ARM MMU Fault
  * @s2addr: Address that caused a fault at stage 2
  * @stage2: True if we faulted at stage 2
  * @s1ptw: True if we faulted at stage 2 while doing a stage 1 page-table walk
+ * @ea: True if we should set the EA (external abort type) bit in syndrome
  */
 typedef struct ARMMMUFaultInfo ARMMMUFaultInfo;
 struct ARMMMUFaultInfo {
     target_ulong s2addr;
     bool stage2;
     bool s1ptw;
+    bool ea;
 };
 
 /* Do a page table walk and add page to TLB if possible */
-bool arm_tlb_fill(CPUState *cpu, vaddr address, int rw, int mmu_idx,
+bool arm_tlb_fill(CPUState *cpu, vaddr address,
+                  MMUAccessType access_type, int mmu_idx,
                   uint32_t *fsr, ARMMMUFaultInfo *fi);
 
 /* Return true if the stage 1 translation regime is using LPAE format page
@@ -469,11 +516,47 @@ void arm_cpu_do_unaligned_access(CPUState *cs, vaddr vaddr,
                                  MMUAccessType access_type,
                                  int mmu_idx, uintptr_t retaddr);
 
+/* arm_cpu_do_transaction_failed: handle a memory system error response
+ * (eg "no device/memory present at address") by raising an external abort
+ * exception
+ */
+void arm_cpu_do_transaction_failed(CPUState *cs, hwaddr physaddr,
+                                   vaddr addr, unsigned size,
+                                   MMUAccessType access_type,
+                                   int mmu_idx, MemTxAttrs attrs,
+                                   MemTxResult response, uintptr_t retaddr);
+
 /* Call the EL change hook if one has been registered */
 static inline void arm_call_el_change_hook(ARMCPU *cpu)
 {
     if (cpu->el_change_hook) {
         cpu->el_change_hook(cpu, cpu->el_change_hook_opaque);
+    }
+}
+
+/* Return true if this address translation regime is secure */
+static inline bool regime_is_secure(CPUARMState *env, ARMMMUIdx mmu_idx)
+{
+    switch (mmu_idx) {
+    case ARMMMUIdx_S12NSE0:
+    case ARMMMUIdx_S12NSE1:
+    case ARMMMUIdx_S1NSE0:
+    case ARMMMUIdx_S1NSE1:
+    case ARMMMUIdx_S1E2:
+    case ARMMMUIdx_S2NS:
+    case ARMMMUIdx_MPriv:
+    case ARMMMUIdx_MNegPri:
+    case ARMMMUIdx_MUser:
+        return false;
+    case ARMMMUIdx_S1E3:
+    case ARMMMUIdx_S1SE0:
+    case ARMMMUIdx_S1SE1:
+    case ARMMMUIdx_MSPriv:
+    case ARMMMUIdx_MSNegPri:
+    case ARMMMUIdx_MSUser:
+        return true;
+    default:
+        g_assert_not_reached();
     }
 }
 

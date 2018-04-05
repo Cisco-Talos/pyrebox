@@ -523,13 +523,15 @@ static void e1000e_qdev_reset(DeviceState *dev)
     e1000e_core_reset(&s->core);
 }
 
-static void e1000e_pre_save(void *opaque)
+static int e1000e_pre_save(void *opaque)
 {
     E1000EState *s = opaque;
 
     trace_e1000e_cb_pre_save();
 
     e1000e_core_pre_save(&s->core);
+
+    return 0;
 }
 
 static int e1000e_post_load(void *opaque, int version_id)
@@ -708,6 +710,10 @@ static const TypeInfo e1000e_info = {
     .instance_size = sizeof(E1000EState),
     .class_init = e1000e_class_init,
     .instance_init = e1000e_instance_init,
+    .interfaces = (InterfaceInfo[]) {
+        { INTERFACE_PCIE_DEVICE },
+        { }
+    },
 };
 
 static void e1000e_register_types(void)

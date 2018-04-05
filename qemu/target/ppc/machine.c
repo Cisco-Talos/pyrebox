@@ -146,7 +146,7 @@ static bool cpu_pre_2_8_migration(void *opaque, int version_id)
     return cpu->pre_2_8_migration;
 }
 
-static void cpu_pre_save(void *opaque)
+static int cpu_pre_save(void *opaque)
 {
     PowerPCCPU *cpu = opaque;
     CPUPPCState *env = &cpu->env;
@@ -195,6 +195,8 @@ static void cpu_pre_save(void *opaque)
         cpu->mig_insns_flags2 = env->insns_flags2 & insns_compat_mask2;
         cpu->mig_nb_BATs = env->nb_BATs;
     }
+
+    return 0;
 }
 
 /*
@@ -235,9 +237,11 @@ static int cpu_post_load(void *opaque, int version_id)
 
 #if defined(TARGET_PPC64)
     if (cpu->compat_pvr) {
+        uint32_t compat_pvr = cpu->compat_pvr;
         Error *local_err = NULL;
 
-        ppc_set_compat(cpu, cpu->compat_pvr, &local_err);
+        cpu->compat_pvr = 0;
+        ppc_set_compat(cpu, compat_pvr, &local_err);
         if (local_err) {
             error_report_err(local_err);
             return -1;
@@ -296,9 +300,9 @@ static int cpu_post_load(void *opaque, int version_id)
         ppc_store_sdr1(env, env->spr[SPR_SDR1]);
     }
 
-    /* Invalidate all msr bits except MSR_TGPR/MSR_HVB before restoring */
+    /* Invalidate all supported msr bits except MSR_TGPR/MSR_HVB before restoring */
     msr = env->msr;
-    env->msr ^= ~((1ULL << MSR_TGPR) | MSR_HVB);
+    env->msr ^= env->msr_mask & ~((1ULL << MSR_TGPR) | MSR_HVB);
     ppc_store_msr(env, msr);
 
     hreg_compute_mem_idx(env);

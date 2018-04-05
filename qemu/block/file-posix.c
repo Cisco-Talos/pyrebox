@@ -31,8 +31,10 @@
 #include "block/thread-pool.h"
 #include "qemu/iov.h"
 #include "block/raw-aio.h"
-#include "qapi/util.h"
 #include "qapi/qmp/qstring.h"
+
+#include "scsi/pr-manager.h"
+#include "scsi/constants.h"
 
 #if defined(__APPLE__) && (__MACH__)
 #include <paths.h>
@@ -156,6 +158,8 @@ typedef struct BDRVRawState {
     bool page_cache_inconsistent:1;
     bool has_fallocate;
     bool needs_alignment;
+
+    PRManager *pr_mgr;
 } BDRVRawState;
 
 typedef struct BDRVRawReopenState {
@@ -403,6 +407,11 @@ static QemuOptsList raw_runtime_opts = {
             .type = QEMU_OPT_STRING,
             .help = "file locking mode (on/off/auto, default: auto)",
         },
+        {
+            .name = "pr-manager",
+            .type = QEMU_OPT_STRING,
+            .help = "id of persistent reservation manager object (default: none)",
+        },
         { /* end of list */ }
     },
 };
@@ -414,6 +423,7 @@ static int raw_open_common(BlockDriverState *bs, QDict *options,
     QemuOpts *opts;
     Error *local_err = NULL;
     const char *filename = NULL;
+    const char *str;
     BlockdevAioOptions aio, aio_default;
     int fd, ret;
     struct stat st;
@@ -438,8 +448,9 @@ static int raw_open_common(BlockDriverState *bs, QDict *options,
     aio_default = (bdrv_flags & BDRV_O_NATIVE_AIO)
                   ? BLOCKDEV_AIO_OPTIONS_NATIVE
                   : BLOCKDEV_AIO_OPTIONS_THREADS;
-    aio = qapi_enum_parse(BlockdevAioOptions_lookup, qemu_opt_get(opts, "aio"),
-                          BLOCKDEV_AIO_OPTIONS__MAX, aio_default, &local_err);
+    aio = qapi_enum_parse(&BlockdevAioOptions_lookup,
+                          qemu_opt_get(opts, "aio"),
+                          aio_default, &local_err);
     if (local_err) {
         error_propagate(errp, local_err);
         ret = -EINVAL;
@@ -447,8 +458,9 @@ static int raw_open_common(BlockDriverState *bs, QDict *options,
     }
     s->use_linux_aio = (aio == BLOCKDEV_AIO_OPTIONS_NATIVE);
 
-    locking = qapi_enum_parse(OnOffAuto_lookup, qemu_opt_get(opts, "locking"),
-                              ON_OFF_AUTO__MAX, ON_OFF_AUTO_AUTO, &local_err);
+    locking = qapi_enum_parse(&OnOffAuto_lookup,
+                              qemu_opt_get(opts, "locking"),
+                              ON_OFF_AUTO_AUTO, &local_err);
     if (local_err) {
         error_propagate(errp, local_err);
         ret = -EINVAL;
@@ -473,6 +485,16 @@ static int raw_open_common(BlockDriverState *bs, QDict *options,
         break;
     default:
         abort();
+    }
+
+    str = qemu_opt_get(opts, "pr-manager");
+    if (str) {
+        s->pr_mgr = pr_manager_lookup(str, &local_err);
+        if (local_err) {
+            error_propagate(errp, local_err);
+            ret = -EINVAL;
+            goto fail;
+        }
     }
 
     s->open_flags = open_flags;
@@ -1725,7 +1747,7 @@ static int raw_regular_truncate(int fd, int64_t offset, PreallocMode prealloc,
     default:
         result = -ENOTSUP;
         error_setg(errp, "Unsupported preallocation mode: %s",
-                   PreallocMode_lookup[prealloc]);
+                   PreallocMode_str(prealloc));
         return result;
     }
 
@@ -1760,7 +1782,7 @@ static int raw_truncate(BlockDriverState *bs, int64_t offset,
 
     if (prealloc != PREALLOC_MODE_OFF) {
         error_setg(errp, "Preallocation mode '%s' unsupported for this "
-                   "non-regular file", PreallocMode_lookup[prealloc]);
+                   "non-regular file", PreallocMode_str(prealloc));
         return -ENOTSUP;
     }
 
@@ -1974,9 +1996,8 @@ static int raw_create(const char *filename, QemuOpts *opts, Error **errp)
                           BDRV_SECTOR_SIZE);
     nocow = qemu_opt_get_bool(opts, BLOCK_OPT_NOCOW, false);
     buf = qemu_opt_get_del(opts, BLOCK_OPT_PREALLOC);
-    prealloc = qapi_enum_parse(PreallocMode_lookup, buf,
-                               PREALLOC_MODE__MAX, PREALLOC_MODE_OFF,
-                               &local_err);
+    prealloc = qapi_enum_parse(&PreallocMode_lookup, buf,
+                               PREALLOC_MODE_OFF, &local_err);
     g_free(buf);
     if (local_err) {
         error_propagate(errp, local_err);
@@ -2597,6 +2618,15 @@ static BlockAIOCB *hdev_aio_ioctl(BlockDriverState *bs,
     if (fd_open(bs) < 0)
         return NULL;
 
+    if (req == SG_IO && s->pr_mgr) {
+        struct sg_io_hdr *io_hdr = buf;
+        if (io_hdr->cmdp[0] == PERSISTENT_RESERVE_OUT ||
+            io_hdr->cmdp[0] == PERSISTENT_RESERVE_IN) {
+            return pr_manager_execute(s->pr_mgr, bdrv_get_aio_context(bs),
+                                      s->fd, io_hdr, cb, opaque);
+        }
+    }
+
     acb = g_new(RawPosixAIOData, 1);
     acb->bs = bs;
     acb->aio_type = QEMU_AIO_IOCTL;
@@ -2700,6 +2730,16 @@ static int hdev_create(const char *filename, QemuOpts *opts,
         ret = -ENOSPC;
     }
 
+    if (!ret && total_size) {
+        uint8_t buf[BDRV_SECTOR_SIZE] = { 0 };
+        int64_t zero_size = MIN(BDRV_SECTOR_SIZE, total_size);
+        if (lseek(fd, 0, SEEK_SET) == -1) {
+            ret = -errno;
+        } else {
+            ret = qemu_write_full(fd, buf, zero_size);
+            ret = ret == zero_size ? 0 : -errno;
+        }
+    }
     qemu_close(fd);
     return ret;
 }

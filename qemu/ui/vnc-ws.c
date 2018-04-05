@@ -23,6 +23,7 @@
 #include "vnc.h"
 #include "io/channel-websock.h"
 #include "qemu/bswap.h"
+#include "trace.h"
 
 static void vncws_tls_handshake_done(QIOTask *task,
                                      gpointer user_data)
@@ -36,6 +37,9 @@ static void vncws_tls_handshake_done(QIOTask *task,
         error_free(err);
     } else {
         VNC_DEBUG("TLS handshake complete, starting websocket handshake\n");
+        if (vs->ioc_tag) {
+            g_source_remove(vs->ioc_tag);
+        }
         vs->ioc_tag = qio_channel_add_watch(
             QIO_CHANNEL(vs->ioc), G_IO_IN, vncws_handshake_io, vs, NULL);
     }
@@ -50,7 +54,6 @@ gboolean vncws_tls_handshake_io(QIOChannel *ioc G_GNUC_UNUSED,
     QIOChannelTLS *tls;
     Error *err = NULL;
 
-    VNC_DEBUG("TLS Websocket connection required\n");
     if (vs->ioc_tag) {
         g_source_remove(vs->ioc_tag);
         vs->ioc_tag = 0;
@@ -70,9 +73,9 @@ gboolean vncws_tls_handshake_io(QIOChannel *ioc G_GNUC_UNUSED,
 
     qio_channel_set_name(QIO_CHANNEL(tls), "vnc-ws-server-tls");
 
-    VNC_DEBUG("Start TLS WS handshake process\n");
     object_unref(OBJECT(vs->ioc));
     vs->ioc = QIO_CHANNEL(tls);
+    trace_vnc_client_io_wrap(vs, vs->ioc, "tls");
     vs->tls = qio_channel_tls_get_session(tls);
 
     qio_channel_tls_handshake(tls,
@@ -97,6 +100,9 @@ static void vncws_handshake_done(QIOTask *task,
     } else {
         VNC_DEBUG("Websock handshake complete, starting VNC protocol\n");
         vnc_start_protocol(vs);
+        if (vs->ioc_tag) {
+            g_source_remove(vs->ioc_tag);
+        }
         vs->ioc_tag = qio_channel_add_watch(
             vs->ioc, G_IO_IN, vnc_client_io, vs, NULL);
     }
@@ -110,7 +116,6 @@ gboolean vncws_handshake_io(QIOChannel *ioc G_GNUC_UNUSED,
     VncState *vs = opaque;
     QIOChannelWebsock *wioc;
 
-    VNC_DEBUG("Websocket negotiate starting\n");
     if (vs->ioc_tag) {
         g_source_remove(vs->ioc_tag);
         vs->ioc_tag = 0;
@@ -121,6 +126,7 @@ gboolean vncws_handshake_io(QIOChannel *ioc G_GNUC_UNUSED,
 
     object_unref(OBJECT(vs->ioc));
     vs->ioc = QIO_CHANNEL(wioc);
+    trace_vnc_client_io_wrap(vs, vs->ioc, "websock");
 
     qio_channel_websock_handshake(wioc,
                                   vncws_handshake_done,

@@ -151,6 +151,15 @@ TypeImpl *type_register_static(const TypeInfo *info)
     return type_register(info);
 }
 
+void type_register_static_array(const TypeInfo *infos, int nr_infos)
+{
+    int i;
+
+    for (i = 0; i < nr_infos; i++) {
+        type_register_static(&infos[i]);
+    }
+}
+
 static TypeImpl *type_get_by_name(const char *name)
 {
     if (name == NULL) {
@@ -1246,7 +1255,7 @@ uint64_t object_property_get_uint(Object *obj, const char *name,
 }
 
 typedef struct EnumProperty {
-    const char * const *strings;
+    const QEnumLookup *lookup;
     int (*get)(Object *, Error **);
     void (*set)(Object *, int, Error **);
 } EnumProperty;
@@ -1284,7 +1293,7 @@ int object_property_get_enum(Object *obj, const char *name,
     visit_complete(v, &str);
     visit_free(v);
     v = string_input_visitor_new(str);
-    visit_type_enum(v, name, &ret, enumprop->strings, errp);
+    visit_type_enum(v, name, &ret, enumprop->lookup, errp);
 
     g_free(str);
     visit_free(v);
@@ -1368,6 +1377,17 @@ Object *object_get_root(void)
 Object *object_get_objects_root(void)
 {
     return container_get(object_get_root(), "/objects");
+}
+
+Object *object_get_internal_root(void)
+{
+    static Object *internal_root;
+
+    if (!internal_root) {
+        internal_root = object_new("container");
+    }
+
+    return internal_root;
 }
 
 static void object_get_child_property(Object *obj, Visitor *v,
@@ -1950,7 +1970,7 @@ static void property_get_enum(Object *obj, Visitor *v, const char *name,
         return;
     }
 
-    visit_type_enum(v, name, &value, prop->strings, errp);
+    visit_type_enum(v, name, &value, prop->lookup, errp);
 }
 
 static void property_set_enum(Object *obj, Visitor *v, const char *name,
@@ -1960,7 +1980,7 @@ static void property_set_enum(Object *obj, Visitor *v, const char *name,
     int value;
     Error *err = NULL;
 
-    visit_type_enum(v, name, &value, prop->strings, &err);
+    visit_type_enum(v, name, &value, prop->lookup, &err);
     if (err) {
         error_propagate(errp, err);
         return;
@@ -1977,7 +1997,7 @@ static void property_release_enum(Object *obj, const char *name,
 
 void object_property_add_enum(Object *obj, const char *name,
                               const char *typename,
-                              const char * const *strings,
+                              const QEnumLookup *lookup,
                               int (*get)(Object *, Error **),
                               void (*set)(Object *, int, Error **),
                               Error **errp)
@@ -1985,7 +2005,7 @@ void object_property_add_enum(Object *obj, const char *name,
     Error *local_err = NULL;
     EnumProperty *prop = g_malloc(sizeof(*prop));
 
-    prop->strings = strings;
+    prop->lookup = lookup;
     prop->get = get;
     prop->set = set;
 
@@ -2002,7 +2022,7 @@ void object_property_add_enum(Object *obj, const char *name,
 
 void object_class_property_add_enum(ObjectClass *klass, const char *name,
                                     const char *typename,
-                                    const char * const *strings,
+                                    const QEnumLookup *lookup,
                                     int (*get)(Object *, Error **),
                                     void (*set)(Object *, int, Error **),
                                     Error **errp)
@@ -2010,7 +2030,7 @@ void object_class_property_add_enum(ObjectClass *klass, const char *name,
     Error *local_err = NULL;
     EnumProperty *prop = g_malloc(sizeof(*prop));
 
-    prop->strings = strings;
+    prop->lookup = lookup;
     prop->get = get;
     prop->set = set;
 

@@ -95,23 +95,37 @@ static int64_t throttle_do_compute_wait(double limit, double extra)
 int64_t throttle_compute_wait(LeakyBucket *bkt)
 {
     double extra; /* the number of extra units blocking the io */
+    double bucket_size;   /* I/O before throttling to bkt->avg */
+    double burst_bucket_size; /* Before throttling to bkt->max */
 
     if (!bkt->avg) {
         return 0;
     }
 
-    /* If the bucket is full then we have to wait */
-    extra = bkt->level - bkt->max * bkt->burst_length;
+    if (!bkt->max) {
+        /* If bkt->max is 0 we still want to allow short bursts of I/O
+         * from the guest, otherwise every other request will be throttled
+         * and performance will suffer considerably. */
+        bucket_size = (double) bkt->avg / 10;
+        burst_bucket_size = 0;
+    } else {
+        /* If we have a burst limit then we have to wait until all I/O
+         * at burst rate has finished before throttling to bkt->avg */
+        bucket_size = bkt->max * bkt->burst_length;
+        burst_bucket_size = (double) bkt->max / 10;
+    }
+
+    /* If the main bucket is full then we have to wait */
+    extra = bkt->level - bucket_size;
     if (extra > 0) {
         return throttle_do_compute_wait(bkt->avg, extra);
     }
 
-    /* If the bucket is not full yet we have to make sure that we
-     * fulfill the goal of bkt->max units per second. */
+    /* If the main bucket is not full yet we still have to check the
+     * burst bucket in order to enforce the burst limit */
     if (bkt->burst_length > 1) {
-        /* We use 1/10 of the max value to smooth the throttling.
-         * See throttle_fix_bucket() for more details. */
-        extra = bkt->burst_level - bkt->max / 10;
+        assert(bkt->max > 0); /* see throttle_is_valid() */
+        extra = bkt->burst_level - burst_bucket_size;
         if (extra > 0) {
             return throttle_do_compute_wait(bkt->max, extra);
         }
@@ -324,68 +338,41 @@ bool throttle_is_valid(ThrottleConfig *cfg, Error **errp)
     }
 
     for (i = 0; i < BUCKETS_COUNT; i++) {
-        if (cfg->buckets[i].avg < 0 ||
-            cfg->buckets[i].max < 0 ||
-            cfg->buckets[i].avg > THROTTLE_VALUE_MAX ||
-            cfg->buckets[i].max > THROTTLE_VALUE_MAX) {
+        LeakyBucket *bkt = &cfg->buckets[i];
+        if (bkt->avg > THROTTLE_VALUE_MAX || bkt->max > THROTTLE_VALUE_MAX) {
             error_setg(errp, "bps/iops/max values must be within [0, %lld]",
                        THROTTLE_VALUE_MAX);
             return false;
         }
 
-        if (!cfg->buckets[i].burst_length) {
+        if (!bkt->burst_length) {
             error_setg(errp, "the burst length cannot be 0");
             return false;
         }
 
-        if (cfg->buckets[i].burst_length > 1 && !cfg->buckets[i].max) {
+        if (bkt->burst_length > 1 && !bkt->max) {
             error_setg(errp, "burst length set without burst rate");
             return false;
         }
 
-        if (cfg->buckets[i].max && !cfg->buckets[i].avg) {
+        if (bkt->max && bkt->burst_length > THROTTLE_VALUE_MAX / bkt->max) {
+            error_setg(errp, "burst length too high for this burst rate");
+            return false;
+        }
+
+        if (bkt->max && !bkt->avg) {
             error_setg(errp, "bps_max/iops_max require corresponding"
                        " bps/iops values");
             return false;
         }
 
-        if (cfg->buckets[i].max && cfg->buckets[i].max < cfg->buckets[i].avg) {
+        if (bkt->max && bkt->max < bkt->avg) {
             error_setg(errp, "bps_max/iops_max cannot be lower than bps/iops");
             return false;
         }
     }
 
     return true;
-}
-
-/* fix bucket parameters */
-static void throttle_fix_bucket(LeakyBucket *bkt)
-{
-    double min;
-
-    /* zero bucket level */
-    bkt->level = bkt->burst_level = 0;
-
-    /* The following is done to cope with the Linux CFQ block scheduler
-     * which regroup reads and writes by block of 100ms in the guest.
-     * When they are two process one making reads and one making writes cfq
-     * make a pattern looking like the following:
-     * WWWWWWWWWWWRRRRRRRRRRRRRRWWWWWWWWWWWWWwRRRRRRRRRRRRRRRRR
-     * Having a max burst value of 100ms of the average will help smooth the
-     * throttling
-     */
-    min = bkt->avg / 10;
-    if (bkt->avg && !bkt->max) {
-        bkt->max = min;
-    }
-}
-
-/* undo internal bucket parameter changes (see throttle_fix_bucket()) */
-static void throttle_unfix_bucket(LeakyBucket *bkt)
-{
-    if (bkt->max < bkt->avg) {
-        bkt->max = 0;
-    }
 }
 
 /* Used to configure the throttle
@@ -402,8 +389,10 @@ void throttle_config(ThrottleState *ts,
 
     ts->cfg = *cfg;
 
+    /* Zero bucket level */
     for (i = 0; i < BUCKETS_COUNT; i++) {
-        throttle_fix_bucket(&ts->cfg.buckets[i]);
+        ts->cfg.buckets[i].level = 0;
+        ts->cfg.buckets[i].burst_level = 0;
     }
 
     ts->previous_leak = qemu_clock_get_ns(clock_type);
@@ -416,13 +405,7 @@ void throttle_config(ThrottleState *ts,
  */
 void throttle_get_config(ThrottleState *ts, ThrottleConfig *cfg)
 {
-    int i;
-
     *cfg = ts->cfg;
-
-    for (i = 0; i < BUCKETS_COUNT; i++) {
-        throttle_unfix_bucket(&cfg->buckets[i]);
-    }
 }
 
 
@@ -502,3 +485,154 @@ void throttle_account(ThrottleState *ts, bool is_write, uint64_t size)
     }
 }
 
+/* return a ThrottleConfig based on the options in a ThrottleLimits
+ *
+ * @arg:    the ThrottleLimits object to read from
+ * @cfg:    the ThrottleConfig to edit
+ * @errp:   error object
+ */
+void throttle_limits_to_config(ThrottleLimits *arg, ThrottleConfig *cfg,
+                               Error **errp)
+{
+    if (arg->has_bps_total) {
+        cfg->buckets[THROTTLE_BPS_TOTAL].avg = arg->bps_total;
+    }
+    if (arg->has_bps_read) {
+        cfg->buckets[THROTTLE_BPS_READ].avg  = arg->bps_read;
+    }
+    if (arg->has_bps_write) {
+        cfg->buckets[THROTTLE_BPS_WRITE].avg = arg->bps_write;
+    }
+
+    if (arg->has_iops_total) {
+        cfg->buckets[THROTTLE_OPS_TOTAL].avg = arg->iops_total;
+    }
+    if (arg->has_iops_read) {
+        cfg->buckets[THROTTLE_OPS_READ].avg  = arg->iops_read;
+    }
+    if (arg->has_iops_write) {
+        cfg->buckets[THROTTLE_OPS_WRITE].avg = arg->iops_write;
+    }
+
+    if (arg->has_bps_total_max) {
+        cfg->buckets[THROTTLE_BPS_TOTAL].max = arg->bps_total_max;
+    }
+    if (arg->has_bps_read_max) {
+        cfg->buckets[THROTTLE_BPS_READ].max = arg->bps_read_max;
+    }
+    if (arg->has_bps_write_max) {
+        cfg->buckets[THROTTLE_BPS_WRITE].max = arg->bps_write_max;
+    }
+    if (arg->has_iops_total_max) {
+        cfg->buckets[THROTTLE_OPS_TOTAL].max = arg->iops_total_max;
+    }
+    if (arg->has_iops_read_max) {
+        cfg->buckets[THROTTLE_OPS_READ].max = arg->iops_read_max;
+    }
+    if (arg->has_iops_write_max) {
+        cfg->buckets[THROTTLE_OPS_WRITE].max = arg->iops_write_max;
+    }
+
+    if (arg->has_bps_total_max_length) {
+        if (arg->bps_total_max_length > UINT_MAX) {
+            error_setg(errp, "bps-total-max-length value must be in"
+                             " the range [0, %u]", UINT_MAX);
+            return;
+        }
+        cfg->buckets[THROTTLE_BPS_TOTAL].burst_length = arg->bps_total_max_length;
+    }
+    if (arg->has_bps_read_max_length) {
+        if (arg->bps_read_max_length > UINT_MAX) {
+            error_setg(errp, "bps-read-max-length value must be in"
+                             " the range [0, %u]", UINT_MAX);
+            return;
+        }
+        cfg->buckets[THROTTLE_BPS_READ].burst_length = arg->bps_read_max_length;
+    }
+    if (arg->has_bps_write_max_length) {
+        if (arg->bps_write_max_length > UINT_MAX) {
+            error_setg(errp, "bps-write-max-length value must be in"
+                             " the range [0, %u]", UINT_MAX);
+            return;
+        }
+        cfg->buckets[THROTTLE_BPS_WRITE].burst_length = arg->bps_write_max_length;
+    }
+    if (arg->has_iops_total_max_length) {
+        if (arg->iops_total_max_length > UINT_MAX) {
+            error_setg(errp, "iops-total-max-length value must be in"
+                             " the range [0, %u]", UINT_MAX);
+            return;
+        }
+        cfg->buckets[THROTTLE_OPS_TOTAL].burst_length = arg->iops_total_max_length;
+    }
+    if (arg->has_iops_read_max_length) {
+        if (arg->iops_read_max_length > UINT_MAX) {
+            error_setg(errp, "iops-read-max-length value must be in"
+                             " the range [0, %u]", UINT_MAX);
+            return;
+        }
+        cfg->buckets[THROTTLE_OPS_READ].burst_length = arg->iops_read_max_length;
+    }
+    if (arg->has_iops_write_max_length) {
+        if (arg->iops_write_max_length > UINT_MAX) {
+            error_setg(errp, "iops-write-max-length value must be in"
+                             " the range [0, %u]", UINT_MAX);
+            return;
+        }
+        cfg->buckets[THROTTLE_OPS_WRITE].burst_length = arg->iops_write_max_length;
+    }
+
+    if (arg->has_iops_size) {
+        cfg->op_size = arg->iops_size;
+    }
+
+    throttle_is_valid(cfg, errp);
+}
+
+/* write the options of a ThrottleConfig to a ThrottleLimits
+ *
+ * @cfg:    the ThrottleConfig to read from
+ * @var:    the ThrottleLimits to write to
+ */
+void throttle_config_to_limits(ThrottleConfig *cfg, ThrottleLimits *var)
+{
+    var->bps_total               = cfg->buckets[THROTTLE_BPS_TOTAL].avg;
+    var->bps_read                = cfg->buckets[THROTTLE_BPS_READ].avg;
+    var->bps_write               = cfg->buckets[THROTTLE_BPS_WRITE].avg;
+    var->iops_total              = cfg->buckets[THROTTLE_OPS_TOTAL].avg;
+    var->iops_read               = cfg->buckets[THROTTLE_OPS_READ].avg;
+    var->iops_write              = cfg->buckets[THROTTLE_OPS_WRITE].avg;
+    var->bps_total_max           = cfg->buckets[THROTTLE_BPS_TOTAL].max;
+    var->bps_read_max            = cfg->buckets[THROTTLE_BPS_READ].max;
+    var->bps_write_max           = cfg->buckets[THROTTLE_BPS_WRITE].max;
+    var->iops_total_max          = cfg->buckets[THROTTLE_OPS_TOTAL].max;
+    var->iops_read_max           = cfg->buckets[THROTTLE_OPS_READ].max;
+    var->iops_write_max          = cfg->buckets[THROTTLE_OPS_WRITE].max;
+    var->bps_total_max_length    = cfg->buckets[THROTTLE_BPS_TOTAL].burst_length;
+    var->bps_read_max_length     = cfg->buckets[THROTTLE_BPS_READ].burst_length;
+    var->bps_write_max_length    = cfg->buckets[THROTTLE_BPS_WRITE].burst_length;
+    var->iops_total_max_length   = cfg->buckets[THROTTLE_OPS_TOTAL].burst_length;
+    var->iops_read_max_length    = cfg->buckets[THROTTLE_OPS_READ].burst_length;
+    var->iops_write_max_length   = cfg->buckets[THROTTLE_OPS_WRITE].burst_length;
+    var->iops_size               = cfg->op_size;
+
+    var->has_bps_total = true;
+    var->has_bps_read = true;
+    var->has_bps_write = true;
+    var->has_iops_total = true;
+    var->has_iops_read = true;
+    var->has_iops_write = true;
+    var->has_bps_total_max = true;
+    var->has_bps_read_max = true;
+    var->has_bps_write_max = true;
+    var->has_iops_total_max = true;
+    var->has_iops_read_max = true;
+    var->has_iops_write_max = true;
+    var->has_bps_read_max_length = true;
+    var->has_bps_total_max_length = true;
+    var->has_bps_write_max_length = true;
+    var->has_iops_total_max_length = true;
+    var->has_iops_read_max_length = true;
+    var->has_iops_write_max_length = true;
+    var->has_iops_size = true;
+}

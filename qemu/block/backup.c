@@ -346,9 +346,9 @@ static bool coroutine_fn yield_and_check(BackupBlockJob *job)
         uint64_t delay_ns = ratelimit_calculate_delay(&job->limit,
                                                       job->bytes_read);
         job->bytes_read = 0;
-        block_job_sleep_ns(&job->common, QEMU_CLOCK_REALTIME, delay_ns);
+        block_job_sleep_ns(&job->common, delay_ns);
     } else {
-        block_job_sleep_ns(&job->common, QEMU_CLOCK_REALTIME, 0);
+        block_job_sleep_ns(&job->common, 0);
     }
 
     if (block_job_is_cancelled(&job->common)) {
@@ -372,10 +372,10 @@ static int coroutine_fn backup_run_incremental(BackupBlockJob *job)
 
     granularity = bdrv_dirty_bitmap_granularity(job->sync_bitmap);
     clusters_per_iter = MAX((granularity / job->cluster_size), 1);
-    dbi = bdrv_dirty_iter_new(job->sync_bitmap, 0);
+    dbi = bdrv_dirty_iter_new(job->sync_bitmap);
 
     /* Find the next dirty sector(s) */
-    while ((offset = bdrv_dirty_iter_next(dbi) * BDRV_SECTOR_SIZE) >= 0) {
+    while ((offset = bdrv_dirty_iter_next(dbi)) >= 0) {
         cluster = offset / job->cluster_size;
 
         /* Fake progress updates for any clusters we skipped */
@@ -403,8 +403,7 @@ static int coroutine_fn backup_run_incremental(BackupBlockJob *job)
         /* If the bitmap granularity is smaller than the backup granularity,
          * we need to advance the iterator pointer to the next cluster. */
         if (granularity < job->cluster_size) {
-            bdrv_set_dirty_iter(dbi,
-                                cluster * job->cluster_size / BDRV_SECTOR_SIZE);
+            bdrv_set_dirty_iter(dbi, cluster * job->cluster_size);
         }
 
         last_cluster = cluster - 1;
@@ -596,7 +595,7 @@ BlockJob *backup_job_create(const char *job_id, BlockDriverState *bs,
         error_setg(errp,
                    "a sync_bitmap was provided to backup_run, "
                    "but received an incompatible sync_mode (%s)",
-                   MirrorSyncMode_lookup[sync_mode]);
+                   MirrorSyncMode_str(sync_mode));
         return NULL;
     }
 

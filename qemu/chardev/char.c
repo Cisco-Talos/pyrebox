@@ -180,6 +180,17 @@ void qemu_chr_be_write(Chardev *s, uint8_t *buf, int len)
     }
 }
 
+void qemu_chr_be_update_read_handlers(Chardev *s,
+                                      GMainContext *context)
+{
+    ChardevClass *cc = CHARDEV_GET_CLASS(s);
+
+    s->gcontext = context;
+    if (cc->chr_update_read_handler) {
+        cc->chr_update_read_handler(s);
+    }
+}
+
 int qemu_chr_add_client(Chardev *s, int fd)
 {
     return CHARDEV_GET_CLASS(s)->chr_add_client ?
@@ -931,7 +942,7 @@ ChardevReturn *qmp_chardev_add(const char *id, ChardevBackend *backend,
     ChardevReturn *ret;
     Chardev *chr;
 
-    cc = char_get_class(ChardevBackendKind_lookup[backend->type], errp);
+    cc = char_get_class(ChardevBackendKind_str(backend->type), errp);
     if (!cc) {
         return NULL;
     }
@@ -989,7 +1000,7 @@ ChardevReturn *qmp_chardev_change(const char *id, ChardevBackend *backend,
         return NULL;
     }
 
-    cc = char_get_class(ChardevBackendKind_lookup[backend->type], errp);
+    cc = char_get_class(ChardevBackendKind_str(backend->type), errp);
     if (!cc) {
         return NULL;
     }

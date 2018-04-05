@@ -31,6 +31,10 @@
 #include "exec/address-spaces.h"
 #include "qemu/error-report.h"
 #include "hw/char/pl011.h"
+#include "hw/ide/ahci.h"
+#include "hw/cpu/a9mpcore.h"
+#include "hw/cpu/a15mpcore.h"
+#include "qemu/log.h"
 
 #define SMP_BOOT_ADDR           0x100
 #define SMP_BOOT_REG            0x40
@@ -114,14 +118,26 @@ static void hb_regs_write(void *opaque, hwaddr offset,
         }
     }
 
-    regs[offset/4] = value;
+    if (offset / 4 >= NUM_REGS) {
+        qemu_log_mask(LOG_GUEST_ERROR,
+                  "highbank: bad write offset 0x%" HWADDR_PRIx "\n", offset);
+        return;
+    }
+    regs[offset / 4] = value;
 }
 
 static uint64_t hb_regs_read(void *opaque, hwaddr offset,
                              unsigned size)
 {
+    uint32_t value;
     uint32_t *regs = opaque;
-    uint32_t value = regs[offset/4];
+
+    if (offset / 4 >= NUM_REGS) {
+        qemu_log_mask(LOG_GUEST_ERROR,
+                  "highbank: bad read offset 0x%" HWADDR_PRIx "\n", offset);
+        return 0;
+    }
+    value = regs[offset / 4];
 
     if ((offset == 0x100) || (offset == 0x108) || (offset == 0x10C)) {
         value |= 0x30000000;
@@ -219,7 +235,6 @@ enum cxmachines {
 static void calxeda_init(MachineState *machine, enum cxmachines machine_id)
 {
     ram_addr_t ram_size = machine->ram_size;
-    const char *cpu_model = machine->cpu_model;
     const char *kernel_filename = machine->kernel_filename;
     const char *kernel_cmdline = machine->kernel_cmdline;
     const char *initrd_filename = machine->initrd_filename;
@@ -236,19 +251,20 @@ static void calxeda_init(MachineState *machine, enum cxmachines machine_id)
 
     switch (machine_id) {
     case CALXEDA_HIGHBANK:
-        cpu_model = "cortex-a9";
+        machine->cpu_type = ARM_CPU_TYPE_NAME("cortex-a9");
         break;
     case CALXEDA_MIDWAY:
-        cpu_model = "cortex-a15";
+        machine->cpu_type = ARM_CPU_TYPE_NAME("cortex-a15");
         break;
+    default:
+        assert(0);
     }
 
     for (n = 0; n < smp_cpus; n++) {
-        ObjectClass *oc = cpu_class_by_name(TYPE_ARM_CPU, cpu_model);
         Object *cpuobj;
         ARMCPU *cpu;
 
-        cpuobj = object_new(object_class_get_name(oc));
+        cpuobj = object_new(machine->cpu_type);
         cpu = ARM_CPU(cpuobj);
 
         object_property_set_int(cpuobj, QEMU_PSCI_CONDUIT_SMC,
@@ -300,10 +316,10 @@ static void calxeda_init(MachineState *machine, enum cxmachines machine_id)
         busdev = SYS_BUS_DEVICE(dev);
         sysbus_mmio_map(busdev, 0, 0xfff12000);
 
-        dev = qdev_create(NULL, "a9mpcore_priv");
+        dev = qdev_create(NULL, TYPE_A9MPCORE_PRIV);
         break;
     case CALXEDA_MIDWAY:
-        dev = qdev_create(NULL, "a15mpcore_priv");
+        dev = qdev_create(NULL, TYPE_A15MPCORE_PRIV);
         break;
     }
     qdev_prop_set_uint32(dev, "num-cpu", smp_cpus);
@@ -329,7 +345,7 @@ static void calxeda_init(MachineState *machine, enum cxmachines machine_id)
     sysbus_connect_irq(busdev, 0, pic[18]);
     pl011_create(0xfff36000, pic[20], serial_hds[0]);
 
-    dev = qdev_create(NULL, "highbank-regs");
+    dev = qdev_create(NULL, TYPE_HIGHBANK_REGISTERS);
     qdev_init_nofail(dev);
     busdev = SYS_BUS_DEVICE(dev);
     sysbus_mmio_map(busdev, 0, 0xfff3c000);
@@ -341,7 +357,7 @@ static void calxeda_init(MachineState *machine, enum cxmachines machine_id)
     sysbus_create_simple("pl031", 0xfff35000, pic[19]);
     sysbus_create_simple("pl022", 0xfff39000, pic[23]);
 
-    sysbus_create_simple("sysbus-ahci", 0xffe08000, pic[83]);
+    sysbus_create_simple(TYPE_SYSBUS_AHCI, 0xffe08000, pic[83]);
 
     if (nd_table[0].used) {
         qemu_check_nic_model(&nd_table[0], "xgmac");
@@ -410,6 +426,7 @@ static void highbank_class_init(ObjectClass *oc, void *data)
     mc->block_default_type = IF_IDE;
     mc->units_per_default_bus = 1;
     mc->max_cpus = 4;
+    mc->ignore_memory_transaction_failures = true;
 }
 
 static const TypeInfo highbank_type = {
@@ -427,6 +444,7 @@ static void midway_class_init(ObjectClass *oc, void *data)
     mc->block_default_type = IF_IDE;
     mc->units_per_default_bus = 1;
     mc->max_cpus = 4;
+    mc->ignore_memory_transaction_failures = true;
 }
 
 static const TypeInfo midway_type = {

@@ -36,13 +36,11 @@ enum {
 typedef struct CommitBlockJob {
     BlockJob common;
     RateLimit limit;
-    BlockDriverState *active;
     BlockDriverState *commit_top_bs;
     BlockBackend *top;
     BlockBackend *base;
     BlockdevOnError on_error;
     int base_flags;
-    int orig_overlay_flags;
     char *backing_file_str;
 } CommitBlockJob;
 
@@ -81,18 +79,15 @@ static void commit_complete(BlockJob *job, void *opaque)
 {
     CommitBlockJob *s = container_of(job, CommitBlockJob, common);
     CommitCompleteData *data = opaque;
-    BlockDriverState *active = s->active;
     BlockDriverState *top = blk_bs(s->top);
     BlockDriverState *base = blk_bs(s->base);
-    BlockDriverState *overlay_bs = bdrv_find_overlay(active, s->commit_top_bs);
+    BlockDriverState *commit_top_bs = s->commit_top_bs;
     int ret = data->ret;
     bool remove_commit_top_bs = false;
 
-    /* Make sure overlay_bs and top stay around until bdrv_set_backing_hd() */
+    /* Make sure commit_top_bs and top stay around until bdrv_replace_node() */
     bdrv_ref(top);
-    if (overlay_bs) {
-        bdrv_ref(overlay_bs);
-    }
+    bdrv_ref(commit_top_bs);
 
     /* Remove base node parent that still uses BLK_PERM_WRITE/RESIZE before
      * the normal backing chain can be restored. */
@@ -100,9 +95,9 @@ static void commit_complete(BlockJob *job, void *opaque)
 
     if (!block_job_is_cancelled(&s->common) && ret == 0) {
         /* success */
-        ret = bdrv_drop_intermediate(active, s->commit_top_bs, base,
+        ret = bdrv_drop_intermediate(s->commit_top_bs, base,
                                      s->backing_file_str);
-    } else if (overlay_bs) {
+    } else {
         /* XXX Can (or should) we somehow keep 'consistent read' blocked even
          * after the failed/cancelled commit job is gone? If we already wrote
          * something to base, the intermediate images aren't valid any more. */
@@ -114,9 +109,6 @@ static void commit_complete(BlockJob *job, void *opaque)
      * even on failure here */
     if (s->base_flags != bdrv_get_flags(base)) {
         bdrv_reopen(base, s->base_flags, NULL);
-    }
-    if (overlay_bs && s->orig_overlay_flags != bdrv_get_flags(overlay_bs)) {
-        bdrv_reopen(overlay_bs, s->orig_overlay_flags, NULL);
     }
     g_free(s->backing_file_str);
     blk_unref(s->top);
@@ -134,10 +126,13 @@ static void commit_complete(BlockJob *job, void *opaque)
      * filter driver from the backing chain. Do this as the final step so that
      * the 'consistent read' permission can be granted.  */
     if (remove_commit_top_bs) {
-        bdrv_set_backing_hd(overlay_bs, top, &error_abort);
+        bdrv_child_try_set_perm(commit_top_bs->backing, 0, BLK_PERM_ALL,
+                                &error_abort);
+        bdrv_replace_node(commit_top_bs, backing_bs(commit_top_bs),
+                          &error_abort);
     }
 
-    bdrv_unref(overlay_bs);
+    bdrv_unref(commit_top_bs);
     bdrv_unref(top);
 }
 
@@ -179,7 +174,7 @@ static void coroutine_fn commit_run(void *opaque)
         /* Note that even when no rate limit is applied we need to yield
          * with no pending I/O here so that bdrv_drain_all() returns.
          */
-        block_job_sleep_ns(&s->common, QEMU_CLOCK_REALTIME, delay_ns);
+        block_job_sleep_ns(&s->common, delay_ns);
         if (block_job_is_cancelled(&s->common)) {
             break;
         }
@@ -244,16 +239,6 @@ static int coroutine_fn bdrv_commit_top_preadv(BlockDriverState *bs,
     return bdrv_co_preadv(bs->backing, offset, bytes, qiov, flags);
 }
 
-static int64_t coroutine_fn bdrv_commit_top_get_block_status(
-    BlockDriverState *bs, int64_t sector_num, int nb_sectors, int *pnum,
-    BlockDriverState **file)
-{
-    *pnum = nb_sectors;
-    *file = bs->backing->bs;
-    return BDRV_BLOCK_RAW | BDRV_BLOCK_OFFSET_VALID |
-           (sector_num << BDRV_SECTOR_BITS);
-}
-
 static void bdrv_commit_top_refresh_filename(BlockDriverState *bs, QDict *opts)
 {
     bdrv_refresh_filename(bs->backing->bs);
@@ -267,6 +252,7 @@ static void bdrv_commit_top_close(BlockDriverState *bs)
 
 static void bdrv_commit_top_child_perm(BlockDriverState *bs, BdrvChild *c,
                                        const BdrvChildRole *role,
+                                       BlockReopenQueue *reopen_queue,
                                        uint64_t perm, uint64_t shared,
                                        uint64_t *nperm, uint64_t *nshared)
 {
@@ -279,7 +265,7 @@ static void bdrv_commit_top_child_perm(BlockDriverState *bs, BdrvChild *c,
 static BlockDriver bdrv_commit_top = {
     .format_name                = "commit_top",
     .bdrv_co_preadv             = bdrv_commit_top_preadv,
-    .bdrv_co_get_block_status   = bdrv_commit_top_get_block_status,
+    .bdrv_co_get_block_status   = bdrv_co_get_block_status_from_backing,
     .bdrv_refresh_filename      = bdrv_commit_top_refresh_filename,
     .bdrv_close                 = bdrv_commit_top_close,
     .bdrv_child_perm            = bdrv_commit_top_child_perm,
@@ -292,10 +278,8 @@ void commit_start(const char *job_id, BlockDriverState *bs,
 {
     CommitBlockJob *s;
     BlockReopenQueue *reopen_queue = NULL;
-    int orig_overlay_flags;
     int orig_base_flags;
     BlockDriverState *iter;
-    BlockDriverState *overlay_bs;
     BlockDriverState *commit_top_bs = NULL;
     Error *local_err = NULL;
     int ret;
@@ -306,31 +290,19 @@ void commit_start(const char *job_id, BlockDriverState *bs,
         return;
     }
 
-    overlay_bs = bdrv_find_overlay(bs, top);
-
-    if (overlay_bs == NULL) {
-        error_setg(errp, "Could not find overlay image for %s:", top->filename);
-        return;
-    }
-
     s = block_job_create(job_id, &commit_job_driver, bs, 0, BLK_PERM_ALL,
                          speed, BLOCK_JOB_DEFAULT, NULL, NULL, errp);
     if (!s) {
         return;
     }
 
-    orig_base_flags    = bdrv_get_flags(base);
-    orig_overlay_flags = bdrv_get_flags(overlay_bs);
-
-    /* convert base & overlay_bs to r/w, if necessary */
+    /* convert base to r/w, if necessary */
+    orig_base_flags = bdrv_get_flags(base);
     if (!(orig_base_flags & BDRV_O_RDWR)) {
         reopen_queue = bdrv_reopen_queue(reopen_queue, base, NULL,
                                          orig_base_flags | BDRV_O_RDWR);
     }
-    if (!(orig_overlay_flags & BDRV_O_RDWR)) {
-        reopen_queue = bdrv_reopen_queue(reopen_queue, overlay_bs, NULL,
-                                         orig_overlay_flags | BDRV_O_RDWR);
-    }
+
     if (reopen_queue) {
         bdrv_reopen_multiple(bdrv_get_aio_context(bs), reopen_queue, &local_err);
         if (local_err != NULL) {
@@ -359,7 +331,7 @@ void commit_start(const char *job_id, BlockDriverState *bs,
         error_propagate(errp, local_err);
         goto fail;
     }
-    bdrv_set_backing_hd(overlay_bs, commit_top_bs, &local_err);
+    bdrv_replace_node(top, commit_top_bs, &local_err);
     if (local_err) {
         bdrv_unref(commit_top_bs);
         commit_top_bs = NULL;
@@ -391,14 +363,6 @@ void commit_start(const char *job_id, BlockDriverState *bs,
         goto fail;
     }
 
-    /* overlay_bs must be blocked because it needs to be modified to
-     * update the backing image string. */
-    ret = block_job_add_bdrv(&s->common, "overlay of top", overlay_bs,
-                             BLK_PERM_GRAPH_MOD, BLK_PERM_ALL, errp);
-    if (ret < 0) {
-        goto fail;
-    }
-
     s->base = blk_new(BLK_PERM_CONSISTENT_READ
                       | BLK_PERM_WRITE
                       | BLK_PERM_RESIZE,
@@ -417,13 +381,8 @@ void commit_start(const char *job_id, BlockDriverState *bs,
         goto fail;
     }
 
-    s->active = bs;
-
-    s->base_flags          = orig_base_flags;
-    s->orig_overlay_flags  = orig_overlay_flags;
-
+    s->base_flags = orig_base_flags;
     s->backing_file_str = g_strdup(backing_file_str);
-
     s->on_error = on_error;
 
     trace_commit_start(bs, base, top, s);
@@ -438,7 +397,7 @@ fail:
         blk_unref(s->top);
     }
     if (commit_top_bs) {
-        bdrv_set_backing_hd(overlay_bs, top, &error_abort);
+        bdrv_replace_node(commit_top_bs, top, &error_abort);
     }
     block_job_early_fail(&s->common);
 }

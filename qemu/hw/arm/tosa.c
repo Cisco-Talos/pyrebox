@@ -219,7 +219,6 @@ static struct arm_boot_info tosa_binfo = {
 
 static void tosa_init(MachineState *machine)
 {
-    const char *cpu_model = machine->cpu_model;
     const char *kernel_filename = machine->kernel_filename;
     const char *kernel_cmdline = machine->kernel_cmdline;
     const char *initrd_filename = machine->initrd_filename;
@@ -228,9 +227,6 @@ static void tosa_init(MachineState *machine)
     PXA2xxState *mpu;
     TC6393xbState *tmio;
     DeviceState *scp0, *scp1;
-
-    if (!cpu_model)
-        cpu_model = "pxa255";
 
     mpu = pxa255_init(address_space_mem, tosa_binfo.ram_size);
 
@@ -263,6 +259,7 @@ static void tosapda_machine_init(MachineClass *mc)
     mc->desc = "Sharp SL-6000 (Tosa) PDA (PXA255)";
     mc->init = tosa_init;
     mc->block_default_type = IF_IDE;
+    mc->ignore_memory_transaction_failures = true;
 }
 
 DEFINE_MACHINE("tosa", tosapda_machine_init)
