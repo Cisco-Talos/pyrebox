@@ -493,8 +493,8 @@ callback_handle_t CallbackManager::add_callback(callback_type_t type, module_han
     switch(type)
     {
         case OP_BLOCK_BEGIN_CB:
-            //Unless we are isntrumenting all block begins for that process, flush TB 
-            if (!(callbacks[BLOCK_BEGIN_CB].size() > 0 && is_monitored_process(pgd))){
+            //Unless we are isntrumenting all block begins, flush TB 
+            if (callbacks[BLOCK_BEGIN_CB].size() == 0){
                 pyrebox_flush_tb();
             }
             cb = (Callback*) new OptimizedBlockBeginCallback();
@@ -504,8 +504,8 @@ callback_handle_t CallbackManager::add_callback(callback_type_t type, module_han
             ((OptimizedBlockBeginCallback*)cb)->set_target_address(addr_block);
             break;
         case OP_INSN_BEGIN_CB:
-            //Unless we are isntrumenting all insn begins for that process, flush TB 
-            if (!(callbacks[INSN_BEGIN_CB].size() > 0 && is_monitored_process(pgd))){
+            //Unless we are isntrumenting all insn begins, flush TB 
+            if (callbacks[INSN_BEGIN_CB].size() == 0){
                 pyrebox_flush_tb();
             }
             cb = (Callback*) new OptimizedInsBeginCallback(); 
@@ -614,6 +614,7 @@ void CallbackManager::deliver_callback(callback_type_t type, callback_params_t p
         addr.address = get_cpu_addr(params.insn_begin_params.cpu);
         addr.pgd = get_pgd(params.insn_begin_params.cpu);
 
+
         // Defer the python callbacks
         // Check if process is monitored if there is no trigger
         for (multiset<Callback*,CompareCallbackP>::iterator it = this->callbacks[INSN_BEGIN_CB].begin(); it != this->callbacks[INSN_BEGIN_CB].end(); ++it){
@@ -624,8 +625,9 @@ void CallbackManager::deliver_callback(callback_type_t type, callback_params_t p
 
         OptimizedInsBeginCallback *cb = new OptimizedInsBeginCallback();
         cb->set_target_address(addr);
-        multiset<Callback*,CompareCallbackP>::iterator it = this->callbacks[OP_INSN_BEGIN_CB].find((Callback*)cb);
+        multiset<Callback*,CompareCallbackP>::iterator it = this->callbacks[OP_INSN_BEGIN_CB].lower_bound((Callback*)cb);
         delete cb;
+
         while (it != this->callbacks[OP_INSN_BEGIN_CB].end() && addr.address == ((OptimizedInsBeginCallback*)(*it))->get_target_address().address && addr.pgd == ((OptimizedInsBeginCallback*)(*it))->get_target_address().pgd){
             if ((*it)->get_trigger() == 0 || (*it)->get_trigger()((*it)->get_handle(),params)){
                 callbacks_needed.push_back((*it));
@@ -1007,9 +1009,9 @@ int CallbackManager::is_callback_needed(callback_type_t callback_type, pyrebox_t
             cb = new OptimizedBlockBeginCallback();
             memory_address_t addr_block;
             addr_block.address = address;
-            addr_block.pgd = pgd;
+            addr_block.pgd = 0;
             ((OptimizedBlockBeginCallback*)cb)->set_target_address(addr_block);
-            it = this->callbacks[OP_BLOCK_BEGIN_CB].find((Callback*)cb);
+            it = this->callbacks[OP_BLOCK_BEGIN_CB].lower_bound((Callback*)cb);
             delete cb;
             // Only check the address, regardless of the PGD. PGD will be checked on callback delivery
             if (it != this->callbacks[OP_BLOCK_BEGIN_CB].end() && address == ((OptimizedBlockBeginCallback*)(*it))->get_target_address().address){
@@ -1034,9 +1036,9 @@ int CallbackManager::is_callback_needed(callback_type_t callback_type, pyrebox_t
             cb = (Callback*) new OptimizedInsBeginCallback();
             memory_address_t addr;
             addr.address = address;
-            addr.pgd = pgd;
+            addr.pgd = 0;
             ((OptimizedInsBeginCallback*)cb)->set_target_address(addr);
-            it = this->callbacks[OP_INSN_BEGIN_CB].find((Callback*)cb);
+            it = this->callbacks[OP_INSN_BEGIN_CB].lower_bound((Callback*)cb);
             delete cb;
             // Only check the address, regardless of the PGD. PGD will be checked on callback delivery
             if (it != this->callbacks[OP_INSN_BEGIN_CB].end() && address == ((OptimizedInsBeginCallback*)(*it))->get_target_address().address){

@@ -300,8 +300,7 @@ class OptimizedInsBeginCallback : public Callback
             OptimizedInsBeginCallback* casted_rhs = dynamic_cast<OptimizedInsBeginCallback*>(rhs);
             //Exit if it does not belong to the same class
             assert(casted_rhs != 0);
-            //Consider only the address, because the PGD will be checked at callback delivery
-            return (this->target_address.address < casted_rhs->target_address.address);
+            return ((this->target_address.address < casted_rhs->target_address.address) || (this->target_address.address == casted_rhs->target_address.address && this->target_address.pgd < casted_rhs->target_address.pgd));
         }
 
     protected:
@@ -321,8 +320,7 @@ class OptimizedBlockBeginCallback : public Callback
             OptimizedBlockBeginCallback* casted_rhs = dynamic_cast<OptimizedBlockBeginCallback*>(rhs);
             //Exit if it does not belong to the same class
             assert(casted_rhs != 0);
-            //Consider only the address, because the PGD will be checked at callback delivery
-            return (this->target_address.address < casted_rhs->target_address.address);
+            return ((this->target_address.address < casted_rhs->target_address.address) || (this->target_address.address == casted_rhs->target_address.address && this->target_address.pgd < casted_rhs->target_address.pgd));
         }
 
     protected:
