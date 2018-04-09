@@ -1310,7 +1310,7 @@ static void n8x0_init(MachineState *machine,
     struct n800_s *s = (struct n800_s *) g_malloc0(sizeof(*s));
     int sdram_size = binfo->ram_size;
 
-    s->mpu = omap2420_mpu_init(sysmem, sdram_size, machine->cpu_model);
+    s->mpu = omap2420_mpu_init(sysmem, sdram_size, machine->cpu_type);
 
     /* Setup peripherals
      *
@@ -1425,6 +1425,8 @@ static void n800_class_init(ObjectClass *oc, void *data)
     mc->desc = "Nokia N800 tablet aka. RX-34 (OMAP2420)";
     mc->init = n800_init;
     mc->default_boot_order = "";
+    mc->ignore_memory_transaction_failures = true;
+    mc->default_cpu_type = ARM_CPU_TYPE_NAME("arm1136-r2");
 }
 
 static const TypeInfo n800_type = {
@@ -1440,6 +1442,8 @@ static void n810_class_init(ObjectClass *oc, void *data)
     mc->desc = "Nokia N810 tablet aka. RX-44 (OMAP2420)";
     mc->init = n810_init;
     mc->default_boot_order = "";
+    mc->ignore_memory_transaction_failures = true;
+    mc->default_cpu_type = ARM_CPU_TYPE_NAME("arm1136-r2");
 }
 
 static const TypeInfo n810_type = {

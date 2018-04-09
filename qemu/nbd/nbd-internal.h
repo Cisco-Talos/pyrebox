@@ -46,68 +46,40 @@
 /* Size of oldstyle negotiation */
 #define NBD_OLDSTYLE_NEGOTIATE_SIZE (8 + 8 + 8 + 4 + 124)
 
-#define NBD_REQUEST_MAGIC       0x25609513
-#define NBD_REPLY_MAGIC         0x67446698
-#define NBD_OPTS_MAGIC          0x49484156454F5054LL
-#define NBD_CLIENT_MAGIC        0x0000420281861253LL
-#define NBD_REP_MAGIC           0x0003e889045565a9LL
+#define NBD_REQUEST_MAGIC           0x25609513
+#define NBD_OPTS_MAGIC              0x49484156454F5054LL
+#define NBD_CLIENT_MAGIC            0x0000420281861253LL
+#define NBD_REP_MAGIC               0x0003e889045565a9LL
 
-#define NBD_SET_SOCK            _IO(0xab, 0)
-#define NBD_SET_BLKSIZE         _IO(0xab, 1)
-#define NBD_SET_SIZE            _IO(0xab, 2)
-#define NBD_DO_IT               _IO(0xab, 3)
-#define NBD_CLEAR_SOCK          _IO(0xab, 4)
-#define NBD_CLEAR_QUE           _IO(0xab, 5)
-#define NBD_PRINT_DEBUG         _IO(0xab, 6)
-#define NBD_SET_SIZE_BLOCKS     _IO(0xab, 7)
-#define NBD_DISCONNECT          _IO(0xab, 8)
-#define NBD_SET_TIMEOUT         _IO(0xab, 9)
-#define NBD_SET_FLAGS           _IO(0xab, 10)
-
-/* NBD errors are based on errno numbers, so there is a 1:1 mapping,
- * but only a limited set of errno values is specified in the protocol.
- * Everything else is squashed to EINVAL.
- */
-#define NBD_SUCCESS    0
-#define NBD_EPERM      1
-#define NBD_EIO        5
-#define NBD_ENOMEM     12
-#define NBD_EINVAL     22
-#define NBD_ENOSPC     28
-#define NBD_ESHUTDOWN  108
+#define NBD_SET_SOCK                _IO(0xab, 0)
+#define NBD_SET_BLKSIZE             _IO(0xab, 1)
+#define NBD_SET_SIZE                _IO(0xab, 2)
+#define NBD_DO_IT                   _IO(0xab, 3)
+#define NBD_CLEAR_SOCK              _IO(0xab, 4)
+#define NBD_CLEAR_QUE               _IO(0xab, 5)
+#define NBD_PRINT_DEBUG             _IO(0xab, 6)
+#define NBD_SET_SIZE_BLOCKS         _IO(0xab, 7)
+#define NBD_DISCONNECT              _IO(0xab, 8)
+#define NBD_SET_TIMEOUT             _IO(0xab, 9)
+#define NBD_SET_FLAGS               _IO(0xab, 10)
 
 /* nbd_read_eof
- * Tries to read @size bytes from @ioc. Returns number of bytes actually read.
- * May return a value >= 0 and < size only on EOF, i.e. when iteratively called
- * qio_channel_readv() returns 0. So, there is no need to call nbd_read_eof
- * iteratively.
+ * Tries to read @size bytes from @ioc.
+ * Returns 1 on success
+ *         0 on eof, when no data was read (errp is not set)
+ *         negative errno on failure (errp is set)
  */
-static inline ssize_t nbd_read_eof(QIOChannel *ioc, void *buffer, size_t size,
-                                   Error **errp)
+static inline int nbd_read_eof(QIOChannel *ioc, void *buffer, size_t size,
+                               Error **errp)
 {
-    struct iovec iov = { .iov_base = buffer, .iov_len = size };
-    /* Sockets are kept in blocking mode in the negotiation phase.  After
-     * that, a non-readable socket simply means that another thread stole
-     * our request/reply.  Synchronization is done with recv_coroutine, so
-     * that this is coroutine-safe.
-     */
-    return nbd_rwv(ioc, &iov, 1, size, true, errp);
-}
+    int ret;
 
-/* nbd_read
- * Reads @size bytes from @ioc. Returns 0 on success.
- */
-static inline int nbd_read(QIOChannel *ioc, void *buffer, size_t size,
-                           Error **errp)
-{
-    ssize_t ret = nbd_read_eof(ioc, buffer, size, errp);
-
-    if (ret >= 0 && ret != size) {
-        ret = -EINVAL;
-        error_setg(errp, "End of file");
+    assert(size);
+    ret = qio_channel_read_all_eof(ioc, buffer, size, errp);
+    if (ret < 0) {
+        ret = -EIO;
     }
-
-    return ret < 0 ? ret : 0;
+    return ret;
 }
 
 /* nbd_write
@@ -116,13 +88,7 @@ static inline int nbd_read(QIOChannel *ioc, void *buffer, size_t size,
 static inline int nbd_write(QIOChannel *ioc, const void *buffer, size_t size,
                             Error **errp)
 {
-    struct iovec iov = { .iov_base = (void *) buffer, .iov_len = size };
-
-    ssize_t ret = nbd_rwv(ioc, &iov, 1, size, false, errp);
-
-    assert(ret < 0 || ret == size);
-
-    return ret < 0 ? ret : 0;
+    return qio_channel_write_all(ioc, buffer, size, errp) < 0 ? -EIO : 0;
 }
 
 struct NBDTLSHandshakeData {
@@ -138,6 +104,7 @@ const char *nbd_opt_lookup(uint32_t opt);
 const char *nbd_rep_lookup(uint32_t rep);
 const char *nbd_info_lookup(uint16_t info);
 const char *nbd_cmd_lookup(uint16_t info);
+const char *nbd_err_lookup(int err);
 
 int nbd_drop(QIOChannel *ioc, size_t size, Error **errp);
 

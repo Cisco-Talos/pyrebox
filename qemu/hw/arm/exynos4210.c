@@ -33,7 +33,7 @@
 #include "hw/arm/arm.h"
 #include "hw/loader.h"
 #include "hw/arm/exynos4210.h"
-#include "hw/sd/sd.h"
+#include "hw/sd/sdhci.h"
 #include "hw/usb/hcd-ehci.h"
 
 #define EXYNOS4210_CHIPID_ADDR         0x10000000
@@ -169,15 +169,11 @@ Exynos4210State *exynos4210_init(MemoryRegion *system_mem)
     Exynos4210State *s = g_new(Exynos4210State, 1);
     qemu_irq gate_irq[EXYNOS4210_NCPUS][EXYNOS4210_IRQ_GATE_NINPUTS];
     SysBusDevice *busdev;
-    ObjectClass *cpu_oc;
     DeviceState *dev;
     int i, n;
 
-    cpu_oc = cpu_class_by_name(TYPE_ARM_CPU, "cortex-a9");
-    assert(cpu_oc);
-
     for (n = 0; n < EXYNOS4210_NCPUS; n++) {
-        Object *cpuobj = object_new(object_class_get_name(cpu_oc));
+        Object *cpuobj = object_new(ARM_CPU_TYPE_NAME("cortex-a9"));
 
         /* By default A9 CPUs have EL3 enabled.  This board does not currently
          * support EL3 so the CPU EL3 property is disabled before realization.
@@ -381,7 +377,7 @@ Exynos4210State *exynos4210_init(MemoryRegion *system_mem)
         BlockBackend *blk;
         DriveInfo *di;
 
-        dev = qdev_create(NULL, "generic-sdhci");
+        dev = qdev_create(NULL, TYPE_SYSBUS_SDHCI);
         qdev_prop_set_uint32(dev, "capareg", EXYNOS4210_SDHCI_CAPABILITIES);
         qdev_init_nofail(dev);
 

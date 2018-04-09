@@ -653,7 +653,7 @@ static int64_t ivshmem_recv_msg(IVShmemState *s, int *pfd, Error **errp)
     } while (n < sizeof(msg));
 
     *pfd = qemu_chr_fe_get_msgfd(&s->server_chr);
-    return msg;
+    return le64_to_cpu(msg);
 }
 
 static void ivshmem_recv_setup(IVShmemState *s, Error **errp)
@@ -1010,6 +1010,10 @@ static const TypeInfo ivshmem_common_info = {
     .instance_size = sizeof(IVShmemState),
     .abstract      = true,
     .class_init    = ivshmem_common_class_init,
+    .interfaces = (InterfaceInfo[]) {
+        { INTERFACE_CONVENTIONAL_PCI_DEVICE },
+        { },
+    },
 };
 
 static const VMStateDescription ivshmem_plain_vmsd = {

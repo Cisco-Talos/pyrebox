@@ -31,6 +31,7 @@ QEMU_FIFO_IN="${QEMU_TEST_DIR}/qmp-in-$$"
 QEMU_FIFO_OUT="${QEMU_TEST_DIR}/qmp-out-$$"
 
 QEMU_HANDLE=0
+export _QEMU_HANDLE=0
 
 # If bash version is >= 4.1, these will be overwritten and dynamic
 # file descriptor values assigned.
@@ -49,22 +50,28 @@ _in_fd=4
 #
 # If $silent is set to anything but an empty string, then
 # response is not echoed out.
+# If $mismatch_only is set, only non-matching responses will
+# be echoed.
 function _timed_wait_for()
 {
     local h=${1}
     shift
 
     QEMU_STATUS[$h]=0
-    while read -t ${QEMU_COMM_TIMEOUT} resp <&${QEMU_OUT[$h]}
+    while IFS= read -t ${QEMU_COMM_TIMEOUT} resp <&${QEMU_OUT[$h]}
     do
-        if [ -z "${silent}" ]; then
+        if [ -z "${silent}" ] && [ -z "${mismatch_only}" ]; then
             echo "${resp}" | _filter_testdir | _filter_qemu \
                            | _filter_qemu_io | _filter_qmp | _filter_hmp
         fi
-        grep -q "${*}" < <(echo ${resp})
+        grep -q "${*}" < <(echo "${resp}")
         if [ $? -eq 0 ]; then
             return
+        elif [ -z "${silent}" ] && [ -n "${mismatch_only}" ]; then
+            echo "${resp}" | _filter_testdir | _filter_qemu \
+                           | _filter_qemu_io | _filter_qmp | _filter_hmp
         fi
+
     done
     QEMU_STATUS[$h]=-1
     if [ -z "${qemu_error_no_exit}" ]; then
@@ -129,6 +136,7 @@ function _send_qemu_cmd()
 # $qemu_comm_method: set this variable to 'monitor' (case insensitive)
 #                    to use the QEMU HMP monitor for communication.
 #                    Otherwise, the default of QMP is used.
+# $qmp_pretty: Set this variable to 'y' to enable QMP pretty printing.
 # $keep_stderr: Set this variable to 'y' to keep QEMU's stderr output on stderr.
 #               If this variable is empty, stderr will be redirected to stdout.
 # Returns:
@@ -145,7 +153,11 @@ function _launch_qemu()
         comm="-monitor stdio"
     else
         local qemu_comm_method="qmp"
-        comm="-monitor none -qmp stdio"
+        if [ "$qmp_pretty" = "y" ]; then
+            comm="-monitor none -qmp-pretty stdio"
+        else
+            comm="-monitor none -qmp stdio"
+        fi
     fi
 
     fifo_out=${QEMU_FIFO_OUT}_${_QEMU_HANDLE}
@@ -192,6 +204,9 @@ function _launch_qemu()
     then
         # Don't print response, since it has version information in it
         silent=yes _timed_wait_for ${_QEMU_HANDLE} "capabilities"
+        if [ "$qmp_pretty" = "y" ]; then
+            silent=yes _timed_wait_for ${_QEMU_HANDLE} "^}"
+        fi
     fi
     QEMU_HANDLE=${_QEMU_HANDLE}
     let _QEMU_HANDLE++

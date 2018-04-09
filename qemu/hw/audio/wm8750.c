@@ -567,11 +567,13 @@ static int wm8750_rx(I2CSlave *i2c)
     return 0x00;
 }
 
-static void wm8750_pre_save(void *opaque)
+static int wm8750_pre_save(void *opaque)
 {
     WM8750State *s = opaque;
 
     s->rate_vmstate = s->rate - wm_rate_table;
+
+    return 0;
 }
 
 static int wm8750_post_load(void *opaque, int version_id)
@@ -680,8 +682,12 @@ uint32_t wm8750_adc_dat(void *opaque)
     WM8750State *s = (WM8750State *) opaque;
     uint32_t *data;
 
-    if (s->idx_in >= sizeof(s->data_in))
+    if (s->idx_in >= sizeof(s->data_in)) {
         wm8750_in_load(s);
+        if (s->idx_in >= sizeof(s->data_in)) {
+            return 0x80008000; /* silence in AUD_FMT_S16 sample format */
+        }
+    }
 
     data = (uint32_t *) &s->data_in[s->idx_in];
     s->req_in -= 4;

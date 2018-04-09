@@ -503,7 +503,7 @@ putsum(uint8_t *data, uint32_t n, uint32_t sloc, uint32_t css, uint32_t cse)
         n = cse + 1;
     if (sloc < n-1) {
         sum = net_checksum_add(n-css, data+css);
-        stw_be_p(data + sloc, net_checksum_finish(sum));
+        stw_be_p(data + sloc, net_checksum_finish_nozero(sum));
     }
 }
 
@@ -1127,7 +1127,7 @@ static uint32_t (*macreg_readops[])(E1000State *, int) = {
     getreg(TADV),     getreg(ITR),      getreg(FCRUC),    getreg(IPAV),
     getreg(WUC),      getreg(WUS),      getreg(SCC),      getreg(ECOL),
     getreg(MCC),      getreg(LATECOL),  getreg(COLC),     getreg(DC),
-    getreg(TNCRS),    getreg(SEC),      getreg(CEXTERR),  getreg(RLEC),
+    getreg(TNCRS),    getreg(SEQEC),    getreg(CEXTERR),  getreg(RLEC),
     getreg(XONRXC),   getreg(XONTXC),   getreg(XOFFRXC),  getreg(XOFFTXC),
     getreg(RFC),      getreg(RJC),      getreg(RNBC),     getreg(TSCTFC),
     getreg(MGTPRC),   getreg(MGTPDC),   getreg(MGTPTC),   getreg(GORCL),
@@ -1223,7 +1223,7 @@ static const uint8_t mac_reg_access[0x8000] = {
     [FFLT]    = markflag(MAC),    [FFMT]    = markflag(MAC),
     [SCC]     = markflag(MAC),    [FCRUC]   = markflag(MAC),
     [LATECOL] = markflag(MAC),    [COLC]    = markflag(MAC),
-    [SEC]     = markflag(MAC),    [CEXTERR] = markflag(MAC),
+    [SEQEC]   = markflag(MAC),    [CEXTERR] = markflag(MAC),
     [XONTXC]  = markflag(MAC),    [XOFFRXC] = markflag(MAC),
     [RJC]     = markflag(MAC),    [RNBC]    = markflag(MAC),
     [MGTPDC]  = markflag(MAC),    [MGTPTC]  = markflag(MAC),
@@ -1343,7 +1343,7 @@ static bool is_version_1(void *opaque, int version_id)
     return version_id == 1;
 }
 
-static void e1000_pre_save(void *opaque)
+static int e1000_pre_save(void *opaque)
 {
     E1000State *s = opaque;
     NetClientState *nc = qemu_get_queue(s->nic);
@@ -1361,6 +1361,8 @@ static void e1000_pre_save(void *opaque)
     if (nc->link_down && have_autoneg(s)) {
         s->phy_reg[PHY_STATUS] |= MII_SR_AUTONEG_COMPLETE;
     }
+
+    return 0;
 }
 
 static int e1000_post_load(void *opaque, int version_id)
@@ -1685,6 +1687,10 @@ static const TypeInfo e1000_base_info = {
     .instance_init = e1000_instance_init,
     .class_size    = sizeof(E1000BaseClass),
     .abstract      = true,
+    .interfaces = (InterfaceInfo[]) {
+        { INTERFACE_CONVENTIONAL_PCI_DEVICE },
+        { },
+    },
 };
 
 static const E1000Info e1000_devices[] = {

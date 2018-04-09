@@ -107,6 +107,22 @@ extern int daemon(int, int);
 #include "glib-compat.h"
 #include "qemu/typedefs.h"
 
+/*
+ * We have a lot of unaudited code that may fail in strange ways, or
+ * even be a security risk during migration, if you disable assertions
+ * at compile-time.  You may comment out these safety checks if you
+ * absolutely want to disable assertion overhead, but it is not
+ * supported upstream so the risk is all yours.  Meanwhile, please
+ * submit patches to remove any side-effects inside an assertion, or
+ * fixing error handling that should use Error instead of assert.
+ */
+#ifdef NDEBUG
+#error building with NDEBUG is not supported
+#endif
+#ifdef G_DISABLE_ASSERT
+#error building with G_DISABLE_ASSERT is not supported
+#endif
+
 #ifndef O_LARGEFILE
 #define O_LARGEFILE 0
 #endif
@@ -131,8 +147,35 @@ extern int daemon(int, int);
 #if !defined(ESHUTDOWN)
 #define ESHUTDOWN 4099
 #endif
+
+/* time_t may be either 32 or 64 bits depending on the host OS, and
+ * can be either signed or unsigned, so we can't just hardcode a
+ * specific maximum value. This is not a C preprocessor constant,
+ * so you can't use TIME_MAX in an #ifdef, but for our purposes
+ * this isn't a problem.
+ */
+
+/* The macros TYPE_SIGNED, TYPE_WIDTH, and TYPE_MAXIMUM are from
+ * Gnulib, and are under the LGPL v2.1 or (at your option) any
+ * later version.
+ */
+
+/* True if the real type T is signed.  */
+#define TYPE_SIGNED(t) (!((t)0 < (t)-1))
+
+/* The width in bits of the integer type or expression T.
+ * Padding bits are not supported.
+ */
+#define TYPE_WIDTH(t) (sizeof(t) * CHAR_BIT)
+
+/* The maximum and minimum values for the integer type T.  */
+#define TYPE_MAXIMUM(t)                                                \
+  ((t) (!TYPE_SIGNED(t)                                                \
+        ? (t)-1                                                        \
+        : ((((t)1 << (TYPE_WIDTH(t) - 2)) - 1) * 2 + 1)))
+
 #ifndef TIME_MAX
-#define TIME_MAX LONG_MAX
+#define TIME_MAX TYPE_MAXIMUM(time_t)
 #endif
 
 /* HOST_LONG_BITS is the size of a native pointer in bits. */
@@ -189,13 +232,13 @@ extern int daemon(int, int);
 
 /* Round number up to multiple. Requires that d be a power of 2 (see
  * QEMU_ALIGN_UP for a safer but slower version on arbitrary
- * numbers) */
+ * numbers); works even if d is a smaller type than n.  */
 #ifndef ROUND_UP
-#define ROUND_UP(n,d) (((n) + (d) - 1) & -(d))
+#define ROUND_UP(n, d) (((n) + (d) - 1) & -(0 ? (n) : (d)))
 #endif
 
 #ifndef DIV_ROUND_UP
-#define DIV_ROUND_UP(n,d) (((n) + (d) - 1) / (d))
+#define DIV_ROUND_UP(n, d) (((n) + (d) - 1) / (d))
 #endif
 
 /*
@@ -257,6 +300,11 @@ void qemu_anon_ram_free(void *ptr, size_t size);
 #else
 #define QEMU_MADV_NOHUGEPAGE QEMU_MADV_INVALID
 #endif
+#ifdef MADV_REMOVE
+#define QEMU_MADV_REMOVE MADV_REMOVE
+#else
+#define QEMU_MADV_REMOVE QEMU_MADV_INVALID
+#endif
 
 #elif defined(CONFIG_POSIX_MADVISE)
 
@@ -269,6 +317,7 @@ void qemu_anon_ram_free(void *ptr, size_t size);
 #define QEMU_MADV_DONTDUMP QEMU_MADV_INVALID
 #define QEMU_MADV_HUGEPAGE  QEMU_MADV_INVALID
 #define QEMU_MADV_NOHUGEPAGE  QEMU_MADV_INVALID
+#define QEMU_MADV_REMOVE QEMU_MADV_INVALID
 
 #else /* no-op */
 
@@ -281,6 +330,7 @@ void qemu_anon_ram_free(void *ptr, size_t size);
 #define QEMU_MADV_DONTDUMP QEMU_MADV_INVALID
 #define QEMU_MADV_HUGEPAGE  QEMU_MADV_INVALID
 #define QEMU_MADV_NOHUGEPAGE  QEMU_MADV_INVALID
+#define QEMU_MADV_REMOVE QEMU_MADV_INVALID
 
 #endif
 
@@ -348,6 +398,8 @@ void sigaction_invoke(struct sigaction *action,
 #endif
 
 int qemu_madvise(void *addr, size_t len, int advice);
+int qemu_mprotect_rwx(void *addr, size_t size);
+int qemu_mprotect_none(void *addr, size_t size);
 
 int qemu_open(const char *name, int flags, ...);
 int qemu_close(int fd);
@@ -481,6 +533,12 @@ char *qemu_get_pid_name(pid_t pid);
  * or -1 on failure.
  */
 pid_t qemu_fork(Error **errp);
+
+/* Using intptr_t ensures that qemu_*_page_mask is sign-extended even
+ * when intptr_t is 32-bit and we are aligning a long long.
+ */
+extern uintptr_t qemu_real_host_page_size;
+extern intptr_t qemu_real_host_page_mask;
 
 extern int qemu_icache_linesize;
 extern int qemu_dcache_linesize;

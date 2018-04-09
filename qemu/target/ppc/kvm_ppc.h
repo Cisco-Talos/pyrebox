@@ -9,14 +9,12 @@
 #ifndef KVM_PPC_H
 #define KVM_PPC_H
 
-#define TYPE_HOST_POWERPC_CPU "host-" TYPE_POWERPC_CPU
+#define TYPE_HOST_POWERPC_CPU POWERPC_CPU_TYPE_NAME("host")
 
 #ifdef CONFIG_KVM
 
 uint32_t kvmppc_get_tbfreq(void);
 uint64_t kvmppc_get_clockfreq(void);
-uint32_t kvmppc_get_vmx(void);
-uint32_t kvmppc_get_dfp(void);
 bool kvmppc_get_host_model(char **buf);
 bool kvmppc_get_host_serial(char **buf);
 int kvmppc_get_hasidle(CPUPPCState *env);
@@ -29,6 +27,8 @@ void kvmppc_set_papr(PowerPCCPU *cpu);
 int kvmppc_set_compat(PowerPCCPU *cpu, uint32_t compat_pvr);
 void kvmppc_set_mpic_proxy(PowerPCCPU *cpu, int mpic_proxy);
 int kvmppc_smt_threads(void);
+void kvmppc_hint_smt_possible(Error **errp);
+int kvmppc_set_smt_threads(int smt);
 int kvmppc_clear_tsr_bits(PowerPCCPU *cpu, uint32_t tsr_bits);
 int kvmppc_or_tsr_bits(PowerPCCPU *cpu, uint32_t tsr_bits);
 int kvmppc_set_tcr(PowerPCCPU *cpu);
@@ -49,8 +49,7 @@ uint64_t kvmppc_rma_size(uint64_t current_size, unsigned int hash_shift);
 #endif /* !CONFIG_USER_ONLY */
 bool kvmppc_has_cap_epr(void);
 int kvmppc_define_rtas_kernel_token(uint32_t token, const char *function);
-bool kvmppc_has_cap_htab_fd(void);
-int kvmppc_get_htab_fd(bool write);
+int kvmppc_get_htab_fd(bool write, uint64_t index, Error **errp);
 int kvmppc_save_htab(QEMUFile *f, int fd, size_t bufsize, int64_t max_ns);
 int kvmppc_load_htab_chunk(QEMUFile *f, int fd, uint32_t index,
                            uint16_t n_valid, uint16_t n_invalid);
@@ -60,13 +59,15 @@ bool kvmppc_has_cap_fixup_hcalls(void);
 bool kvmppc_has_cap_htm(void);
 bool kvmppc_has_cap_mmu_radix(void);
 bool kvmppc_has_cap_mmu_hash_v3(void);
+int kvmppc_get_cap_safe_cache(void);
+int kvmppc_get_cap_safe_bounds_check(void);
+int kvmppc_get_cap_safe_indirect_branch(void);
 int kvmppc_enable_hwrng(void);
 int kvmppc_put_books_sregs(PowerPCCPU *cpu);
 PowerPCCPUClass *kvm_ppc_get_host_cpu_class(void);
 void kvmppc_check_papr_resize_hpt(Error **errp);
 int kvmppc_resize_hpt_prepare(PowerPCCPU *cpu, target_ulong flags, int shift);
 int kvmppc_resize_hpt_commit(PowerPCCPU *cpu, target_ulong flags, int shift);
-void kvmppc_update_sdr1(target_ulong sdr1);
 bool kvmppc_pvr_workaround_required(PowerPCCPU *cpu);
 
 bool kvmppc_is_mem_backend_page_size_ok(const char *obj_path);
@@ -146,6 +147,16 @@ static inline void kvmppc_set_mpic_proxy(PowerPCCPU *cpu, int mpic_proxy)
 static inline int kvmppc_smt_threads(void)
 {
     return 1;
+}
+
+static inline void kvmppc_hint_smt_possible(Error **errp)
+{
+    return;
+}
+
+static inline int kvmppc_set_smt_threads(int smt)
+{
+    return 0;
 }
 
 static inline int kvmppc_or_tsr_bits(PowerPCCPU *cpu, uint32_t tsr_bits)
@@ -234,12 +245,7 @@ static inline int kvmppc_define_rtas_kernel_token(uint32_t token,
     return -1;
 }
 
-static inline bool kvmppc_has_cap_htab_fd(void)
-{
-    return false;
-}
-
-static inline int kvmppc_get_htab_fd(bool write)
+static inline int kvmppc_get_htab_fd(bool write, uint64_t index, Error **errp)
 {
     return -1;
 }
@@ -287,6 +293,21 @@ static inline bool kvmppc_has_cap_mmu_hash_v3(void)
     return false;
 }
 
+static inline int kvmppc_get_cap_safe_cache(void)
+{
+    return 0;
+}
+
+static inline int kvmppc_get_cap_safe_bounds_check(void)
+{
+    return 0;
+}
+
+static inline int kvmppc_get_cap_safe_indirect_branch(void)
+{
+    return 0;
+}
+
 static inline int kvmppc_enable_hwrng(void)
 {
     return -1;
@@ -317,11 +338,6 @@ static inline int kvmppc_resize_hpt_commit(PowerPCCPU *cpu,
                                            target_ulong flags, int shift)
 {
     return -ENOSYS;
-}
-
-static inline void kvmppc_update_sdr1(target_ulong sdr1)
-{
-    abort();
 }
 
 #endif

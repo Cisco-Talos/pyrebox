@@ -850,7 +850,7 @@ static void qemu_spice_gl_unblock_bh(void *opaque)
 
 static void qemu_spice_gl_block_timer(void *opaque)
 {
-    fprintf(stderr, "WARNING: spice: no gl-draw-done within one second\n");
+    warn_report("spice: no gl-draw-done within one second");
 }
 
 static void spice_gl_refresh(DisplayChangeListener *dcl)
@@ -1019,7 +1019,7 @@ static void qemu_spice_display_init_one(QemuConsole *con)
         ssd->gl_unblock_bh = qemu_bh_new(qemu_spice_gl_unblock_bh, ssd);
         ssd->gl_unblock_timer = timer_new_ms(QEMU_CLOCK_REALTIME,
                                              qemu_spice_gl_block_timer, ssd);
-        ssd->gls = console_gl_init_context();
+        ssd->gls = qemu_gl_init_shader();
         ssd->have_surface = false;
         ssd->have_scanout = false;
     }

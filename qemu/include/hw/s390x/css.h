@@ -16,6 +16,7 @@
 #include "hw/s390x/adapter.h"
 #include "hw/s390x/s390_flic.h"
 #include "hw/s390x/ioinst.h"
+#include "sysemu/kvm.h"
 
 /* Channel subsystem constants. */
 #define MAX_DEVNO 65535
@@ -74,6 +75,46 @@ typedef struct CMBE {
     uint32_t reserved[7];
 } QEMU_PACKED CMBE;
 
+typedef enum CcwDataStreamOp {
+    CDS_OP_R = 0, /* read, false when used as is_write */
+    CDS_OP_W = 1, /* write, true when used as is_write */
+    CDS_OP_A = 2  /* advance, should not be used as is_write */
+} CcwDataStreamOp;
+
+/* normal usage is via SuchchDev.cds instead of instantiating */
+typedef struct CcwDataStream {
+#define CDS_F_IDA   0x01
+#define CDS_F_MIDA  0x02
+#define CDS_F_I2K   0x04
+#define CDS_F_C64   0x08
+#define CDS_F_FMT   0x10 /* CCW format-1 */
+#define CDS_F_STREAM_BROKEN  0x80
+    uint8_t flags;
+    uint8_t at_idaw;
+    uint16_t at_byte;
+    uint16_t count;
+    uint32_t cda_orig;
+    int (*op_handler)(struct CcwDataStream *cds, void *buff, int len,
+                      CcwDataStreamOp op);
+    hwaddr cda;
+} CcwDataStream;
+
+/*
+ * IO instructions conclude according to this. Currently we have only
+ * cc codes. Valid values are 0, 1, 2, 3 and the generic semantic for
+ * IO instructions is described briefly. For more details consult the PoP.
+ */
+typedef enum IOInstEnding {
+    /* produced expected result */
+    IOINST_CC_EXPECTED = 0,
+    /* status conditions were present or produced alternate result */
+    IOINST_CC_STATUS_PRESENT = 1,
+    /* inst. ineffective because busy with previously initiated function */
+    IOINST_CC_BUSY = 2,
+    /* inst. ineffective because not operational */
+    IOINST_CC_NOT_OPERATIONAL = 3
+} IOInstEnding;
+
 typedef struct SubchDev SubchDev;
 struct SubchDev {
     /* channel-subsystem related things: */
@@ -91,13 +132,25 @@ struct SubchDev {
     uint8_t ccw_no_data_cnt;
     uint16_t migrated_schid; /* used for missmatch detection */
     ORB orb;
+    CcwDataStream cds;
     /* transport-provided data: */
     int (*ccw_cb) (SubchDev *, CCW1);
     void (*disable_cb)(SubchDev *);
-    int (*do_subchannel_work) (SubchDev *);
+    IOInstEnding (*do_subchannel_work) (SubchDev *);
     SenseId id;
     void *driver_data;
 };
+
+static inline void sch_gen_unit_exception(SubchDev *sch)
+{
+    sch->curr_status.scsw.ctrl &= ~SCSW_ACTL_START_PEND;
+    sch->curr_status.scsw.ctrl |= SCSW_STCTL_PRIMARY |
+                                  SCSW_STCTL_SECONDARY |
+                                  SCSW_STCTL_ALERT |
+                                  SCSW_STCTL_STATUS_PEND;
+    sch->curr_status.scsw.cpa = sch->channel_prog + 8;
+    sch->curr_status.scsw.dstat =  SCSW_DSTAT_UNIT_EXCEP;
+}
 
 extern const VMStateDescription vmstate_subch_dev;
 
@@ -150,15 +203,16 @@ void copy_scsw_to_guest(SCSW *dest, const SCSW *src);
 void css_inject_io_interrupt(SubchDev *sch);
 void css_reset(void);
 void css_reset_sch(SubchDev *sch);
-void css_queue_crw(uint8_t rsc, uint8_t erc, int chain, uint16_t rsid);
+void css_queue_crw(uint8_t rsc, uint8_t erc, int solicited,
+                   int chain, uint16_t rsid);
 void css_generate_sch_crws(uint8_t cssid, uint8_t ssid, uint16_t schid,
                            int hotplugged, int add);
 void css_generate_chp_crws(uint8_t cssid, uint8_t chpid);
 void css_generate_css_crws(uint8_t cssid);
 void css_clear_sei_pending(void);
-int s390_ccw_cmd_request(ORB *orb, SCSW *scsw, void *data);
-int do_subchannel_work_virtual(SubchDev *sub);
-int do_subchannel_work_passthrough(SubchDev *sub);
+IOInstEnding s390_ccw_cmd_request(SubchDev *sch);
+IOInstEnding do_subchannel_work_virtual(SubchDev *sub);
+IOInstEnding do_subchannel_work_passthrough(SubchDev *sub);
 
 typedef enum {
     CSS_IO_ADAPTER_VIRTIO = 0,
@@ -185,11 +239,11 @@ bool css_subch_visible(SubchDev *sch);
 void css_conditional_io_interrupt(SubchDev *sch);
 int css_do_stsch(SubchDev *sch, SCHIB *schib);
 bool css_schid_final(int m, uint8_t cssid, uint8_t ssid, uint16_t schid);
-int css_do_msch(SubchDev *sch, const SCHIB *schib);
-int css_do_xsch(SubchDev *sch);
-int css_do_csch(SubchDev *sch);
-int css_do_hsch(SubchDev *sch);
-int css_do_ssch(SubchDev *sch, ORB *orb);
+IOInstEnding css_do_msch(SubchDev *sch, const SCHIB *schib);
+IOInstEnding css_do_xsch(SubchDev *sch);
+IOInstEnding css_do_csch(SubchDev *sch);
+IOInstEnding css_do_hsch(SubchDev *sch);
+IOInstEnding css_do_ssch(SubchDev *sch, ORB *orb);
 int css_do_tsch_get_irb(SubchDev *sch, IRB *irb, int *irb_len);
 void css_do_tsch_update_subch(SubchDev *sch);
 int css_do_stcrw(CRW *crw);
@@ -200,7 +254,7 @@ int css_collect_chp_desc(int m, uint8_t cssid, uint8_t f_chpid, uint8_t l_chpid,
 void css_do_schm(uint8_t mbk, int update, int dct, uint64_t mbo);
 int css_enable_mcsse(void);
 int css_enable_mss(void);
-int css_do_rsch(SubchDev *sch);
+IOInstEnding css_do_rsch(SubchDev *sch);
 int css_do_rchp(uint8_t cssid, uint8_t chpid);
 bool css_present(uint8_t cssid);
 #endif
@@ -237,5 +291,48 @@ SubchDev *css_create_sch(CssDevId bus_id, bool is_virtual, bool squash_mcss,
 
 /** Turn on css migration */
 void css_register_vmstate(void);
+
+
+void ccw_dstream_init(CcwDataStream *cds, CCW1 const *ccw, ORB const *orb);
+
+static inline void ccw_dstream_rewind(CcwDataStream *cds)
+{
+    cds->at_byte = 0;
+    cds->at_idaw = 0;
+    cds->cda = cds->cda_orig;
+}
+
+static inline bool ccw_dstream_good(CcwDataStream *cds)
+{
+    return !(cds->flags & CDS_F_STREAM_BROKEN);
+}
+
+static inline uint16_t ccw_dstream_residual_count(CcwDataStream *cds)
+{
+    return cds->count - cds->at_byte;
+}
+
+static inline uint16_t ccw_dstream_avail(CcwDataStream *cds)
+{
+    return ccw_dstream_good(cds) ? ccw_dstream_residual_count(cds) : 0;
+}
+
+static inline int ccw_dstream_advance(CcwDataStream *cds, int len)
+{
+    return cds->op_handler(cds, NULL, len, CDS_OP_A);
+}
+
+static inline int ccw_dstream_write_buf(CcwDataStream *cds, void *buff, int len)
+{
+    return cds->op_handler(cds, buff, len, CDS_OP_W);
+}
+
+static inline int ccw_dstream_read_buf(CcwDataStream *cds, void *buff, int len)
+{
+    return cds->op_handler(cds, buff, len, CDS_OP_R);
+}
+
+#define ccw_dstream_read(cds, v) ccw_dstream_read_buf((cds), &(v), sizeof(v))
+#define ccw_dstream_write(cds, v) ccw_dstream_write_buf((cds), &(v), sizeof(v))
 
 #endif

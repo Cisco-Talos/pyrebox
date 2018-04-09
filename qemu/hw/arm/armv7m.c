@@ -41,7 +41,7 @@ static MemTxResult bitband_read(void *opaque, hwaddr offset,
 
     /* Find address in underlying memory and round down to multiple of size */
     addr = bitband_addr(s, offset) & (-size);
-    res = address_space_read(s->source_as, addr, attrs, buf, size);
+    res = address_space_read(&s->source_as, addr, attrs, buf, size);
     if (res) {
         return res;
     }
@@ -66,7 +66,7 @@ static MemTxResult bitband_write(void *opaque, hwaddr offset, uint64_t value,
 
     /* Find address in underlying memory and round down to multiple of size */
     addr = bitband_addr(s, offset) & (-size);
-    res = address_space_read(s->source_as, addr, attrs, buf, size);
+    res = address_space_read(&s->source_as, addr, attrs, buf, size);
     if (res) {
         return res;
     }
@@ -79,7 +79,7 @@ static MemTxResult bitband_write(void *opaque, hwaddr offset, uint64_t value,
     } else {
         buf[bitpos >> 3] &= ~bit;
     }
-    return address_space_write(s->source_as, addr, attrs, buf, size);
+    return address_space_write(&s->source_as, addr, attrs, buf, size);
 }
 
 static const MemoryRegionOps bitband_ops = {
@@ -97,12 +97,6 @@ static void bitband_init(Object *obj)
     BitBandState *s = BITBAND(obj);
     SysBusDevice *dev = SYS_BUS_DEVICE(obj);
 
-    object_property_add_link(obj, "source-memory",
-                             TYPE_MEMORY_REGION,
-                             (Object **)&s->source_memory,
-                             qdev_prop_allow_set_link_before_realize,
-                             OBJ_PROP_LINK_UNREF_ON_RELEASE,
-                             &error_abort);
     memory_region_init_io(&s->iomem, obj, &bitband_ops, s,
                           "bitband", 0x02000000);
     sysbus_init_mmio(dev, &s->iomem);
@@ -117,8 +111,7 @@ static void bitband_realize(DeviceState *dev, Error **errp)
         return;
     }
 
-    s->source_as = address_space_init_shareable(s->source_memory,
-                                                "bitband-source");
+    address_space_init(&s->source_as, s->source_memory, "bitband-source");
 }
 
 /* Board init.  */
@@ -138,15 +131,9 @@ static void armv7m_instance_init(Object *obj)
 
     /* Can't init the cpu here, we don't yet know which model to use */
 
-    object_property_add_link(obj, "memory",
-                             TYPE_MEMORY_REGION,
-                             (Object **)&s->board_memory,
-                             qdev_prop_allow_set_link_before_realize,
-                             OBJ_PROP_LINK_UNREF_ON_RELEASE,
-                             &error_abort);
     memory_region_init(&s->container, obj, "armv7m-container", UINT64_MAX);
 
-    object_initialize(&s->nvic, sizeof(s->nvic), "armv7m_nvic");
+    object_initialize(&s->nvic, sizeof(s->nvic), TYPE_NVIC);
     qdev_set_parent_bus(DEVICE(&s->nvic), sysbus_get_default());
     object_property_add_alias(obj, "num-irq",
                               OBJECT(&s->nvic), "num-irq", &error_abort);
@@ -163,10 +150,6 @@ static void armv7m_realize(DeviceState *dev, Error **errp)
     SysBusDevice *sbd;
     Error *err = NULL;
     int i;
-    char **cpustr;
-    ObjectClass *oc;
-    const char *typename;
-    CPUClass *cc;
 
     if (!s->board_memory) {
         error_setg(errp, "memory property was not set");
@@ -175,29 +158,7 @@ static void armv7m_realize(DeviceState *dev, Error **errp)
 
     memory_region_add_subregion_overlap(&s->container, 0, s->board_memory, -1);
 
-    cpustr = g_strsplit(s->cpu_model, ",", 2);
-
-    oc = cpu_class_by_name(TYPE_ARM_CPU, cpustr[0]);
-    if (!oc) {
-        error_setg(errp, "Unknown CPU model %s", cpustr[0]);
-        g_strfreev(cpustr);
-        return;
-    }
-
-    cc = CPU_CLASS(oc);
-    typename = object_class_get_name(oc);
-    cc->parse_features(typename, cpustr[1], &err);
-    g_strfreev(cpustr);
-    if (err) {
-        error_propagate(errp, err);
-        return;
-    }
-
-    s->cpu = ARM_CPU(object_new(typename));
-    if (!s->cpu) {
-        error_setg(errp, "Unknown CPU model %s", s->cpu_model);
-        return;
-    }
+    s->cpu = ARM_CPU(object_new(s->cpu_type));
 
     object_property_set_link(OBJECT(s->cpu), OBJECT(&s->container), "memory",
                              &error_abort);
@@ -253,7 +214,9 @@ static void armv7m_realize(DeviceState *dev, Error **errp)
 }
 
 static Property armv7m_properties[] = {
-    DEFINE_PROP_STRING("cpu-model", ARMv7MState, cpu_model),
+    DEFINE_PROP_STRING("cpu-type", ARMv7MState, cpu_type),
+    DEFINE_PROP_LINK("memory", ARMv7MState, board_memory, TYPE_MEMORY_REGION,
+                     MemoryRegion *),
     DEFINE_PROP_END_OF_LIST(),
 };
 
@@ -285,20 +248,16 @@ static void armv7m_reset(void *opaque)
    Returns the ARMv7M device.  */
 
 DeviceState *armv7m_init(MemoryRegion *system_memory, int mem_size, int num_irq,
-                      const char *kernel_filename, const char *cpu_model)
+                         const char *kernel_filename, const char *cpu_type)
 {
     DeviceState *armv7m;
 
-    if (cpu_model == NULL) {
-        cpu_model = "cortex-m3";
-    }
-
-    armv7m = qdev_create(NULL, "armv7m");
+    armv7m = qdev_create(NULL, TYPE_ARMV7M);
     qdev_prop_set_uint32(armv7m, "num-irq", num_irq);
-    qdev_prop_set_string(armv7m, "cpu-model", cpu_model);
+    qdev_prop_set_string(armv7m, "cpu-type", cpu_type);
     object_property_set_link(OBJECT(armv7m), OBJECT(get_system_memory()),
                                      "memory", &error_abort);
-    /* This will exit with an error if the user passed us a bad cpu_model */
+    /* This will exit with an error if the user passed us a bad cpu_type */
     qdev_init_nofail(armv7m);
 
     armv7m_load_kernel(ARM_CPU(first_cpu), kernel_filename, mem_size);
@@ -349,6 +308,8 @@ void armv7m_load_kernel(ARMCPU *cpu, const char *kernel_filename, int mem_size)
 
 static Property bitband_properties[] = {
     DEFINE_PROP_UINT32("base", BitBandState, base, 0),
+    DEFINE_PROP_LINK("source-memory", BitBandState, source_memory,
+                     TYPE_MEMORY_REGION, MemoryRegion *),
     DEFINE_PROP_END_OF_LIST(),
 };
 

@@ -11,12 +11,10 @@
 #include "sysemu/dma.h"
 #include "sysemu/sysemu.h"
 #include "hw/block/block.h"
-#include "block/scsi.h"
+#include "scsi/constants.h"
+#include "qapi/error.h"
 
 /* debug IDE devices */
-//#define DEBUG_IDE
-//#define DEBUG_IDE_ATAPI
-//#define DEBUG_AIO
 #define USE_DMA_CDROM
 
 typedef struct IDEBus IDEBus;
@@ -335,11 +333,14 @@ struct unreported_events {
 };
 
 enum ide_dma_cmd {
-    IDE_DMA_READ,
+    IDE_DMA_READ = 0,
     IDE_DMA_WRITE,
     IDE_DMA_TRIM,
     IDE_DMA_ATAPI,
+    IDE_DMA__COUNT
 };
+
+extern const char *IDE_DMA_CMD_lookup[IDE_DMA__COUNT];
 
 #define ide_cmd_is_read(s) \
 	((s)->dma_cmd == IDE_DMA_READ)
@@ -495,7 +496,7 @@ struct IDEBus {
 
 typedef struct IDEDeviceClass {
     DeviceClass parent_class;
-    int (*init)(IDEDevice *dev);
+    void (*realize)(IDEDevice *dev, Error **errp);
 } IDEDeviceClass;
 
 struct IDEDevice {
@@ -507,6 +508,14 @@ struct IDEDevice {
     char *serial;
     char *model;
     uint64_t wwn;
+    /*
+     * 0x0000        - rotation rate not reported
+     * 0x0001        - non-rotating medium (SSD)
+     * 0x0002-0x0400 - reserved
+     * 0x0401-0xffe  - rotations per minute
+     * 0xffff        - reserved
+     */
+    uint16_t rotation_rate;
 };
 
 /* These are used for the error_status field of IDEBus */
@@ -605,7 +614,7 @@ int ide_init_drive(IDEState *s, BlockBackend *blk, IDEDriveKind kind,
                    const char *version, const char *serial, const char *model,
                    uint64_t wwn,
                    uint32_t cylinders, uint32_t heads, uint32_t secs,
-                   int chs_trans);
+                   int chs_trans, Error **errp);
 void ide_init2(IDEBus *bus, qemu_irq irq);
 void ide_exit(IDEState *s);
 void ide_init_ioport(IDEBus *bus, ISADevice *isa, int iobase, int iobase2);

@@ -80,7 +80,7 @@ uint32_t HELPER(neon_tbl)(CPUARMState *env, uint32_t ireg, uint32_t def,
 
 static inline uint32_t merge_syn_data_abort(uint32_t template_syn,
                                             unsigned int target_el,
-                                            bool same_el,
+                                            bool same_el, bool ea,
                                             bool s1ptw, bool is_write,
                                             int fsc)
 {
@@ -99,7 +99,7 @@ static inline uint32_t merge_syn_data_abort(uint32_t template_syn,
      */
     if (!(template_syn & ARM_EL_ISV) || target_el != 2 || s1ptw) {
         syn = syn_data_abort_no_iss(same_el,
-                                    0, 0, s1ptw, is_write, fsc);
+                                    ea, 0, s1ptw, is_write, fsc);
     } else {
         /* Fields: IL, ISV, SAS, SSE, SRT, SF and AR come from the template
          * syndrome created at translation time.
@@ -107,12 +107,57 @@ static inline uint32_t merge_syn_data_abort(uint32_t template_syn,
          */
         syn = syn_data_abort_with_iss(same_el,
                                       0, 0, 0, 0, 0,
-                                      0, 0, s1ptw, is_write, fsc,
+                                      ea, 0, s1ptw, is_write, fsc,
                                       false);
         /* Merge the runtime syndrome with the template syndrome.  */
         syn |= template_syn;
     }
     return syn;
+}
+
+static void deliver_fault(ARMCPU *cpu, vaddr addr, MMUAccessType access_type,
+                          uint32_t fsr, uint32_t fsc, ARMMMUFaultInfo *fi)
+{
+    CPUARMState *env = &cpu->env;
+    int target_el;
+    bool same_el;
+    uint32_t syn, exc;
+
+    target_el = exception_target_el(env);
+    if (fi->stage2) {
+        target_el = 2;
+        env->cp15.hpfar_el2 = extract64(fi->s2addr, 12, 47) << 4;
+    }
+    same_el = (arm_current_el(env) == target_el);
+
+    if (fsc == 0x3f) {
+        /* Caller doesn't have a long-format fault status code. This
+         * should only happen if this fault will never actually be reported
+         * to an EL that uses a syndrome register. Check that here.
+         * 0x3f is a (currently) reserved FSC code, in case the constructed
+         * syndrome does leak into the guest somehow.
+         */
+        assert(target_el != 2 && !arm_el_is_aa64(env, target_el));
+    }
+
+    if (access_type == MMU_INST_FETCH) {
+        syn = syn_insn_abort(same_el, fi->ea, fi->s1ptw, fsc);
+        exc = EXCP_PREFETCH_ABORT;
+    } else {
+        syn = merge_syn_data_abort(env->exception.syndrome, target_el,
+                                   same_el, fi->ea, fi->s1ptw,
+                                   access_type == MMU_DATA_STORE,
+                                   fsc);
+        if (access_type == MMU_DATA_STORE
+            && arm_feature(env, ARM_FEATURE_V6)) {
+            fsr |= (1 << 11);
+        }
+        exc = EXCP_DATA_ABORT;
+    }
+
+    env->exception.vaddress = addr;
+    env->exception.fsr = fsr;
+    raise_exception(env, exc, syn, target_el);
 }
 
 /* try to fill the TLB and return an exception if error. If retaddr is
@@ -129,22 +174,12 @@ void tlb_fill(CPUState *cs, target_ulong addr, MMUAccessType access_type,
     ret = arm_tlb_fill(cs, addr, access_type, mmu_idx, &fsr, &fi);
     if (unlikely(ret)) {
         ARMCPU *cpu = ARM_CPU(cs);
-        CPUARMState *env = &cpu->env;
-        uint32_t syn, exc, fsc;
-        unsigned int target_el;
-        bool same_el;
+        uint32_t fsc;
 
         if (retaddr) {
             /* now we have a real cpu fault */
             cpu_restore_state(cs, retaddr);
         }
-
-        target_el = exception_target_el(env);
-        if (fi.stage2) {
-            target_el = 2;
-            env->cp15.hpfar_el2 = extract64(fi.s2addr, 12, 47) << 4;
-        }
-        same_el = arm_current_el(env) == target_el;
 
         if (fsr & (1 << 9)) {
             /* LPAE format fault status register : bottom 6 bits are
@@ -153,34 +188,15 @@ void tlb_fill(CPUState *cs, target_ulong addr, MMUAccessType access_type,
             fsc = extract32(fsr, 0, 6);
         } else {
             /* Short format FSR : this fault will never actually be reported
-             * to an EL that uses a syndrome register. Check that here,
-             * and use a (currently) reserved FSR code in case the constructed
-             * syndrome does leak into the guest somehow.
+             * to an EL that uses a syndrome register. Use a (currently)
+             * reserved FSR code in case the constructed syndrome does leak
+             * into the guest somehow. deliver_fault will assert that
+             * we don't target an EL using the syndrome.
              */
-            assert(target_el != 2 && !arm_el_is_aa64(env, target_el));
             fsc = 0x3f;
         }
 
-        /* For insn and data aborts we assume there is no instruction syndrome
-         * information; this is always true for exceptions reported to EL1.
-         */
-        if (access_type == MMU_INST_FETCH) {
-            syn = syn_insn_abort(same_el, 0, fi.s1ptw, fsc);
-            exc = EXCP_PREFETCH_ABORT;
-        } else {
-            syn = merge_syn_data_abort(env->exception.syndrome, target_el,
-                                       same_el, fi.s1ptw,
-                                       access_type == MMU_DATA_STORE, fsc);
-            if (access_type == MMU_DATA_STORE
-                && arm_feature(env, ARM_FEATURE_V6)) {
-                fsr |= (1 << 11);
-            }
-            exc = EXCP_DATA_ABORT;
-        }
-
-        env->exception.vaddress = addr;
-        env->exception.fsr = fsr;
-        raise_exception(env, exc, syn, target_el);
+        deliver_fault(cpu, addr, access_type, fsr, fsc, &fi);
     }
 }
 
@@ -191,9 +207,8 @@ void arm_cpu_do_unaligned_access(CPUState *cs, vaddr vaddr,
 {
     ARMCPU *cpu = ARM_CPU(cs);
     CPUARMState *env = &cpu->env;
-    int target_el;
-    bool same_el;
-    uint32_t syn;
+    uint32_t fsr, fsc;
+    ARMMMUFaultInfo fi = {};
     ARMMMUIdx arm_mmu_idx = core_to_arm_mmu_idx(env, mmu_idx);
 
     if (retaddr) {
@@ -201,28 +216,60 @@ void arm_cpu_do_unaligned_access(CPUState *cs, vaddr vaddr,
         cpu_restore_state(cs, retaddr);
     }
 
-    target_el = exception_target_el(env);
-    same_el = (arm_current_el(env) == target_el);
-
-    env->exception.vaddress = vaddr;
-
     /* the DFSR for an alignment fault depends on whether we're using
      * the LPAE long descriptor format, or the short descriptor format
      */
     if (arm_s1_regime_using_lpae_format(env, arm_mmu_idx)) {
-        env->exception.fsr = (1 << 9) | 0x21;
+        fsr = (1 << 9) | 0x21;
     } else {
-        env->exception.fsr = 0x1;
+        fsr = 0x1;
+    }
+    fsc = 0x21;
+
+    deliver_fault(cpu, vaddr, access_type, fsr, fsc, &fi);
+}
+
+/* arm_cpu_do_transaction_failed: handle a memory system error response
+ * (eg "no device/memory present at address") by raising an external abort
+ * exception
+ */
+void arm_cpu_do_transaction_failed(CPUState *cs, hwaddr physaddr,
+                                   vaddr addr, unsigned size,
+                                   MMUAccessType access_type,
+                                   int mmu_idx, MemTxAttrs attrs,
+                                   MemTxResult response, uintptr_t retaddr)
+{
+    ARMCPU *cpu = ARM_CPU(cs);
+    CPUARMState *env = &cpu->env;
+    uint32_t fsr, fsc;
+    ARMMMUFaultInfo fi = {};
+    ARMMMUIdx arm_mmu_idx = core_to_arm_mmu_idx(env, mmu_idx);
+
+    if (retaddr) {
+        /* now we have a real cpu fault */
+        cpu_restore_state(cs, retaddr);
     }
 
-    if (access_type == MMU_DATA_STORE && arm_feature(env, ARM_FEATURE_V6)) {
-        env->exception.fsr |= (1 << 11);
-    }
+    /* The EA bit in syndromes and fault status registers is an
+     * IMPDEF classification of external aborts. ARM implementations
+     * usually use this to indicate AXI bus Decode error (0) or
+     * Slave error (1); in QEMU we follow that.
+     */
+    fi.ea = (response != MEMTX_DECODE_ERROR);
 
-    syn = merge_syn_data_abort(env->exception.syndrome, target_el,
-                               same_el, 0, access_type == MMU_DATA_STORE,
-                               0x21);
-    raise_exception(env, EXCP_DATA_ABORT, syn, target_el);
+    /* The fault status register format depends on whether we're using
+     * the LPAE long descriptor format, or the short descriptor format.
+     */
+    if (arm_s1_regime_using_lpae_format(env, arm_mmu_idx)) {
+        /* long descriptor form, STATUS 0b010000: synchronous ext abort */
+        fsr = (fi.ea << 12) | (1 << 9) | 0x10;
+    } else {
+        /* short descriptor form, FSR 0b01000 : synchronous ext abort */
+        fsr = (fi.ea << 12) | 0x8;
+    }
+    fsc = 0x10;
+
+    deliver_fault(cpu, addr, access_type, fsr, fsc, &fi);
 }
 
 #endif /* !defined(CONFIG_USER_ONLY) */
@@ -370,6 +417,11 @@ static inline int check_wfx_trap(CPUARMState *env, bool is_wfe)
     int cur_el = arm_current_el(env);
     uint64_t mask;
 
+    if (arm_feature(env, ARM_FEATURE_M)) {
+        /* M profile cores can never trap WFI/WFE. */
+        return 0;
+    }
+
     /* If we are currently in EL0 then we need to check if SCTLR is set up for
      * WFx instructions being trapped to EL1. These trap bits don't exist in v7.
      */
@@ -411,7 +463,7 @@ static inline int check_wfx_trap(CPUARMState *env, bool is_wfe)
     return 0;
 }
 
-void HELPER(wfi)(CPUARMState *env)
+void HELPER(wfi)(CPUARMState *env, uint32_t insn_len)
 {
     CPUState *cs = CPU(arm_env_get_cpu(env));
     int target_el = check_wfx_trap(env, false);
@@ -424,8 +476,9 @@ void HELPER(wfi)(CPUARMState *env)
     }
 
     if (target_el) {
-        env->pc -= 4;
-        raise_exception(env, EXCP_UDEF, syn_wfx(1, 0xe, 0), target_el);
+        env->pc -= insn_len;
+        raise_exception(env, EXCP_UDEF, syn_wfx(1, 0xe, 0, insn_len == 2),
+                        target_el);
     }
 
     cs->exception_index = EXCP_HLT;
@@ -449,13 +502,6 @@ void HELPER(yield)(CPUARMState *env)
 {
     ARMCPU *cpu = arm_env_get_cpu(env);
     CPUState *cs = CPU(cpu);
-
-    /* When running in MTTCG we don't generate jumps to the yield and
-     * WFE helpers as it won't affect the scheduling of other vCPUs.
-     * If we wanted to more completely model WFE/SEV so we don't busy
-     * spin unnecessarily we would need to do something more involved.
-     */
-    g_assert(!parallel_cpus);
 
     /* This is a non-trappable hint instruction that generally indicates
      * that the guest is currently busy-looping. Yield control back to the
@@ -901,22 +947,29 @@ void HELPER(pre_smc)(CPUARMState *env, uint32_t syndrome)
      */
     bool undef = arm_feature(env, ARM_FEATURE_AARCH64) ? smd : smd && !secure;
 
-    if (arm_is_psci_call(cpu, EXCP_SMC)) {
-        /* If PSCI is enabled and this looks like a valid PSCI call then
-         * that overrides the architecturally mandated SMC behaviour.
+    if (!arm_feature(env, ARM_FEATURE_EL3) &&
+        cpu->psci_conduit != QEMU_PSCI_CONDUIT_SMC) {
+        /* If we have no EL3 then SMC always UNDEFs and can't be
+         * trapped to EL2. PSCI-via-SMC is a sort of ersatz EL3
+         * firmware within QEMU, and we want an EL2 guest to be able
+         * to forbid its EL1 from making PSCI calls into QEMU's
+         * "firmware" via HCR.TSC, so for these purposes treat
+         * PSCI-via-SMC as implying an EL3.
          */
-        return;
-    }
-
-    if (!arm_feature(env, ARM_FEATURE_EL3)) {
-        /* If we have no EL3 then SMC always UNDEFs */
         undef = true;
     } else if (!secure && cur_el == 1 && (env->cp15.hcr_el2 & HCR_TSC)) {
-        /* In NS EL1, HCR controlled routing to EL2 has priority over SMD. */
+        /* In NS EL1, HCR controlled routing to EL2 has priority over SMD.
+         * We also want an EL2 guest to be able to forbid its EL1 from
+         * making PSCI calls into QEMU's "firmware" via HCR.TSC.
+         */
         raise_exception(env, EXCP_HYP_TRAP, syndrome, 2);
     }
 
-    if (undef) {
+    /* If PSCI is enabled and this looks like a valid PSCI call then
+     * suppress the UNDEF -- we'll catch the SMC exception and
+     * implement the PSCI call behaviour there.
+     */
+    if (undef && !arm_is_psci_call(cpu, EXCP_SMC)) {
         raise_exception(env, EXCP_UDEF, syn_uncategorized(),
                         exception_target_el(env));
     }
@@ -970,7 +1023,7 @@ void HELPER(exception_return)(CPUARMState *env)
 
     aarch64_save_sp(env, cur_el);
 
-    env->exclusive_addr = -1;
+    arm_clear_exclusive(env);
 
     /* We must squash the PSTATE.SS bit to zero unless both of the
      * following hold:

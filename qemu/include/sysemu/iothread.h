@@ -24,6 +24,9 @@ typedef struct {
 
     QemuThread thread;
     AioContext *ctx;
+    GMainContext *worker_context;
+    GMainLoop *main_loop;
+    GOnce once;
     QemuMutex init_done_lock;
     QemuCond init_done_cond;    /* is thread initialization done? */
     bool stopping;
@@ -41,5 +44,15 @@ typedef struct {
 char *iothread_get_id(IOThread *iothread);
 AioContext *iothread_get_aio_context(IOThread *iothread);
 void iothread_stop_all(void);
+GMainContext *iothread_get_g_main_context(IOThread *iothread);
+
+/*
+ * Helpers used to allocate iothreads for internal use.  These
+ * iothreads will not be seen by monitor clients when query using
+ * "query-iothreads".
+ */
+IOThread *iothread_create(const char *id, Error **errp);
+void iothread_stop(IOThread *iothread);
+void iothread_destroy(IOThread *iothread);
 
 #endif /* IOTHREAD_H */

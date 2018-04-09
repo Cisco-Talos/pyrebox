@@ -23,71 +23,27 @@
 static QLIST_HEAD(, TPMBackend) tpm_backends =
     QLIST_HEAD_INITIALIZER(tpm_backends);
 
+static bool tpm_models[TPM_MODEL__MAX];
 
-#define TPM_MAX_MODELS      1
-#define TPM_MAX_DRIVERS     1
-
-static TPMDriverOps const *be_drivers[TPM_MAX_DRIVERS] = {
-    NULL,
-};
-
-static enum TpmModel tpm_models[TPM_MAX_MODELS] = {
-    TPM_MODEL__MAX,
-};
-
-int tpm_register_model(enum TpmModel model)
+void tpm_register_model(enum TpmModel model)
 {
-    int i;
-
-    for (i = 0; i < TPM_MAX_MODELS; i++) {
-        if (tpm_models[i] == TPM_MODEL__MAX) {
-            tpm_models[i] = model;
-            return 0;
-        }
-    }
-    error_report("Could not register TPM model");
-    return 1;
+    tpm_models[model] = true;
 }
 
-static bool tpm_model_is_registered(enum TpmModel model)
+static const TPMBackendClass *
+tpm_be_find_by_type(enum TpmType type)
 {
-    int i;
+    ObjectClass *oc;
+    char *typename = g_strdup_printf("tpm-%s", TpmType_str(type));
 
-    for (i = 0; i < TPM_MAX_MODELS; i++) {
-        if (tpm_models[i] == model) {
-            return true;
-        }
-    }
-    return false;
-}
+    oc = object_class_by_name(typename);
+    g_free(typename);
 
-const TPMDriverOps *tpm_get_backend_driver(const char *type)
-{
-    int i;
-
-    for (i = 0; i < TPM_MAX_DRIVERS && be_drivers[i] != NULL; i++) {
-        if (!strcmp(TpmType_lookup[be_drivers[i]->type], type)) {
-            return be_drivers[i];
-        }
+    if (!object_class_dynamic_cast(oc, TYPE_TPM_BACKEND)) {
+        return NULL;
     }
 
-    return NULL;
-}
-
-#ifdef CONFIG_TPM
-
-int tpm_register_driver(const TPMDriverOps *tdo)
-{
-    int i;
-
-    for (i = 0; i < TPM_MAX_DRIVERS; i++) {
-        if (!be_drivers[i]) {
-            be_drivers[i] = tdo;
-            return 0;
-        }
-    }
-    error_report("Could not register TPM driver");
-    return 1;
+    return TPM_BACKEND_CLASS(oc);
 }
 
 /*
@@ -100,9 +56,12 @@ static void tpm_display_backend_drivers(void)
 
     fprintf(stderr, "Supported TPM types (choose only one):\n");
 
-    for (i = 0; i < TPM_MAX_DRIVERS && be_drivers[i] != NULL; i++) {
-        fprintf(stderr, "%12s   %s\n",
-                TpmType_lookup[be_drivers[i]->type], be_drivers[i]->desc());
+    for (i = 0; i < TPM_TYPE__MAX; i++) {
+        const TPMBackendClass *bc = tpm_be_find_by_type(i);
+        if (!bc) {
+            continue;
+        }
+        fprintf(stderr, "%12s   %s\n", TpmType_str(i), bc->desc);
     }
     fprintf(stderr, "\n");
 }
@@ -125,13 +84,14 @@ TPMBackend *qemu_find_tpm(const char *id)
     return NULL;
 }
 
-static int configure_tpm(QemuOpts *opts)
+static int tpm_init_tpmdev(void *dummy, QemuOpts *opts, Error **errp)
 {
     const char *value;
     const char *id;
-    const TPMDriverOps *be;
+    const TPMBackendClass *be;
     TPMBackend *drv;
     Error *local_err = NULL;
+    int i;
 
     if (!QLIST_EMPTY(&tpm_backends)) {
         error_report("Only one TPM is allowed.");
@@ -151,7 +111,8 @@ static int configure_tpm(QemuOpts *opts)
         return 1;
     }
 
-    be = tpm_get_backend_driver(value);
+    i = qapi_enum_parse(&TpmType_lookup, value, -1, NULL);
+    be = i >= 0 ? tpm_be_find_by_type(i) : NULL;
     if (be == NULL) {
         error_report(QERR_INVALID_PARAMETER_VALUE,
                      "type", "a TPM backend type");
@@ -182,11 +143,6 @@ static int configure_tpm(QemuOpts *opts)
     return 0;
 }
 
-static int tpm_init_tpmdev(void *dummy, QemuOpts *opts, Error **errp)
-{
-    return configure_tpm(opts);
-}
-
 /*
  * Walk the list of TPM backend drivers that are in use and call their
  * destroy function to have them cleaned up.
@@ -197,7 +153,7 @@ void tpm_cleanup(void)
 
     QLIST_FOREACH_SAFE(drv, &tpm_backends, list, next) {
         QLIST_REMOVE(drv, list);
-        tpm_backend_destroy(drv);
+        object_unref(OBJECT(drv));
     }
 }
 
@@ -212,7 +168,6 @@ int tpm_init(void)
         return -1;
     }
 
-    atexit(tpm_cleanup);
     return 0;
 }
 
@@ -235,50 +190,6 @@ int tpm_config_parse(QemuOptsList *opts_list, const char *optarg)
     return 0;
 }
 
-#endif /* CONFIG_TPM */
-
-static const TPMDriverOps *tpm_driver_find_by_type(enum TpmType type)
-{
-    int i;
-
-    for (i = 0; i < TPM_MAX_DRIVERS && be_drivers[i] != NULL; i++) {
-        if (be_drivers[i]->type == type) {
-            return be_drivers[i];
-        }
-    }
-    return NULL;
-}
-
-static TPMInfo *qmp_query_tpm_inst(TPMBackend *drv)
-{
-    TPMInfo *res = g_new0(TPMInfo, 1);
-    TPMPassthroughOptions *tpo;
-
-    res->id = g_strdup(drv->id);
-    res->model = drv->fe_model;
-    res->options = g_new0(TpmTypeOptions, 1);
-
-    switch (drv->ops->type) {
-    case TPM_TYPE_PASSTHROUGH:
-        res->options->type = TPM_TYPE_OPTIONS_KIND_PASSTHROUGH;
-        tpo = g_new0(TPMPassthroughOptions, 1);
-        res->options->u.passthrough.data = tpo;
-        if (drv->path) {
-            tpo->path = g_strdup(drv->path);
-            tpo->has_path = true;
-        }
-        if (drv->cancel_path) {
-            tpo->cancel_path = g_strdup(drv->cancel_path);
-            tpo->has_cancel_path = true;
-        }
-        break;
-    case TPM_TYPE__MAX:
-        break;
-    }
-
-    return res;
-}
-
 /*
  * Walk the list of active TPM backends and collect information about them
  * following the schema description in qapi-schema.json.
@@ -289,11 +200,11 @@ TPMInfoList *qmp_query_tpm(Error **errp)
     TPMInfoList *info, *head = NULL, *cur_item = NULL;
 
     QLIST_FOREACH(drv, &tpm_backends, list) {
-        if (!tpm_model_is_registered(drv->fe_model)) {
+        if (!tpm_models[drv->fe_model]) {
             continue;
         }
         info = g_new0(TPMInfoList, 1);
-        info->value = qmp_query_tpm_inst(drv);
+        info->value = tpm_backend_query_tpm(drv);
 
         if (!cur_item) {
             head = cur_item = info;
@@ -312,7 +223,7 @@ TpmTypeList *qmp_query_tpm_types(Error **errp)
     TpmTypeList *head = NULL, *prev = NULL, *cur_item;
 
     for (i = 0; i < TPM_TYPE__MAX; i++) {
-        if (!tpm_driver_find_by_type(i)) {
+        if (!tpm_be_find_by_type(i)) {
             continue;
         }
         cur_item = g_new0(TpmTypeList, 1);
@@ -336,7 +247,7 @@ TpmModelList *qmp_query_tpm_models(Error **errp)
     TpmModelList *head = NULL, *prev = NULL, *cur_item;
 
     for (i = 0; i < TPM_MODEL__MAX; i++) {
-        if (!tpm_model_is_registered(i)) {
+        if (!tpm_models[i]) {
             continue;
         }
         cur_item = g_new0(TpmModelList, 1);

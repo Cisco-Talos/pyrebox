@@ -17,6 +17,7 @@
 #include "sysemu/kvm.h"
 #include "exec/ram_addr.h"
 #include "cpu.h"
+#include "kvm_s390x.h"
 
 Object *kvm_s390_stattrib_create(void)
 {
@@ -115,7 +116,7 @@ static void kvm_s390_stattrib_synchronize(S390StAttribState *sa)
         for (cx = 0; cx + len <= max; cx += len) {
             clog.start_gfn = cx;
             clog.count = len;
-            clog.values = (uint64_t)(sas->incoming_buffer + cx * len);
+            clog.values = (uint64_t)(sas->incoming_buffer + cx);
             r = kvm_vm_ioctl(kvm_state, KVM_S390_SET_CMMA_BITS, &clog);
             if (r) {
                 error_report("KVM_S390_SET_CMMA_BITS failed: %s", strerror(-r));
@@ -125,7 +126,7 @@ static void kvm_s390_stattrib_synchronize(S390StAttribState *sa)
         if (cx < max) {
             clog.start_gfn = cx;
             clog.count = max - cx;
-            clog.values = (uint64_t)(sas->incoming_buffer + cx * len);
+            clog.values = (uint64_t)(sas->incoming_buffer + cx);
             r = kvm_vm_ioctl(kvm_state, KVM_S390_SET_CMMA_BITS, &clog);
             if (r) {
                 error_report("KVM_S390_SET_CMMA_BITS failed: %s", strerror(-r));
@@ -163,6 +164,7 @@ static int kvm_s390_stattrib_get_active(S390StAttribState *sa)
 static void kvm_s390_stattrib_class_init(ObjectClass *oc, void *data)
 {
     S390StAttribClass *sac = S390_STATTRIB_CLASS(oc);
+    DeviceClass *dc = DEVICE_CLASS(oc);
 
     sac->get_stattr = kvm_s390_stattrib_get_stattr;
     sac->peek_stattr = kvm_s390_stattrib_peek_stattr;
@@ -171,6 +173,9 @@ static void kvm_s390_stattrib_class_init(ObjectClass *oc, void *data)
     sac->get_dirtycount = kvm_s390_stattrib_get_dirtycount;
     sac->synchronize = kvm_s390_stattrib_synchronize;
     sac->get_active = kvm_s390_stattrib_get_active;
+
+    /* Reason: Can only be instantiated one time (internally) */
+    dc->user_creatable = false;
 }
 
 static const TypeInfo kvm_s390_stattrib_info = {

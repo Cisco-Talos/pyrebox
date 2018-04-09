@@ -14,11 +14,13 @@
 
 #include "qemu/osdep.h"
 #include "cpu.h"
+#include "internal.h"
 #include "exec/address-spaces.h"
 #include "exec/exec-all.h"
 #include "hw/watchdog/wdt_diag288.h"
 #include "sysemu/cpus.h"
 #include "hw/s390x/ipl.h"
+#include "hw/s390x/s390-virtio-ccw.h"
 
 static int modified_clear_reset(S390CPU *cpu)
 {
@@ -37,6 +39,13 @@ static int modified_clear_reset(S390CPU *cpu)
     cpu_synchronize_all_post_reset();
     resume_all_vcpus();
     return 0;
+}
+
+static inline void s390_do_cpu_reset(CPUState *cs, run_on_cpu_data arg)
+{
+    S390CPUClass *scc = S390_CPU_GET_CLASS(cs);
+
+    scc->cpu_reset(cs);
 }
 
 static int load_normal_reset(S390CPU *cpu)
@@ -135,7 +144,7 @@ void handle_diag_308(CPUS390XState *env, uint64_t r1, uint64_t r3)
             program_interrupt(env, PGM_ADDRESSING, ILEN_AUTO);
             return;
         }
-        iplb = g_malloc0(sizeof(IplParameterBlock));
+        iplb = g_new0(IplParameterBlock, 1);
         cpu_physical_memory_read(addr, iplb, sizeof(iplb->len));
         if (!iplb_valid_len(iplb)) {
             env->regs[r1 + 1] = DIAG_308_RC_INVALID;

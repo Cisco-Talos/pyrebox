@@ -665,10 +665,16 @@ static int qemu_rbd_open(BlockDriverState *bs, QDict *options, int flags,
     /* If we are using an rbd snapshot, we must be r/o, otherwise
      * leave as-is */
     if (s->snap != NULL) {
-        r = bdrv_set_read_only(bs, true, &local_err);
-        if (r < 0) {
-            error_propagate(errp, local_err);
-            goto failed_open;
+        if (!bdrv_is_read_only(bs)) {
+            error_report("Opening rbd snapshots without an explicit "
+                         "read-only=on option is deprecated. Future versions "
+                         "will refuse to open the image instead of "
+                         "automatically marking the image read-only.");
+            r = bdrv_set_read_only(bs, true, &local_err);
+            if (r < 0) {
+                error_propagate(errp, local_err);
+                goto failed_open;
+            }
         }
     }
 
@@ -944,7 +950,7 @@ static int qemu_rbd_truncate(BlockDriverState *bs, int64_t offset,
 
     if (prealloc != PREALLOC_MODE_OFF) {
         error_setg(errp, "Unsupported preallocation mode '%s'",
-                   PreallocMode_lookup[prealloc]);
+                   PreallocMode_str(prealloc));
         return -ENOTSUP;
     }
 

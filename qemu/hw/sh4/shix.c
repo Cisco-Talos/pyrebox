@@ -45,7 +45,6 @@
 
 static void shix_init(MachineState *machine)
 {
-    const char *cpu_model = machine->cpu_model;
     int ret;
     SuperHCPU *cpu;
     struct SH7750State *s;
@@ -53,14 +52,7 @@ static void shix_init(MachineState *machine)
     MemoryRegion *rom = g_new(MemoryRegion, 1);
     MemoryRegion *sdram = g_new(MemoryRegion, 2);
     
-    if (!cpu_model)
-        cpu_model = "any";
-
-    cpu = cpu_sh4_init(cpu_model);
-    if (cpu == NULL) {
-        fprintf(stderr, "Unable to find CPU definition\n");
-        exit(1);
-    }
+    cpu = SUPERH_CPU(cpu_create(machine->cpu_type));
 
     /* Allocate memory space */
     memory_region_init_ram(rom, NULL, "shix.rom", 0x4000, &error_fatal);
@@ -93,6 +85,7 @@ static void shix_machine_init(MachineClass *mc)
     mc->desc = "shix card";
     mc->init = shix_init;
     mc->is_default = 1;
+    mc->default_cpu_type = TYPE_SH7750R_CPU;
 }
 
 DEFINE_MACHINE("shix", shix_machine_init)

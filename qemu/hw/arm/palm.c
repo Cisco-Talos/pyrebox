@@ -29,27 +29,18 @@
 #include "hw/devices.h"
 #include "hw/loader.h"
 #include "exec/address-spaces.h"
+#include "cpu.h"
 
-static uint32_t static_readb(void *opaque, hwaddr offset)
+static uint64_t static_read(void *opaque, hwaddr offset, unsigned size)
 {
-    uint32_t *val = (uint32_t *) opaque;
-    return *val >> ((offset & 3) << 3);
+    uint32_t *val = (uint32_t *)opaque;
+    uint32_t sizemask = 7 >> size;
+
+    return *val >> ((offset & sizemask) << 3);
 }
 
-static uint32_t static_readh(void *opaque, hwaddr offset)
-{
-    uint32_t *val = (uint32_t *) opaque;
-    return *val >> ((offset & 1) << 3);
-}
-
-static uint32_t static_readw(void *opaque, hwaddr offset)
-{
-    uint32_t *val = (uint32_t *) opaque;
-    return *val >> ((offset & 0) << 3);
-}
-
-static void static_write(void *opaque, hwaddr offset,
-                uint32_t value)
+static void static_write(void *opaque, hwaddr offset, uint64_t value,
+                         unsigned size)
 {
 #ifdef SPY
     printf("%s: value %08lx written at " PA_FMT "\n",
@@ -58,10 +49,10 @@ static void static_write(void *opaque, hwaddr offset,
 }
 
 static const MemoryRegionOps static_ops = {
-    .old_mmio = {
-        .read = { static_readb, static_readh, static_readw, },
-        .write = { static_write, static_write, static_write, },
-    },
+    .read = static_read,
+    .write = static_write,
+    .valid.min_access_size = 1,
+    .valid.max_access_size = 4,
     .endianness = DEVICE_NATIVE_ENDIAN,
 };
 
@@ -195,7 +186,6 @@ static struct arm_boot_info palmte_binfo = {
 
 static void palmte_init(MachineState *machine)
 {
-    const char *cpu_model = machine->cpu_model;
     const char *kernel_filename = machine->kernel_filename;
     const char *kernel_cmdline = machine->kernel_cmdline;
     const char *initrd_filename = machine->initrd_filename;
@@ -211,7 +201,7 @@ static void palmte_init(MachineState *machine)
     MemoryRegion *flash = g_new(MemoryRegion, 1);
     MemoryRegion *cs = g_new(MemoryRegion, 4);
 
-    mpu = omap310_mpu_init(address_space_mem, sdram_size, cpu_model);
+    mpu = omap310_mpu_init(address_space_mem, sdram_size, machine->cpu_type);
 
     /* External Flash (EMIFS) */
     memory_region_init_ram(flash, NULL, "palmte.flash", flash_size,
@@ -274,6 +264,8 @@ static void palmte_machine_init(MachineClass *mc)
 {
     mc->desc = "Palm Tungsten|E aka. Cheetah PDA (OMAP310)";
     mc->init = palmte_init;
+    mc->ignore_memory_transaction_failures = true;
+    mc->default_cpu_type = ARM_CPU_TYPE_NAME("ti925t");
 }
 
 DEFINE_MACHINE("cheetah", palmte_machine_init)

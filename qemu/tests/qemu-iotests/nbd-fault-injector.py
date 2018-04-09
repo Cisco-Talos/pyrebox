@@ -56,7 +56,7 @@ NBD_CMD_READ = 0
 NBD_CMD_WRITE = 1
 NBD_CMD_DISC = 2
 NBD_REQUEST_MAGIC = 0x25609513
-NBD_REPLY_MAGIC = 0x67446698
+NBD_SIMPLE_REPLY_MAGIC = 0x67446698
 NBD_PASSWD = 0x4e42444d41474943
 NBD_OPTS_MAGIC = 0x49484156454F5054
 NBD_CLIENT_MAGIC = 0x0000420281861253
@@ -166,7 +166,7 @@ def read_request(conn):
     return req
 
 def write_reply(conn, error, handle):
-    buf = reply_struct.pack(NBD_REPLY_MAGIC, error, handle)
+    buf = reply_struct.pack(NBD_SIMPLE_REPLY_MAGIC, error, handle)
     conn.send(buf, event='reply')
 
 def handle_connection(conn, use_export):
@@ -235,11 +235,15 @@ def open_socket(path):
         sock = socket.socket()
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         sock.bind((host, int(port)))
+
+        # If given port was 0 the final port number is now available
+        path = '%s:%d' % sock.getsockname()
     else:
         sock = socket.socket(socket.AF_UNIX)
         sock.bind(path)
     sock.listen(0)
     print 'Listening on %s' % path
+    sys.stdout.flush() # another process may be waiting, show message now
     return sock
 
 def usage(args):

@@ -22,7 +22,7 @@
 
 #include "qemu-common.h"
 #include "cpu-qom.h"
-#include "standard-headers/asm-x86/hyperv.h"
+#include "hyperv-proto.h"
 
 #ifdef TARGET_X86_64
 #define TARGET_LONG_BITS 64
@@ -335,6 +335,7 @@
 #define MSR_IA32_APICBASE_BASE          (0xfffffU<<12)
 #define MSR_IA32_FEATURE_CONTROL        0x0000003a
 #define MSR_TSC_ADJUST                  0x0000003b
+#define MSR_IA32_SPEC_CTRL              0x48
 #define MSR_IA32_TSCDEADLINE            0x6e0
 
 #define FEATURE_CONTROL_LOCKED                    (1<<0)
@@ -453,6 +454,7 @@ typedef enum FeatureWord {
     FEAT_8000_0001_EDX, /* CPUID[8000_0001].EDX */
     FEAT_8000_0001_ECX, /* CPUID[8000_0001].ECX */
     FEAT_8000_0007_EDX, /* CPUID[8000_0007].EDX */
+    FEAT_8000_0008_EBX, /* CPUID[8000_0008].EBX */
     FEAT_C000_0001_EDX, /* CPUID[C000_0001].EDX */
     FEAT_KVM,           /* CPUID[4000_0001].EAX (KVM_CPUID_FEATURES) */
     FEAT_HYPERV_EAX,    /* CPUID[4000_0003].EAX */
@@ -641,6 +643,9 @@ typedef uint32_t FeatureWordArray[FEATURE_WORDS];
 
 #define CPUID_7_0_EDX_AVX512_4VNNIW (1U << 2) /* AVX512 Neural Network Instructions */
 #define CPUID_7_0_EDX_AVX512_4FMAPS (1U << 3) /* AVX512 Multiply Accumulation Single Precision */
+#define CPUID_7_0_EDX_SPEC_CTRL     (1U << 26) /* Speculation Control */
+
+#define CPUID_8000_0008_EBX_IBPB    (1U << 12) /* Indirect Branch Prediction Barrier */
 
 #define CPUID_XSAVE_XSAVEOPT   (1U << 0)
 #define CPUID_XSAVE_XSAVEC     (1U << 1)
@@ -1082,6 +1087,8 @@ typedef struct CPUX86State {
 
     uint32_t pkru;
 
+    uint64_t spec_ctrl;
+
     /* End of state preserved by INIT (dummy marker).  */
     struct {} end_init_save;
 
@@ -1095,15 +1102,15 @@ typedef struct CPUX86State {
     uint64_t msr_hv_guest_os_id;
     uint64_t msr_hv_vapic;
     uint64_t msr_hv_tsc;
-    uint64_t msr_hv_crash_params[HV_X64_MSR_CRASH_PARAMS];
+    uint64_t msr_hv_crash_params[HV_CRASH_PARAMS];
     uint64_t msr_hv_runtime;
     uint64_t msr_hv_synic_control;
     uint64_t msr_hv_synic_version;
     uint64_t msr_hv_synic_evt_page;
     uint64_t msr_hv_synic_msg_page;
-    uint64_t msr_hv_synic_sint[HV_SYNIC_SINT_COUNT];
-    uint64_t msr_hv_stimer_config[HV_SYNIC_STIMER_COUNT];
-    uint64_t msr_hv_stimer_count[HV_SYNIC_STIMER_COUNT];
+    uint64_t msr_hv_synic_sint[HV_SINT_COUNT];
+    uint64_t msr_hv_stimer_config[HV_STIMER_COUNT];
+    uint64_t msr_hv_stimer_count[HV_STIMER_COUNT];
 
     /* exception/interrupt handling */
     int error_code;
@@ -1282,6 +1289,8 @@ struct X86CPU {
     int32_t socket_id;
     int32_t core_id;
     int32_t thread_id;
+
+    int32_t hv_max_vps;
 };
 
 static inline X86CPU *x86_env_get_cpu(CPUX86State *env)
@@ -1327,7 +1336,6 @@ int x86_cpu_gdb_write_register(CPUState *cpu, uint8_t *buf, int reg);
 void x86_cpu_exec_enter(CPUState *cpu);
 void x86_cpu_exec_exit(CPUState *cpu);
 
-X86CPU *cpu_x86_init(const char *cpu_model);
 void x86_cpu_list(FILE *f, fprintf_function cpu_fprintf);
 int cpu_x86_support_mca_broadcast(CPUX86State *env);
 
@@ -1507,7 +1515,16 @@ uint64_t cpu_get_tsc(CPUX86State *env);
 
 #define PHYS_ADDR_MASK MAKE_64BIT_MASK(0, TCG_PHYS_ADDR_BITS)
 
-#define cpu_init(cpu_model) CPU(cpu_x86_init(cpu_model))
+#define cpu_init(cpu_model) cpu_generic_init(TYPE_X86_CPU, cpu_model)
+
+#define X86_CPU_TYPE_SUFFIX "-" TYPE_X86_CPU
+#define X86_CPU_TYPE_NAME(name) (name X86_CPU_TYPE_SUFFIX)
+
+#ifdef TARGET_X86_64
+#define TARGET_DEFAULT_CPU_TYPE X86_CPU_TYPE_NAME("qemu64")
+#else
+#define TARGET_DEFAULT_CPU_TYPE X86_CPU_TYPE_NAME("qemu32")
+#endif
 
 #define cpu_signal_handler cpu_x86_signal_handler
 #define cpu_list x86_cpu_list

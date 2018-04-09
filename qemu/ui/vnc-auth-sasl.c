@@ -25,6 +25,7 @@
 #include "qemu/osdep.h"
 #include "qapi/error.h"
 #include "vnc.h"
+#include "trace.h"
 
 /* Max amount of data we send/recv for SASL steps to prevent DOS */
 #define SASL_DATA_MAX_LEN (1024 * 1024)
@@ -47,9 +48,9 @@ void vnc_sasl_client_cleanup(VncState *vs)
 }
 
 
-long vnc_client_write_sasl(VncState *vs)
+size_t vnc_client_write_sasl(VncState *vs)
 {
-    long ret;
+    size_t ret;
 
     VNC_DEBUG("Write SASL: Pending output %p size %zd offset %zd "
               "Encoded: %p size %d offset %d\n",
@@ -66,6 +67,7 @@ long vnc_client_write_sasl(VncState *vs)
         if (err != SASL_OK)
             return vnc_client_io_error(vs, -1, NULL);
 
+        vs->sasl.encodedRawLength = vs->output.offset;
         vs->sasl.encodedOffset = 0;
     }
 
@@ -77,7 +79,12 @@ long vnc_client_write_sasl(VncState *vs)
 
     vs->sasl.encodedOffset += ret;
     if (vs->sasl.encodedOffset == vs->sasl.encodedLength) {
-        vs->output.offset = 0;
+        if (vs->sasl.encodedRawLength >= vs->force_update_offset) {
+            vs->force_update_offset = 0;
+        } else {
+            vs->force_update_offset -= vs->sasl.encodedRawLength;
+        }
+        buffer_advance(&vs->output, vs->sasl.encodedRawLength);
         vs->sasl.encoded = NULL;
         vs->sasl.encodedOffset = vs->sasl.encodedLength = 0;
     }
@@ -99,9 +106,9 @@ long vnc_client_write_sasl(VncState *vs)
 }
 
 
-long vnc_client_read_sasl(VncState *vs)
+size_t vnc_client_read_sasl(VncState *vs)
 {
-    long ret;
+    size_t ret;
     uint8_t encoded[4096];
     const char *decoded;
     unsigned int decodedLen;
@@ -133,27 +140,26 @@ static int vnc_auth_sasl_check_access(VncState *vs)
 
     err = sasl_getprop(vs->sasl.conn, SASL_USERNAME, &val);
     if (err != SASL_OK) {
-        VNC_DEBUG("cannot query SASL username on connection %d (%s), denying access\n",
-                  err, sasl_errstring(err, NULL, NULL));
+        trace_vnc_auth_fail(vs, vs->auth, "Cannot fetch SASL username",
+                            sasl_errstring(err, NULL, NULL));
         return -1;
     }
     if (val == NULL) {
-        VNC_DEBUG("no client username was found, denying access\n");
+        trace_vnc_auth_fail(vs, vs->auth, "No SASL username set", "");
         return -1;
     }
-    VNC_DEBUG("SASL client username %s\n", (const char *)val);
 
     vs->sasl.username = g_strdup((const char*)val);
+    trace_vnc_auth_sasl_username(vs, vs->sasl.username);
 
     if (vs->vd->sasl.acl == NULL) {
-        VNC_DEBUG("no ACL activated, allowing access\n");
+        trace_vnc_auth_sasl_acl(vs, 1);
         return 0;
     }
 
     allow = qemu_acl_party_is_allowed(vs->vd->sasl.acl, vs->sasl.username);
 
-    VNC_DEBUG("SASL client %s %s by ACL\n", vs->sasl.username,
-              allow ? "allowed" : "denied");
+    trace_vnc_auth_sasl_acl(vs, allow);
     return allow ? 0 : -1;
 }
 
@@ -170,7 +176,9 @@ static int vnc_auth_sasl_check_ssf(VncState *vs)
         return 0;
 
     ssf = *(const int *)val;
-    VNC_DEBUG("negotiated an SSF of %d\n", ssf);
+
+    trace_vnc_auth_sasl_ssf(vs, ssf);
+
     if (ssf < 56)
         return 0; /* 56 is good for Kerberos */
 
@@ -218,32 +226,27 @@ static int protocol_client_auth_sasl_step(VncState *vs, uint8_t *data, size_t le
         datalen--; /* Don't count NULL byte when passing to _start() */
     }
 
-    VNC_DEBUG("Step using SASL Data %p (%d bytes)\n",
-              clientdata, datalen);
     err = sasl_server_step(vs->sasl.conn,
                            clientdata,
                            datalen,
                            &serverout,
                            &serveroutlen);
+    trace_vnc_auth_sasl_step(vs, data, len, serverout, serveroutlen, err);
     if (err != SASL_OK &&
         err != SASL_CONTINUE) {
-        VNC_DEBUG("sasl step failed %d (%s)\n",
-                  err, sasl_errdetail(vs->sasl.conn));
+        trace_vnc_auth_fail(vs, vs->auth, "Cannot step SASL auth",
+                            sasl_errdetail(vs->sasl.conn));
         sasl_dispose(&vs->sasl.conn);
         vs->sasl.conn = NULL;
         goto authabort;
     }
 
     if (serveroutlen > SASL_DATA_MAX_LEN) {
-        VNC_DEBUG("sasl step reply data too long %d\n",
-                  serveroutlen);
+        trace_vnc_auth_fail(vs, vs->auth, "SASL data too long", "");
         sasl_dispose(&vs->sasl.conn);
         vs->sasl.conn = NULL;
         goto authabort;
     }
-
-    VNC_DEBUG("SASL return data %d bytes, nil; %d\n",
-              serveroutlen, serverout ? 0 : 1);
 
     if (serveroutlen) {
         vnc_write_u32(vs, serveroutlen + 1);
@@ -256,22 +259,20 @@ static int protocol_client_auth_sasl_step(VncState *vs, uint8_t *data, size_t le
     vnc_write_u8(vs, err == SASL_CONTINUE ? 0 : 1);
 
     if (err == SASL_CONTINUE) {
-        VNC_DEBUG("%s", "Authentication must continue\n");
         /* Wait for step length */
         vnc_read_when(vs, protocol_client_auth_sasl_step_len, 4);
     } else {
         if (!vnc_auth_sasl_check_ssf(vs)) {
-            VNC_DEBUG("Authentication rejected for weak SSF %p\n", vs->ioc);
+            trace_vnc_auth_fail(vs, vs->auth, "SASL SSF too weak", "");
             goto authreject;
         }
 
         /* Check username whitelist ACL */
         if (vnc_auth_sasl_check_access(vs) < 0) {
-            VNC_DEBUG("Authentication rejected for ACL %p\n", vs->ioc);
             goto authreject;
         }
 
-        VNC_DEBUG("Authentication successful %p\n", vs->ioc);
+        trace_vnc_auth_pass(vs, vs->auth);
         vnc_write_u32(vs, 0); /* Accept auth */
         /*
          * Delay writing in SSF encoded mode until pending output
@@ -300,9 +301,9 @@ static int protocol_client_auth_sasl_step(VncState *vs, uint8_t *data, size_t le
 static int protocol_client_auth_sasl_step_len(VncState *vs, uint8_t *data, size_t len)
 {
     uint32_t steplen = read_u32(data, 0);
-    VNC_DEBUG("Got client step len %d\n", steplen);
+
     if (steplen > SASL_DATA_MAX_LEN) {
-        VNC_DEBUG("Too much SASL data %d\n", steplen);
+        trace_vnc_auth_fail(vs, vs->auth, "SASL step len too large", "");
         vnc_client_error(vs);
         return -1;
     }
@@ -346,32 +347,27 @@ static int protocol_client_auth_sasl_start(VncState *vs, uint8_t *data, size_t l
         datalen--; /* Don't count NULL byte when passing to _start() */
     }
 
-    VNC_DEBUG("Start SASL auth with mechanism %s. Data %p (%d bytes)\n",
-              vs->sasl.mechlist, clientdata, datalen);
     err = sasl_server_start(vs->sasl.conn,
                             vs->sasl.mechlist,
                             clientdata,
                             datalen,
                             &serverout,
                             &serveroutlen);
+    trace_vnc_auth_sasl_start(vs, data, len, serverout, serveroutlen, err);
     if (err != SASL_OK &&
         err != SASL_CONTINUE) {
-        VNC_DEBUG("sasl start failed %d (%s)\n",
-                  err, sasl_errdetail(vs->sasl.conn));
+        trace_vnc_auth_fail(vs, vs->auth, "Cannot start SASL auth",
+                            sasl_errdetail(vs->sasl.conn));
         sasl_dispose(&vs->sasl.conn);
         vs->sasl.conn = NULL;
         goto authabort;
     }
     if (serveroutlen > SASL_DATA_MAX_LEN) {
-        VNC_DEBUG("sasl start reply data too long %d\n",
-                  serveroutlen);
+        trace_vnc_auth_fail(vs, vs->auth, "SASL data too long", "");
         sasl_dispose(&vs->sasl.conn);
         vs->sasl.conn = NULL;
         goto authabort;
     }
-
-    VNC_DEBUG("SASL return data %d bytes, nil; %d\n",
-              serveroutlen, serverout ? 0 : 1);
 
     if (serveroutlen) {
         vnc_write_u32(vs, serveroutlen + 1);
@@ -384,22 +380,20 @@ static int protocol_client_auth_sasl_start(VncState *vs, uint8_t *data, size_t l
     vnc_write_u8(vs, err == SASL_CONTINUE ? 0 : 1);
 
     if (err == SASL_CONTINUE) {
-        VNC_DEBUG("%s", "Authentication must continue\n");
         /* Wait for step length */
         vnc_read_when(vs, protocol_client_auth_sasl_step_len, 4);
     } else {
         if (!vnc_auth_sasl_check_ssf(vs)) {
-            VNC_DEBUG("Authentication rejected for weak SSF %p\n", vs->ioc);
+            trace_vnc_auth_fail(vs, vs->auth, "SASL SSF too weak", "");
             goto authreject;
         }
 
         /* Check username whitelist ACL */
         if (vnc_auth_sasl_check_access(vs) < 0) {
-            VNC_DEBUG("Authentication rejected for ACL %p\n", vs->ioc);
             goto authreject;
         }
 
-        VNC_DEBUG("Authentication successful %p\n", vs->ioc);
+        trace_vnc_auth_pass(vs, vs->auth);
         vnc_write_u32(vs, 0); /* Accept auth */
         start_client_init(vs);
     }
@@ -422,9 +416,9 @@ static int protocol_client_auth_sasl_start(VncState *vs, uint8_t *data, size_t l
 static int protocol_client_auth_sasl_start_len(VncState *vs, uint8_t *data, size_t len)
 {
     uint32_t startlen = read_u32(data, 0);
-    VNC_DEBUG("Got client start len %d\n", startlen);
+
     if (startlen > SASL_DATA_MAX_LEN) {
-        VNC_DEBUG("Too much SASL data %d\n", startlen);
+        trace_vnc_auth_fail(vs, vs->auth, "SASL start len too large", "");
         vnc_client_error(vs);
         return -1;
     }
@@ -439,22 +433,18 @@ static int protocol_client_auth_sasl_start_len(VncState *vs, uint8_t *data, size
 static int protocol_client_auth_sasl_mechname(VncState *vs, uint8_t *data, size_t len)
 {
     char *mechname = g_strndup((const char *) data, len);
-    VNC_DEBUG("Got client mechname '%s' check against '%s'\n",
-              mechname, vs->sasl.mechlist);
+    trace_vnc_auth_sasl_mech_choose(vs, mechname);
 
     if (strncmp(vs->sasl.mechlist, mechname, len) == 0) {
         if (vs->sasl.mechlist[len] != '\0' &&
             vs->sasl.mechlist[len] != ',') {
-            VNC_DEBUG("One %d", vs->sasl.mechlist[len]);
             goto fail;
         }
     } else {
         char *offset = strstr(vs->sasl.mechlist, mechname);
-        VNC_DEBUG("Two %p\n", offset);
         if (!offset) {
             goto fail;
         }
-        VNC_DEBUG("Two '%s'\n", offset);
         if (offset[-1] != ',' ||
             (offset[len] != '\0'&&
              offset[len] != ',')) {
@@ -465,11 +455,11 @@ static int protocol_client_auth_sasl_mechname(VncState *vs, uint8_t *data, size_
     g_free(vs->sasl.mechlist);
     vs->sasl.mechlist = mechname;
 
-    VNC_DEBUG("Validated mechname '%s'\n", mechname);
     vnc_read_when(vs, protocol_client_auth_sasl_start_len, 4);
     return 0;
 
  fail:
+    trace_vnc_auth_fail(vs, vs->auth, "Unsupported mechname", mechname);
     vnc_client_error(vs);
     g_free(mechname);
     return -1;
@@ -478,14 +468,14 @@ static int protocol_client_auth_sasl_mechname(VncState *vs, uint8_t *data, size_
 static int protocol_client_auth_sasl_mechname_len(VncState *vs, uint8_t *data, size_t len)
 {
     uint32_t mechlen = read_u32(data, 0);
-    VNC_DEBUG("Got client mechname len %d\n", mechlen);
+
     if (mechlen > 100) {
-        VNC_DEBUG("Too long SASL mechname data %d\n", mechlen);
+        trace_vnc_auth_fail(vs, vs->auth, "SASL mechname too long", "");
         vnc_client_error(vs);
         return -1;
     }
     if (mechlen < 1) {
-        VNC_DEBUG("Too short SASL mechname %d\n", mechlen);
+        trace_vnc_auth_fail(vs, vs->auth, "SASL mechname too short", "");
         vnc_client_error(vs);
         return -1;
     }
@@ -524,19 +514,22 @@ void start_auth_sasl(VncState *vs)
     const char *mechlist = NULL;
     sasl_security_properties_t secprops;
     int err;
+    Error *local_err = NULL;
     char *localAddr, *remoteAddr;
     int mechlistlen;
 
-    VNC_DEBUG("Initialize SASL auth %p\n", vs->ioc);
-
     /* Get local & remote client addresses in form  IPADDR;PORT */
-    localAddr = vnc_socket_ip_addr_string(vs->sioc, true, NULL);
+    localAddr = vnc_socket_ip_addr_string(vs->sioc, true, &local_err);
     if (!localAddr) {
+        trace_vnc_auth_fail(vs, vs->auth, "Cannot format local IP",
+                            error_get_pretty(local_err));
         goto authabort;
     }
 
-    remoteAddr = vnc_socket_ip_addr_string(vs->sioc, false, NULL);
+    remoteAddr = vnc_socket_ip_addr_string(vs->sioc, false, &local_err);
     if (!remoteAddr) {
+        trace_vnc_auth_fail(vs, vs->auth, "Cannot format remote IP",
+                            error_get_pretty(local_err));
         g_free(localAddr);
         goto authabort;
     }
@@ -554,8 +547,8 @@ void start_auth_sasl(VncState *vs)
     localAddr = remoteAddr = NULL;
 
     if (err != SASL_OK) {
-        VNC_DEBUG("sasl context setup failed %d (%s)",
-                  err, sasl_errstring(err, NULL, NULL));
+        trace_vnc_auth_fail(vs, vs->auth,  "SASL context setup failed",
+                            sasl_errstring(err, NULL, NULL));
         vs->sasl.conn = NULL;
         goto authabort;
     }
@@ -570,8 +563,8 @@ void start_auth_sasl(VncState *vs)
         keysize = qcrypto_tls_session_get_key_size(vs->tls,
                                                    &local_err);
         if (keysize < 0) {
-            VNC_DEBUG("cannot TLS get cipher size: %s\n",
-                      error_get_pretty(local_err));
+            trace_vnc_auth_fail(vs, vs->auth, "cannot TLS get cipher size",
+                                error_get_pretty(local_err));
             error_free(local_err);
             sasl_dispose(&vs->sasl.conn);
             vs->sasl.conn = NULL;
@@ -581,8 +574,8 @@ void start_auth_sasl(VncState *vs)
 
         err = sasl_setprop(vs->sasl.conn, SASL_SSF_EXTERNAL, &ssf);
         if (err != SASL_OK) {
-            VNC_DEBUG("cannot set SASL external SSF %d (%s)\n",
-                      err, sasl_errstring(err, NULL, NULL));
+            trace_vnc_auth_fail(vs, vs->auth, "cannot set SASL external SSF",
+                                sasl_errstring(err, NULL, NULL));
             sasl_dispose(&vs->sasl.conn);
             vs->sasl.conn = NULL;
             goto authabort;
@@ -617,8 +610,8 @@ void start_auth_sasl(VncState *vs)
 
     err = sasl_setprop(vs->sasl.conn, SASL_SEC_PROPS, &secprops);
     if (err != SASL_OK) {
-        VNC_DEBUG("cannot set SASL security props %d (%s)\n",
-                  err, sasl_errstring(err, NULL, NULL));
+        trace_vnc_auth_fail(vs, vs->auth, "cannot set SASL security props",
+                            sasl_errstring(err, NULL, NULL));
         sasl_dispose(&vs->sasl.conn);
         vs->sasl.conn = NULL;
         goto authabort;
@@ -633,13 +626,13 @@ void start_auth_sasl(VncState *vs)
                         NULL,
                         NULL);
     if (err != SASL_OK) {
-        VNC_DEBUG("cannot list SASL mechanisms %d (%s)\n",
-                  err, sasl_errdetail(vs->sasl.conn));
+        trace_vnc_auth_fail(vs, vs->auth, "cannot list SASL mechanisms",
+                            sasl_errdetail(vs->sasl.conn));
         sasl_dispose(&vs->sasl.conn);
         vs->sasl.conn = NULL;
         goto authabort;
     }
-    VNC_DEBUG("Available mechanisms for client: '%s'\n", mechlist);
+    trace_vnc_auth_sasl_mech_list(vs, mechlist);
 
     vs->sasl.mechlist = g_strdup(mechlist);
     mechlistlen = strlen(mechlist);
@@ -647,12 +640,12 @@ void start_auth_sasl(VncState *vs)
     vnc_write(vs, mechlist, mechlistlen);
     vnc_flush(vs);
 
-    VNC_DEBUG("Wait for client mechname length\n");
     vnc_read_when(vs, protocol_client_auth_sasl_mechname_len, 4);
 
     return;
 
  authabort:
+    error_free(local_err);
     vnc_client_error(vs);
 }
 

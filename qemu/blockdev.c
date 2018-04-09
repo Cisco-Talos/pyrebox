@@ -44,7 +44,6 @@
 #include "qapi-visit.h"
 #include "qapi/qmp/qerror.h"
 #include "qapi/qobject-output-visitor.h"
-#include "qapi/util.h"
 #include "sysemu/sysemu.h"
 #include "block/block_int.h"
 #include "qmp-commands.h"
@@ -438,9 +437,8 @@ static void extract_common_blockdev_options(QemuOpts *opts, int *bdrv_flags,
 
     if (detect_zeroes) {
         *detect_zeroes =
-            qapi_enum_parse(BlockdevDetectZeroesOptions_lookup,
+            qapi_enum_parse(&BlockdevDetectZeroesOptions_lookup,
                             qemu_opt_get(opts, "detect-zeroes"),
-                            BLOCKDEV_DETECT_ZEROES_OPTIONS__MAX,
                             BLOCKDEV_DETECT_ZEROES_OPTIONS_OFF,
                             &local_error);
         if (local_error) {
@@ -1468,8 +1466,8 @@ static int action_check_completion_mode(BlkActionState *s, Error **errp)
         error_setg(errp,
                    "Action '%s' does not support Transaction property "
                    "completion-mode = %s",
-                   TransactionActionKind_lookup[s->action->type],
-                   ActionCompletionMode_lookup[s->txn_props->completion_mode]);
+                   TransactionActionKind_str(s->action->type),
+                   ActionCompletionMode_str(s->txn_props->completion_mode));
         return -1;
     }
     return 0;
@@ -2688,7 +2686,7 @@ void qmp_block_set_io_throttle(BlockIOThrottle *arg, Error **errp)
     if (throttle_enabled(&cfg)) {
         /* Enable I/O limits if they're not enabled yet, otherwise
          * just update the throttling group. */
-        if (!blk_get_public(blk)->throttle_state) {
+        if (!blk_get_public(blk)->throttle_group_member.throttle_state) {
             blk_io_limits_enable(blk,
                                  arg->has_group ? arg->group :
                                  arg->has_device ? arg->device :
@@ -2698,7 +2696,7 @@ void qmp_block_set_io_throttle(BlockIOThrottle *arg, Error **errp)
         }
         /* Set the new throttling configuration */
         blk_set_io_limits(blk, &cfg);
-    } else if (blk_get_public(blk)->throttle_state) {
+    } else if (blk_get_public(blk)->throttle_group_member.throttle_state) {
         /* If all throttling settings are set to 0, disable I/O limits */
         blk_io_limits_disable(blk);
     }

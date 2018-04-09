@@ -21,6 +21,7 @@
 #include "qemu/osdep.h"
 #include "qemu/main-loop.h"
 #include "cpu.h"
+#include "internal.h"
 #include "exec/memory.h"
 #include "qemu/host-utils.h"
 #include "exec/helper-proto.h"
@@ -33,6 +34,8 @@
 #include "sysemu/cpus.h"
 #include "sysemu/sysemu.h"
 #include "hw/s390x/ebcdic.h"
+#include "hw/s390x/s390-virtio-hcall.h"
+#include "hw/s390x/sclp.h"
 #endif
 
 /* #define DEBUG_HELPER */
@@ -100,8 +103,14 @@ void HELPER(diag)(CPUS390XState *env, uint32_t r1, uint32_t r3, uint32_t num)
         break;
     case 0x308:
         /* ipl */
+        qemu_mutex_lock_iothread();
         handle_diag_308(env, r1, r3);
+        qemu_mutex_unlock_iothread();
         r = 0;
+        break;
+    case 0x288:
+        /* time bomb (watchdog) */
+        r = handle_diag_288(env, r1, r3);
         break;
     default:
         r = -1;
@@ -109,7 +118,7 @@ void HELPER(diag)(CPUS390XState *env, uint32_t r1, uint32_t r3, uint32_t num)
     }
 
     if (r) {
-        program_interrupt(env, PGM_OPERATION, ILEN_AUTO);
+        program_interrupt(env, PGM_SPECIFICATION, ILEN_AUTO);
     }
 }
 
@@ -225,7 +234,7 @@ uint32_t HELPER(stsi)(CPUS390XState *env, uint64_t a0,
             /* XXX make different for different CPUs? */
             ebcdic_put(sysib.sequence, "QEMUQEMUQEMUQEMU", 16);
             ebcdic_put(sysib.plant, "QEMU", 4);
-            stw_p(&sysib.cpu_addr, env->cpu_num);
+            stw_p(&sysib.cpu_addr, env->core_id);
             cpu_physical_memory_write(a0, &sysib, sizeof(sysib));
         } else if ((sel1 == 2) && (sel2 == 2)) {
             /* Basic Machine CPUs */
@@ -253,7 +262,7 @@ uint32_t HELPER(stsi)(CPUS390XState *env, uint64_t a0,
                 /* XXX make different for different CPUs? */
                 ebcdic_put(sysib.sequence, "QEMUQEMUQEMUQEMU", 16);
                 ebcdic_put(sysib.plant, "QEMU", 4);
-                stw_p(&sysib.cpu_addr, env->cpu_num);
+                stw_p(&sysib.cpu_addr, env->core_id);
                 stw_p(&sysib.cpu_id, 0);
                 cpu_physical_memory_write(a0, &sysib, sizeof(sysib));
             } else if ((sel1 == 2) && (sel2 == 2)) {
@@ -312,44 +321,14 @@ uint32_t HELPER(stsi)(CPUS390XState *env, uint64_t a0,
 }
 
 uint32_t HELPER(sigp)(CPUS390XState *env, uint64_t order_code, uint32_t r1,
-                      uint64_t cpu_addr)
+                      uint32_t r3)
 {
-    int cc = SIGP_CC_ORDER_CODE_ACCEPTED;
+    int cc;
 
-    HELPER_LOG("%s: %016" PRIx64 " %08x %016" PRIx64 "\n",
-               __func__, order_code, r1, cpu_addr);
-
-    /* Remember: Use "R1 or R1 + 1, whichever is the odd-numbered register"
-       as parameter (input). Status (output) is always R1. */
-
-    switch (order_code & SIGP_ORDER_MASK) {
-    case SIGP_SET_ARCH:
-        /* switch arch */
-        break;
-    case SIGP_SENSE:
-        /* enumerate CPU status */
-        if (cpu_addr) {
-            /* XXX implement when SMP comes */
-            return 3;
-        }
-        env->regs[r1] &= 0xffffffff00000000ULL;
-        cc = 1;
-        break;
-#if !defined(CONFIG_USER_ONLY)
-    case SIGP_RESTART:
-        qemu_system_reset_request(SHUTDOWN_CAUSE_GUEST_RESET);
-        cpu_loop_exit(CPU(s390_env_get_cpu(env)));
-        break;
-    case SIGP_STOP:
-        qemu_system_shutdown_request(SHUTDOWN_CAUSE_GUEST_SHUTDOWN);
-        cpu_loop_exit(CPU(s390_env_get_cpu(env)));
-        break;
-#endif
-    default:
-        /* unknown sigp */
-        fprintf(stderr, "XXX unknown sigp: 0x%" PRIx64 "\n", order_code);
-        cc = SIGP_CC_NOT_OPERATIONAL;
-    }
+    /* TODO: needed to inject interrupts  - push further down */
+    qemu_mutex_lock_iothread();
+    cc = handle_sigp(env, order_code & SIGP_ORDER_MASK, r1, r3);
+    qemu_mutex_unlock_iothread();
 
     return cc;
 }
@@ -440,14 +419,28 @@ void HELPER(chsc)(CPUS390XState *env, uint64_t inst)
 #ifndef CONFIG_USER_ONLY
 void HELPER(per_check_exception)(CPUS390XState *env)
 {
-    CPUState *cs = CPU(s390_env_get_cpu(env));
+    uint32_t ilen;
 
     if (env->per_perc_atmid) {
-        env->int_pgm_code = PGM_PER;
-        env->int_pgm_ilen = get_ilen(cpu_ldub_code(env, env->per_address));
+        /*
+         * FIXME: ILEN_AUTO is most probably the right thing to use. ilen
+         * always has to match the instruction referenced in the PSW. E.g.
+         * if a PER interrupt is triggered via EXECUTE, we have to use ilen
+         * of EXECUTE, while per_address contains the target of EXECUTE.
+         */
+        ilen = get_ilen(cpu_ldub_code(env, env->per_address));
+        program_interrupt(env, PGM_PER, ilen);
+    }
+}
 
-        cs->exception_index = EXCP_PGM;
-        cpu_loop_exit(cs);
+/* Check if an address is within the PER starting address and the PER
+   ending address.  The address range might loop.  */
+static inline bool get_per_in_range(CPUS390XState *env, uint64_t addr)
+{
+    if (env->cregs[10] <= env->cregs[11]) {
+        return env->cregs[10] <= addr && addr <= env->cregs[11];
+    } else {
+        return env->cregs[10] <= addr || addr <= env->cregs[11];
     }
 }
 
@@ -484,61 +477,57 @@ void HELPER(per_ifetch)(CPUS390XState *env, uint64_t addr)
 }
 #endif
 
-/* The maximum bit defined at the moment is 129.  */
-#define MAX_STFL_WORDS  3
+static uint8_t stfl_bytes[2048];
+static unsigned int used_stfl_bytes;
 
-/* Canonicalize the current cpu's features into the 64-bit words required
-   by STFLE.  Return the index-1 of the max word that is non-zero.  */
-static unsigned do_stfle(CPUS390XState *env, uint64_t words[MAX_STFL_WORDS])
+static void prepare_stfl(void)
 {
-    S390CPU *cpu = s390_env_get_cpu(env);
-    const unsigned long *features = cpu->model->features;
-    unsigned max_bit = 0;
-    S390Feat feat;
+    static bool initialized;
+    int i;
 
-    memset(words, 0, sizeof(uint64_t) * MAX_STFL_WORDS);
-
-    if (test_bit(S390_FEAT_ZARCH, features)) {
-        /* z/Architecture is always active if around */
-        words[0] = 1ull << (63 - 2);
+    /* racy, but we don't care, the same values are always written */
+    if (initialized) {
+        return;
     }
 
-    for (feat = find_first_bit(features, S390_FEAT_MAX);
-         feat < S390_FEAT_MAX;
-         feat = find_next_bit(features, S390_FEAT_MAX, feat + 1)) {
-        const S390FeatDef *def = s390_feat_def(feat);
-        if (def->type == S390_FEAT_TYPE_STFL) {
-            unsigned bit = def->bit;
-            if (bit > max_bit) {
-                max_bit = bit;
-            }
-            assert(bit / 64 < MAX_STFL_WORDS);
-            words[bit / 64] |= 1ULL << (63 - bit % 64);
+    s390_get_feat_block(S390_FEAT_TYPE_STFL, stfl_bytes);
+    for (i = 0; i < sizeof(stfl_bytes); i++) {
+        if (stfl_bytes[i]) {
+            used_stfl_bytes = i + 1;
         }
     }
-
-    return max_bit / 64;
+    initialized = true;
 }
 
+#ifndef CONFIG_USER_ONLY
 void HELPER(stfl)(CPUS390XState *env)
 {
-    uint64_t words[MAX_STFL_WORDS];
+    LowCore *lowcore;
 
-    do_stfle(env, words);
-    cpu_stl_data(env, 200, words[0] >> 32);
+    lowcore = cpu_map_lowcore(env);
+    prepare_stfl();
+    memcpy(&lowcore->stfl_fac_list, stfl_bytes, sizeof(lowcore->stfl_fac_list));
+    cpu_unmap_lowcore(lowcore);
 }
+#endif
 
 uint32_t HELPER(stfle)(CPUS390XState *env, uint64_t addr)
 {
-    uint64_t words[MAX_STFL_WORDS];
-    unsigned count_m1 = env->regs[0] & 0xff;
-    unsigned max_m1 = do_stfle(env, words);
-    unsigned i;
+    const uintptr_t ra = GETPC();
+    const int count_bytes = ((env->regs[0] & 0xff) + 1) * 8;
+    const int max_bytes = ROUND_UP(used_stfl_bytes, 8);
+    int i;
 
-    for (i = 0; i <= count_m1; ++i) {
-        cpu_stq_data(env, addr + 8 * i, words[i]);
+    if (addr & 0x7) {
+        cpu_restore_state(ENV_GET_CPU(env), ra);
+        program_interrupt(env, PGM_SPECIFICATION, 4);
     }
 
-    env->regs[0] = deposit64(env->regs[0], 0, 8, max_m1);
-    return (count_m1 >= max_m1 ? 0 : 3);
+    prepare_stfl();
+    for (i = 0; i < count_bytes; ++i) {
+        cpu_stb_data_ra(env, addr + i, stfl_bytes[i], ra);
+    }
+
+    env->regs[0] = deposit64(env->regs[0], 0, 8, (max_bytes / 8) - 1);
+    return count_bytes >= max_bytes ? 0 : 3;
 }
