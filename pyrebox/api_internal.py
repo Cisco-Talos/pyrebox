@@ -122,14 +122,14 @@ def add_module_monitoring_hooks(pgd):
             module_load_remove_breakpoints[pgd][(module_base, addr, size)] = bp
             bp.enable()
     else:
-        pp_error("Could not set initial list of breakpoints for module monitoring")
+        pp_error("Could not set initial list of breakpoints for module monitoring: %x" % pgd)
 
 def remove_module_monitoring_hooks(pgd):
     ''' 
     Remove BPW breakpoints on every link of its module linked list
     '''
-    for bp in module_load_remove_breakpoints[pgd]:
-        bp.disable()
+    for k in module_load_remove_breakpoints[pgd]:
+        module_load_remove_breakpoints[pgd][k].disable()
 
 def register_module_load_callback(pgd, callback_name, callback_function):
     '''
@@ -147,6 +147,7 @@ def register_module_load_callback(pgd, callback_name, callback_function):
     '''
     if pgd not in module_load_callbacks:
         module_load_callbacks[pgd] = {}
+        module_remove_callbacks[pgd] = {}
 
     for pgd in module_load_callbacks:
         if callback_name in module_load_callbacks[pgd]:
@@ -159,6 +160,8 @@ def register_module_load_callback(pgd, callback_name, callback_function):
     if pgd not in module_load_remove_pgds:
         module_load_remove_pgds.append(pgd)
         add_module_monitoring_hooks(pgd)
+
+    return callback_name
 
 
 def register_module_remove_callback(pgd, callback_name, callback_function):
@@ -176,17 +179,22 @@ def register_module_remove_callback(pgd, callback_name, callback_function):
     :type callback_function: func(pid, pgd, base, size, name, fullname)
     '''
     if not pgd in module_remove_callbacks:
-        module_remove_callbacks[pgd] = {} 
-        # module_load_remove_pgds checks which PGDs we are monitoring
-        # for either module load or module removes...
-        if pgd not in module_load_remove_pgds:
-            module_load_remove_pgds.append(pgd)
-            add_module_monitoring_hooks(pgd)
+        module_remove_callbacks[pgd] = {}
+        module_load_callbacks[pgd] = {}
 
     for pgd in module_remove_callbacks:
         if callback_name in module_remove_callbacks[pgd]:
             raise ValueError("Cannot register 2 callbacks with the same name! %s" % callback_name)
+
     module_remove_callbacks[pgd][callback_name] = callback_function
+
+    # module_load_remove_pgds checks which PGDs we are monitoring
+    # for either module load or module removes...
+    if pgd not in module_load_remove_pgds:
+        module_load_remove_pgds.append(pgd)
+        add_module_monitoring_hooks(pgd)
+
+    return callback_name
 
 def unregister_module_load_callback(callback_name):
     '''
@@ -197,7 +205,7 @@ def unregister_module_load_callback(callback_name):
     '''
     pgd = None
     for pgd_ in module_load_callbacks:
-        if callback_name in module_load_callbacks[pgd]:
+        if callback_name in module_load_callbacks[pgd_]:
             pgd = pgd_
     if pgd is None:
         raise ValueError("The provided callback_name does not exist in the list of callbacks!")
@@ -218,7 +226,7 @@ def unregister_module_remove_callback(callback_name):
     '''
     pgd = None
     for pgd_ in module_remove_callbacks:
-        if callback_name in module_remove_callbacks[pgd]:
+        if callback_name in module_remove_callbacks[pgd_]:
             pgd = pgd_
     if pgd is None:
         raise ValueError("The provided callback_name does not exist in the list of callbacks!")

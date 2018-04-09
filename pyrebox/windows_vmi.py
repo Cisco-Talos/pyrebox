@@ -29,7 +29,9 @@ import traceback
 
 last_kdbg = None
 
-# Modules pending symbol resolution
+# Keep a list of those modules for which we were not able to
+# find symbols. If we find in the future, or in the context
+# of a different process, we can update them
 mods_pending = {}
 
 def windows_insert_module_internal(
@@ -52,17 +54,25 @@ def windows_insert_module_internal(
     from api_internal import dispatch_module_remove_callback
 
     mod = Module(base, size, p_pid, p_pgd, checksum, basename, fullname)
+
     if p_pgd != 0:
         addr_space = get_addr_space(p_pgd)
     else:
         addr_space = get_addr_space()
 
-    # Getting symbols, from cache!
+    # First, we try to get the symbols from the cache 
     if (checksum, fullname) in symbols:
         mod.set_symbols(symbols[(checksum, fullname)])
-    elif update_symbols:
+
+    # If we are updating symbols (a simple module retrieval would
+    # not require symbol extraction), and, either we dont have any
+    # symbols on the cache, or we have an empty list (symbols could
+    # not be retrieved for some reason, such as a missing memory page,
+    # we try symbol resolution
+    if update_symbols and ((checksum, fullname) not in symbols or len(symbols[(checksum, fullname)]) == 0):
         syms = {}
         export_dir = nt_header.OptionalHeader.DataDirectory[0]
+
         if export_dir:
             expdir = obj.Object(
                 '_IMAGE_EXPORT_DIRECTORY',
@@ -80,19 +90,44 @@ def windows_insert_module_internal(
                        not isinstance(f, obj.NoneObject) and \
                        not isinstance(n, obj.NoneObject):
                         syms[str(n)] = f.v()
-        if len(syms) > 0:
-            symbols[(checksum, fullname)] = syms
-            mod.set_symbols(syms)
-            if (checksum, fullname) in mods_pending:
-                for m in mods_pending[(checksum, fullname)]:
-                    m.set_symbols(syms)
-                del mods_pending[(checksum, fullname)]
-        else:
-            if (checksum, fullname) in mods_pending:
-                mods_pending[(checksum, fullname)].append(mod)
-            else:
-                mods_pending[(checksum, fullname)] = [mod]
 
+                # If we managed to parse export table, update symbols,
+                # no matter if it is empty
+                if (checksum, fullname) not in symbols or len(syms) > len(symbols[(checksum, fullname)]):
+                    symbols[(checksum, fullname)] = syms
+                    # Even if it is empty, the module symbols are set
+                    # to an empty list, and thus are 'resolved'.
+                    # Anyway, in future updates, they could be resolved,
+                    # as we allow this in the first condition.
+                    mod.set_symbols(symbols[(checksum, fullname)])
+                    # Add module to mods_pending, or
+                    # Update modules that may we might not have been 
+                    # able to resolve symbols in the past
+                    if len(syms) == 0:
+                        if (checksum, fullname) not in mods_pending:
+                            mods_pending[(checksum, fullname)] = []
+                        mods_pending[(checksum, fullname)].append(mod)
+                    else:
+                        if (checksum, fullname) in mods_pending and len(mods_pending[(checksum, fullname)]) > 0:
+                            for mod in mods_pending[(checksum, fullname)]:
+                                mod.set_symbols(syms)
+                            del mods_pending[(checksum, fullname)]
+
+        else:
+            # Since there is no export dir, we assume that it does
+            # not have any symbols
+            if (checksum, fullname) not in symbols:
+                symbols[(checksum, fullname)] = []
+                # Even if it is empty, the module symbols are set
+                # to an empty list, and thus are 'resolved'.
+                # Anyway, in future updates, they could be resolved, 
+                # as we allow this in the first condition.
+                mod.set_symbols(symbols[(checksum, fullname)])
+                # Add module to mods_pending, or
+                if (checksum, fullname) not in mods_pending:
+                    mods_pending[(checksum, fullname)] = []
+                mods_pending[(checksum, fullname)].append(mod)
+ 
     #Module load/del notification
     if base in modules[(p_pid, p_pgd)]:
         if modules[(p_pid, p_pgd)][base].get_size() != size or \
@@ -105,12 +140,16 @@ def windows_insert_module_internal(
                                             modules[(p_pid, p_pgd)][base].get_name(),
                                             modules[(p_pid, p_pgd)][base].get_fullname())
             del modules[(p_pid, p_pgd)][base]
-            dispatch_module_load_callback(p_pid, p_pgd, base, size, basename, fullname)
             modules[(p_pid, p_pgd)][base] = mod
+            dispatch_module_load_callback(p_pid, p_pgd, base, size, basename, fullname)
+        # If we updated the symbols and have a bigger list now, dont substitute the module
+        # but update its symbols instead
+        elif len(mod.get_symbols()) > len(modules[(p_pid, p_pgd)][base].get_symbols()):
+            modules[(p_pid, p_pgd)][base].set_symbols(mod.get_symbols())
     else:
         # Just notify of module load
-        dispatch_module_load_callback(p_pid, p_pgd, base, size, basename, fullname)
         modules[(p_pid, p_pgd)][base] = mod
+        dispatch_module_load_callback(p_pid, p_pgd, base, size, basename, fullname)
 
     # Mark the module as present
     modules[(p_pid, p_pgd)][base].set_present()

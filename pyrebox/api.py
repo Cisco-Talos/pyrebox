@@ -514,7 +514,7 @@ def get_module_list(pgd):
         :param pgd: The PGD of the process for which we want to extract the modules, or 0 to extract kernel modules
         :type pgd: int
 
-        :return: List of modules, each element is a dictionary with keys: "name", "base", and "size"
+        :return: List of modules, each element is a dictionary with keys: "name", "base", "size", and "symbols_resolved"
         :rtype: list
     """
     import vmi
@@ -539,14 +539,18 @@ def get_module_list(pgd):
             for mod in vmi.modules[(proc_pid, proc_pgd)].values():
                 mods.append({"name": mod.get_name(),
                              "base": mod.get_base(),
-                             "size": mod.get_size()})
+                             "size": mod.get_size(),
+                             "symbols_resolved" : mod.are_symbols_resolved()})
         return mods
     else:
         raise ValueError("Process with PGD %x not found" % pgd)
 
 
-def get_symbol_list():
+def get_symbol_list(pgd = None):
     """ Return list of symbols
+
+        :param pgd: The pgd to obtain the symbols from. 0 to get kernel symbols
+        :type pgd: int
 
         :return: List of symbols, each element is a dictionary with keys: "mod", "name", and "addr"
         :rtype: list
@@ -555,33 +559,54 @@ def get_symbol_list():
     from utils import pp_print
     res_syms = []
     diff_modules = {}
-    proc_list = get_process_list()
-    pp_print("[*] Updating symbol list... Be patient, this may take a while\n")
-    for proc in proc_list:
-        proc_pid = proc["pid"]
-        proc_pgd = proc["pgd"]
-        if proc_pgd != 0:
-            vmi.update_modules(proc_pgd, update_symbols=True)
-            if (proc_pid, proc_pgd) in vmi.modules:
+    if pgd is None: 
+        proc_list = get_process_list()
+        pp_print("[*] Updating symbol list... Be patient, this may take a while\n")
+        for proc in proc_list:
+            proc_pid = proc["pid"]
+            proc_pgd = proc["pgd"]
+            if proc_pgd != 0:
+                vmi.update_modules(proc_pgd, update_symbols=True)
+                if (proc_pid, proc_pgd) in vmi.modules:
+                    for module in vmi.modules[proc_pid, proc_pgd].values():
+                        c = module.get_checksum()
+                        n = module.get_fullname()
+                        if (c, n) not in diff_modules:
+                            diff_modules[(c, n)] = [module]
+                        else:
+                            diff_modules[(c, n)].append(module)
+        # Include kernel modules too
+        vmi.update_modules(0, update_symbols=True)
+        if (0, 0) in vmi.modules:
+            for module in vmi.modules[0, 0].values():
+                c = module.get_checksum()
+                n = module.get_fullname()
+                if (c, n) not in diff_modules:
+                    diff_modules[(c, n)] = [module]
+                else:
+                    diff_modules[(c, n)].append(module)
+
+    else:
+        pp_print("[*] Updating symbol list for one process... Be patient, this may take a while\n")
+        vmi.update_modules(pgd, update_symbols=True)
+        for proc_pid, proc_pgd in vmi.modules:
+            if proc_pgd == pgd:
                 for module in vmi.modules[proc_pid, proc_pgd].values():
                     c = module.get_checksum()
                     n = module.get_fullname()
                     if (c, n) not in diff_modules:
-                        diff_modules[(c, n)] = module
+                        diff_modules[(c, n)] = [module]
+                    else:
+                        diff_modules[(c, n)].append(module)
 
-    # Include kernel modules too
-    vmi.update_modules(0, update_symbols=True)
-    if (0, 0) in vmi.modules:
-        for module in vmi.modules[0, 0].values():
-            c = module.get_checksum()
-            n = module.get_fullname()
-            if (c, n) not in diff_modules:
-                diff_modules[(c, n)] = module
-
-    for mod in diff_modules.values():
-        syms = mod.get_symbols()
-        for name in syms:
-            res_syms.append({"mod": mod.get_name(), "name": name, "addr": syms[name]})
+    for mod_list in diff_modules.values():
+        added_names = []
+        for mod in mod_list:
+            syms = mod.get_symbols()
+            for name in syms:
+                if name not in added_names:
+                    res_syms.append({"mod": mod.get_name(), "name": name, "addr": syms[name]})
+                    added_names.append(name)
     return res_syms
 
 
@@ -823,11 +848,11 @@ class CallbackManager:
 
         # If the callback_type is a module callback, register it with specific API
         if callback_type == CallbackManager.LOADMODULE_CB:
-            register_module_load_callback(pgd, name, func)
-            return
+            self.load_module_callbacks[name] = register_module_load_callback(pgd, name, func)
+            return name
         if callback_type == CallbackManager.REMOVEMODULE_CB:
-            register_module_remove_callback(pgd, name, func)
-            return
+            self.remove_module_callbacks[name] = register_module_remove_callback(pgd, name, func)
+            return name
 
         # addr,pgd and start_opcode,end_opcode are exclusive, so we join them
         # together to call register_callback
@@ -852,12 +877,12 @@ class CallbackManager:
             return
 
         if name in self.load_module_callbacks:
-            unregister_module_load_callback(name)
+            unregister_module_load_callback(self.load_module_callbacks[name])
             del(self.load_module_callbacks[name])
             return
 
         if name in self.remove_module_callbacks:
-            unregister_module_remove_callback(name)
+            unregister_module_remove_callback(self.remove_module_callbacks[name])
             del(self.remove_module_callbacks[name])
             return
 

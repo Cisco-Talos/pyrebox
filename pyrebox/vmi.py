@@ -41,7 +41,7 @@ class Module:
         self.__checksum = checksum
         self.__name = name
         self.__fullname = fullname
-        self.__symbols = []
+        self.__symbols = None 
 
         self.__is_present = False
     # Getters
@@ -65,7 +65,13 @@ class Module:
         return self.__fullname
 
     def get_symbols(self):
-        return self.__symbols
+        if self.__symbols is None:
+            return []
+        else:
+            return self.__symbols
+
+    def are_symbols_resolved(self):
+        return (self.__symbols is not None)
 
     def get_checksum(self):
         return self.__checksum
