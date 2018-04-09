@@ -153,7 +153,7 @@ def unload_module(_id):
             for i in modules:
                 pp_warning("    %s - %s" % (str(i),str(type(i))))
     except Exception as e:
-        pp_error("[!] Could not reload python module due to exception\n")
+        pp_error("[!] Could not unload python module due to exception\n")
         pp_error("    %s\n" % str(e))
         return
 

@@ -126,7 +126,7 @@ def find_ep(pgd, proc_name):
         # size = m["size"]
         if name == proc_name:
             try:
-                pe_data = api.r_va(pgd, base, 0x2000)
+                pe_data = api.r_va(pgd, base, 0x1000)
                 pe = pefile.PE(data=pe_data)
                 ep = pe.OPTIONAL_HEADER.AddressOfEntryPoint
                 return (base + ep)

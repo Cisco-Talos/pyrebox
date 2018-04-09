@@ -25,6 +25,11 @@ import os.path
 from utils import pp_error
 from volatility.renderers.basic import Address
 
+from utils import pp_print
+from utils import pp_debug
+from utils import pp_warning
+from utils import pp_error
+
 def linux_get_offsets():
     from utils import ConfigurationManager as conf_m
     import volatility.obj as obj
@@ -138,7 +143,13 @@ def linux_insert_module(task, pid, pgd, base, size, basename, fullname, update_s
 
         if elf_hdr.is_valid():
             elf_hdr_size = elf_hdr.elf_obj.size()
-            buf = api.r_va(pgd_for_memory_read, base, elf_hdr_size)
+            buf = ""
+
+            try:
+                buf = api.r_va(pgd_for_memory_read, base, elf_hdr_size)
+            except:
+                pp_warning("Could not read ELF header at address %x" % base)
+
             h = hashlib.sha256()
             h.update(buf)
             checksum = h.hexdigest()
