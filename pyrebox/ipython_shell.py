@@ -506,17 +506,30 @@ class ShellMagics(Magics):
         elif conf_m.platform == "x86_64-softmmu":
             md = Cs(CS_ARCH_X86, CS_MODE_64)
         else:
-            pp_error("[disassemble] Wrong platform specification")
+            pp_error("[disassemble] Wrong platform specification\n")
             return None
 
         content = ""
         if physical:
-            content = api.r_pa(addr, 0x2000)
+            content = api.r_pa(addr, 0x1000)
         else:
             if self.proc_context is None:
                 pp_warning("Specify process context (proc command)\n")
                 return
-            content = api.r_va(self.proc_context.get_pgd(), addr, 0x2000)
+
+            # Try to read 0x1000 bytes
+            # First, read until the page boundary
+            to_read = 0x1000 - (addr & 0xFFF)
+            try:
+                content += api.r_va(self.proc_context.get_pgd(), addr, to_read)
+            except:
+                pp_warning("Could not read memory at address %x, is it paged out?\n" % addr)
+
+            if len(content) > 0 and to_read < 0x1000:
+                try:
+                    content += api.r_va(self.proc_context.get_pgd(), addr + to_read, 0x1000 - to_read)
+                except:
+                    pp_warning("Could not read memory at address %x, is it paged out?\n" % (addr + to_read))
 
         counter = 0
         base = 0
@@ -842,8 +855,13 @@ class ShellMagics(Magics):
                 if self.proc_context is None:
                     pp_warning("Specify process context (proc command)\n")
                     return
-                content = api.r_va(self.proc_context.get_pgd(),
-                                   addr + (size * i), size)
+                content = ""
+                try:
+                    content = api.r_va(self.proc_context.get_pgd(),
+                                       addr + (size * i), size)
+                except:
+                    pp_warning("Could not read memory at address %x, is it paged out?\n" % (addr + (size * i)))
+                    break
             third_party.python_modules.hexdump.hexdump(
                 content, addr + (size * i))
 
@@ -864,8 +882,13 @@ class ShellMagics(Magics):
                 if self.proc_context is None:
                     pp_warning("Specify process context (proc command)\n")
                     return
-                content = api.r_va(self.proc_context.get_pgd(),
-                                   addr + (size * i), size)
+                content = ""
+                try:
+                    content = api.r_va(self.proc_context.get_pgd(),
+                                       addr + (size * i), size)
+                except:
+                    pp_warning("Could not read memory at address %x, is it paged out?\n" % (addr + (size * i)))
+                    break
             third_party.python_modules.hexdump.hexdump(
                 content, addr + (size * i))
 
@@ -880,7 +903,7 @@ class ShellMagics(Magics):
             return
         size = 1
         val = api.r_ioport(addr, size)
-        pp_print("Port [0x%04x] = 0x%02x" % (addr, val))
+        pp_print("Port [0x%04x] = 0x%02x\n" % (addr, val))
 
     @line_magic
     def iorw(self, line):
@@ -893,7 +916,7 @@ class ShellMagics(Magics):
             return
         size = 2
         val = api.r_ioport(addr, size)
-        pp_print("Port [0x%04x] = 0x%04x" % (addr, val))
+        pp_print("Port [0x%04x] = 0x%04x\n" % (addr, val))
 
     @line_magic
     def iord(self, line):
@@ -906,7 +929,7 @@ class ShellMagics(Magics):
             return
         size = 4
         val = api.r_ioport(addr, size)
-        pp_print("Port [0x%04x] = 0x%016x" % (addr, val))
+        pp_print("Port [0x%04x] = 0x%016x\n" % (addr, val))
 
     @line_magic
     def iowb(self, line):
@@ -929,7 +952,7 @@ class ShellMagics(Magics):
         val = struct.unpack("<B", buf)[0]
 
         api.w_ioport(addr, size, val)
-        pp_print("Port [0x%04x] = 0x%02x" % (addr, val))
+        pp_print("Port [0x%04x] = 0x%02x\n" % (addr, val))
 
     @line_magic
     def ioww(self, line):
@@ -952,7 +975,7 @@ class ShellMagics(Magics):
         val = struct.unpack("<H", buf)[0]
 
         api.w_ioport(addr, size, val)
-        pp_print("Port [0x%04x] = 0x%04x" % (addr, val))
+        pp_print("Port [0x%04x] = 0x%04x\n" % (addr, val))
 
     @line_magic
     def iowd(self, line):
@@ -975,7 +998,7 @@ class ShellMagics(Magics):
         val = struct.unpack("<I", buf)[0]
 
         api.w_ioport(addr, size, val)
-        pp_print("Port [0x%04x] = 0x%016x" % (addr, val))
+        pp_print("Port [0x%04x] = 0x%016x\n" % (addr, val))
 
     @line_magic
     def dd(self, line):
@@ -994,8 +1017,13 @@ class ShellMagics(Magics):
                 if self.proc_context is None:
                     pp_warning("Specify process context (proc command)\n")
                     return
-                content = api.r_va(self.proc_context.get_pgd(),
-                                   addr + (size * i), size)
+                content = ""
+                try:
+                    content = api.r_va(self.proc_context.get_pgd(),
+                                       addr + (size * i), size)
+                except:
+                    pp_warning("Could not read memory at address %x, is it paged out?\n" % (addr + (size * i)))
+                    break
             third_party.python_modules.hexdump.hexdump(
                 content, addr + (size * i))
 
@@ -1016,8 +1044,13 @@ class ShellMagics(Magics):
                 if self.proc_context is None:
                     pp_warning("Specify process context (proc command)\n")
                     return
-                content = api.r_va(self.proc_context.get_pgd(),
-                                   addr + (size * i), size)
+                content = ""
+                try:
+                    content = api.r_va(self.proc_context.get_pgd(),
+                                       addr + (size * i), size)
+                except:
+                    pp_warning("Could not read memory at address %x, is it paged out?\n" % (addr + (size * i)))
+                    break
             third_party.python_modules.hexdump.hexdump(
                 content, addr + (size * i))
 
@@ -1153,7 +1186,11 @@ class ShellMagics(Magics):
             if self.proc_context is None:
                 pp_warning("Specify process context (proc command)\n")
                 return
-            content = api.r_va(self.proc_context.get_pgd(), addr, size)
+            content = ""
+            try:
+                content = api.r_va(self.proc_context.get_pgd(), addr, size)
+            except:
+                pp_warning("Could not read memory at address %x, is it paged out?\n" % addr)
         third_party.python_modules.hexdump.hexdump(content, addr)
 
     @line_magic
@@ -1233,43 +1270,39 @@ class ShellMagics(Magics):
         strings = Strings()
 
         pos = addr
-        last_item = None
+
+        block = ""
         while pos < (addr + size):
-            block_size = min(0x2000, (addr + size - pos))
-            block = None
+            # Read until the page boundary
+            block_size = 0x1000 - (pos & 0xFFF)
+            block_size = min(block_size, (addr + size - pos))
+    
             if physical:
-                block = api.r_pa(pos, block_size)
+                block += api.r_pa(pos, block_size)
             else:
-                block = api.r_va(self.proc_context.get_pgd(), pos, block_size)
-            # Now, search in block
-            if block is None:
-                break
-
-            # Print strings
-            items = strings.strings(pos, block)
-            if len(items) > 0:
-                for item in items:
-                    if item not in found or len(
-                            item) > len(found[item.pos].string):
-                        found[item.pos] = item
-                        last_item = item if last_item is None or last_item.pos < item.pos else last_item
-                if (last_item.pos + len(last_item)) == (pos + block_size):
-                    pos = last_item.pos
-                else:
+                try:
+                    block += api.r_va(self.proc_context.get_pgd(), pos, block_size)
+                except:
+                    pp_warning("Could not read memory at address %x, is it paged out?\n" % pos)
                     pos += block_size
-            else:
-                pos += block_size
-            # If we finished searching, just continue
-            if last_item is None or (last_item.pos + len(last_item)) >= (addr + size):
-                break
+                    continue
 
-        for item in found.values():
+            pos += block_size
+
+        # Print strings
+        items = strings.strings(addr, block)
+        for item in items:
+            if item not in found or len(
+                    item) > len(found[item.pos].string):
+                found[item.pos] = item
+
+        for k in sorted(found.keys()):
             pp_print(
                 "%s0x%016x: %s %s\n" %
                 ("p" if physical else "",
-                 item.pos,
-                 "[HOST]" if item.is_host else "",
-                 item.string))
+                 found[k].pos,
+                 "[HOST]" if found[k].is_host else "",
+                 found[k].string))
 
     @line_magic
     def s(self, line):
@@ -1285,38 +1318,38 @@ class ShellMagics(Magics):
             self.do_help("s")
             return
 
+        pos = addr
+
+        block = ""
+        while pos < (addr + size):
+            # Read until the page boundary
+            block_size = 0x1000 - (pos & 0xFFF)
+            block_size = min(block_size, (addr + size - pos))
+    
+            if physical:
+                block += api.r_pa(pos, block_size)
+            else:
+                try:
+                    block += api.r_va(self.proc_context.get_pgd(), pos, block_size)
+                except:
+                    pp_warning("Could not read memory at address %x, is it paged out?\n" % pos)
+                    pos += block_size
+                    continue
+
+            pos += block_size
+
         # Now, perform search
         found = []
-        for mem_start in range(addr, addr + size, 0x1000):
-            # Read 2 blocks of 0x1000 each time
-            block_size = 0x2000 if (
-                mem_start +
-                0x2000) <= (
-                addr +
-                size) else (
-                (addr +
-                 size) -
-                mem_start)
-            block = None
-            if physical:
-                block = api.r_pa(mem_start, block_size)
-            else:
-                block = api.r_va(
-                    self.proc_context.get_pgd(),
-                    mem_start,
-                    block_size)
-            # Now, search in block
-            if block is None:
-                break
 
-            pos = mem_start
+        pos = addr
+        m = re.search(pattern, block)
+        while m is not None:
+            pos = (pos + m.start())
+            if pos not in found:
+                found.append(pos)
+            block = block[m.start() + len(pattern):]
             m = re.search(pattern, block)
-            while m is not None:
-                pos = (pos + m.start())
-                if pos not in found:
-                    found.append(pos)
-                block = block[m.start() + len(pattern):]
-                m = re.search(pattern, block)
+
         for entry in found:
             pp_print(
                 "Pattern found: %s0x%016x\n" %
@@ -1661,7 +1694,7 @@ class ShellMagics(Magics):
         if self.vol_commands is None:
             self.update_conf()
         if self.vol_commands is None:
-            pp_error("[!] No volatility commands available")
+            pp_error("[!] No volatility commands available\n")
 
         els = line.split()
         if len(els) < 1:
@@ -1755,7 +1788,7 @@ def run_custom_command(cmd, args):
         __added_commands[cmd](args)
     else:
         pp_error(
-            "The custom command %s is not a valid or defined command" %
+            "The custom command %s is not a valid or defined command\n" %
             cmd)
 
 
