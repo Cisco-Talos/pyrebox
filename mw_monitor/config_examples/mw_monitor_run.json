@@ -1,0 +1,35 @@
+{
+    "api_tracer": {
+        "bin_log": true,
+        "exclude_apis": [],
+        "exclude_modules": ["ntdll.dll"],
+        "exclude_origin_modules": [],
+        "include_apis": [],
+        "light_mode": false,
+        "procs": null,
+        "text_log": true
+    },
+    "coverage": {
+        "procs": null
+    },
+    "dumper": {  
+        "dump_at": "kernel32.dll!CopyFileA",
+        "dump_on_exit": false
+    },
+    "general": {
+        "files_path": "C:\\",
+        "main_executable": "sample.exe",
+        "files_bundle": "/path/to/your/sample.zip"
+    },
+    "interproc": {
+        "basic_stats": true,
+        "bin_log": true,
+        "text_log": true
+    },
+    "modules": {
+        "api_tracer": true,
+        "coverage": true,
+        "dumper": true,
+        "interproc": true
+    }
+}

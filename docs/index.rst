@@ -23,6 +23,7 @@
    scripting
    api
    guest_agent
+   mw_monitor
 
 
 PyREBox is a Python scriptable Reverse Engineering sandbox. It is based on QEMU, and its goal is 
