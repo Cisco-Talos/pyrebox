@@ -8,9 +8,11 @@
 .. _Volatility: http://www.volatilityfoundation.org/ 
 .. _BUILD: BUILD.rst 
 .. _here: https://github.com/Cisco-Talos/pyrebox/issues
+.. _slides: https://github.com/Cisco-Talos/pyrebox/tree/master/docs/pyrebox_hitb_ams.pdf
 .. _scripts: https://github.com/Cisco-Talos/pyrebox/tree/master/scripts
 .. _readthedocs.io: https://pyrebox.readthedocs.io/en/latest/
 .. _questions: https://github.com/Cisco-Talos/pyrebox/issues?utf8=%E2%9C%93&q=is%3Aissue%20label%3Aquestion%20
+.. _presentation: https://youtu.be/fvm5DikXoI8?t=22089
 
 PyREBox is a Python scriptable Reverse Engineering sandbox. It is based on QEMU, and its goal is 
 to aid reverse engineering by providing dynamic analysis and debugging capabilities from a 
@@ -28,12 +30,16 @@ in C/C++, and implement several advanced features such as dynamic taint analysis
 or even record and replay of execution traces. With PyREBox, we aim to apply this technology focusing 
 on keeping the design simple, and on the usability of the system for threat analysts.
 
+PyREBox was presented at HITB Amsterdam 2018. You can see the slides_, or watch the presentation_.
+
 What's new
 ==========
 
 Remember to pull the latest version of PyREBox in order to enjoy its latest features. PyREBox is under
 active development and new cool features are yet to come!
 
+- [Apr 13, 2018] Presented PyREBox at HITB Amsterdam (CommSec track).
+- [Apr 13, 2018] Added malware monitoring scripts (mw_mon).
 - [Mar 08, 2018] **Triggers are now called for every process in the system (not only monitored processes). See documentation**
 - [Mar 08, 2018] **Changed memory read/write callback parameters. See documentation and examples.** 
 - [Mar 08, 2018] Added physical memory address read/write breakpoints.

@@ -1,9 +1,9 @@
 .. _here: https://github.com/Cisco-Talos/pyrebox/issues
-.. _config_examples: https://github.com/Cisco-Talos/pyrebox/mw_monitor/config_examples
-.. _readme: https://github.com/Cisco-Talos/pyrebox/mw_monitor/third_party/deviare2_db/Readme.md
-.. _script: https://github.com/Cisco-Talos/pyrebox/mw_monitor/third_party/msdn_parser/zynamics_msdn_crawler.py
-.. _populate_db.py: https://github.com/Cisco-Talos/pyrebox/mw_monitor/populate_db.py
-.. _ida_scripts: https://github.com/Cisco-Talos/pyrebox/mw_monitor/ida_scripts
+.. _config_examples: https://github.com/Cisco-Talos/pyrebox/tree/master/mw_monitor/config_examples
+.. _readme: https://github.com/Cisco-Talos/pyrebox/tree/master/mw_monitor/third_party/deviare2_db/Readme.md
+.. _script: https://github.com/Cisco-Talos/pyrebox/tree/master/mw_monitor/third_party/msdn_parser/zynamics_msdn_crawler.py
+.. _populate_db.py: https://github.com/Cisco-Talos/pyrebox/tree/master/mw_monitor/populate_db.py
+.. _ida_scripts: https://github.com/Cisco-Talos/pyrebox/tree/master/mw_monitor/ida_scripts
 .. _readthedocs.io: https://pyrebox.readthedocs.io/en/latest/
 .. _questions: https://github.com/Cisco-Talos/pyrebox/issues?utf8=%E2%9C%93&q=is%3Aissue%20label%3Aquestion%20
 
@@ -38,12 +38,12 @@ creates a second process, *api tracer* will start monitoring this new process an
 API call trace for it as well.
 
 Configuration files
-===================
+-------------------
 
 Malware monitor has two different configuration files:
 
 mw_monitor.conf
----------------
+***************
 
 Each of the four modules generates several log files. The names of the logs can be configured in this
 configuraiton file, that must be accessible from the directory where PyREBox is started. A common option
@@ -55,44 +55,39 @@ containing all the collected results. You can find a self-explanatory configurat
 under the config_examples_ directory.
 
 interproc
-*********
+^^^^^^^^^
 
 - **bin_log_name.** This file is a binary log (serialized data) of the data collected during memory operation monitoring.
 - **text_log_name.** This file is a text log of all the events related to memory monitoring captured during the execution. 
 - **basic_stats_name.** This file is a structured text summary of the data collected.
 
 dumper
-******
+^^^^^^
 
-- **path.** This option allows to choose the path where we want to dump the memory of the process, loaded dlls, and the
-rest of the VAD regions that do not overlap the main process memory or any DLL.
+- **path.** This option allows to choose the path where we want to dump the memory of the process, loaded dlls, and the rest of the VAD regions that do not overlap the main process memory or any DLL.
 
 coverage
-********
+^^^^^^^^
 
-- **cov_log_name.** This file is a binary log of the instruction trace collected. This log can be imported into IDA with
-a corresponding script.
-- **cov_text_name.** This file is a text log that summarizes the instruction trace collected. Each line in this log
-represents a transition from one VAD region to a different VAD region, and includes both the origin and destiny address.
+- **cov_log_name.** This file is a binary log of the instruction trace collected. This log can be imported into IDA with a corresponding script.
+- **cov_text_name.** This file is a text log that summarizes the instruction trace collected. Each line in this log represents a transition from one VAD region to a different VAD region, and includes both the origin and destiny address.
 
 api_tracer
-**********
+^^^^^^^^^^
 
-- **text_log_name.** This file is a text log containing the recoded API calls, with or without their parameters (depends
-on configuration).
-- **bin_log_name.** This file is a binary log containing the same information as the text log. This file can be imported
-into IDA with a corresponding script.
+- **text_log_name.** This file is a text log containing the recoded API calls, with or without their parameters (depends on configuration).
+- **bin_log_name.** This file is a binary log containing the same information as the text log. This file can be imported into IDA with a corresponding script.
 
 
 mw_monitor_run.json
--------------------
+*******************
 
 This json file allows to turn on/off each of the modules separately, under the *modules* section.
 It also allows to configure different parameters for each module. Malware monitor also provides
 sample execution automation, which can be configured in this json file.
 
 general
-*******
+^^^^^^^
 
 - **files_bundle.** The path, in the host system, of a zip file containing several files (typically a .exe and .dll dependencies). The files inside this zip container will be copied into the guest system, under the *files_path* path.
 - **files_path.** The directory in the guest system where the files will be copied at startup.
@@ -100,69 +95,53 @@ general
 - **api_database.** The path the API database generated with Deviare and the MSDN crawler. 
 
 interproc
-*********
+^^^^^^^^^
 
-- **basic_stats.** Boolean value that turns on/off the *basic_stats* report generation, which contains a summary of the observed
-memory operations.
+- **basic_stats.** Boolean value that turns on/off the *basic_stats* report generation, which contains a summary of the observed memory operations.
 - **bin_log** Boolean value that turns on/off the binary log generation of this module.
-- **text_log** Boolean value that turns on/off the text log generation of this module. This log contains a trace of all the memory
-operations monitored.
+- **text_log** Boolean value that turns on/off the text log generation of this module. This log contains a trace of all the memory operations monitored.
 
 dumper
-******
+^^^^^^
 
 - **dump_on_exit.** Boolean that determines if the process memory should be dumped when it exits.
-- **dump_at.** Value that allows to configure when to dump the process memory. It accepts 3 possible formats: an
-address, a symbol, and a symbol followed by an address. In the first case, the process memory will be dumped when the
-control flow reaches a given address under the context of the process. In the second case, the process memory will be
-dumped when the control flow reaches the symbol specified (generally, an specific API call). The third option will
-dump the process memory when the process calls an API function, specifically from a given address.
+- **dump_at.** Value that allows to configure when to dump the process memory. It accepts 3 possible formats: an address, a symbol, and a symbol followed by an address. In the first case, the process memory will be dumped when the control flow reaches a given address under the context of the process. In the second case, the process memory will be dumped when the control flow reaches the symbol specified (generally, an specific API call). The third option will dump the process memory when the process calls an API function, specifically from a given address.
 :: 
   0x00400000
   user32.dll!CharNextW
   user32.dll!CharNextW!0x00400000
 
 coverage
-********
+^^^^^^^^
 
-- **procs.** A list of strings that specifies the process names of the processes which should be traced in order to
-generate a coverage file. If a none value or an empty list are specified, all the monitored processes (the initial one, 
-and any related process) will be recorded.
+- **procs.** A list of strings that specifies the process names of the processes which should be traced in order to generate a coverage file. If a none value or an empty list are specified, all the monitored processes (the initial one, and any related process) will be recorded.
 
 api_tracer
-**********
+^^^^^^^^^^
 
 - **bin_log.** Boolean value that allows to turn on/off the generation of the binary log. 
 - **text_log.** Boolean value that allows to turn on/off the generation of the text log.
-- **light_mode.** Boolean value that allows to turn on/off the light mode. Under light mode, function call arguments are
-not dereferenced, resulting in an slightly faster execution of the guest system.
+- **light_mode.** Boolean value that allows to turn on/off the light mode. Under light mode, function call arguments are not dereferenced, resulting in an slightly faster execution of the guest system.
 - **exclude_apis.** A list of API functions to exclude from being logged.
-- **exclude_modules.** List of module names to exclude from being traced. Any call to a function in a module in this list will not be
-logged.
-- **exclude_origin_modules.** List of module names to exclude from being traced. Any call originating from a module in
-this list, will not be logged.
-- **include_apis.** A list of API functions to include in the trace, even if the module where it is located is in some
-exclusion list. This finer-granularity option overrides any exclusion rule.
-- **procs.** A list of strings that specifies the process names of the processes which should be traced in order to
-generate a coverage file. If a none value or an empty list are specified, all the monitored processes (the initial one, 
-and any related process) will be recorded.
+- **exclude_modules.** List of module names to exclude from being traced. Any call to a function in a module in this list will not be logged.
+- **exclude_origin_modules.** List of module names to exclude from being traced. Any call originating from a module in this list, will not be logged.
+- **include_apis.** A list of API functions to include in the trace, even if the module where it is located is in some exclusion list. This finer-granularity option overrides any exclusion rule.
+- **procs.** A list of strings that specifies the process names of the processes which should be traced in order to generate a coverage file. If a none value or an empty list are specified, all the monitored processes (the initial one, and any related process) will be recorded.
 
 
 IDA Python scripts
-==================
+------------------
 
 We provide IDA Python scripts under the ida_scripts_ directory. There are 2 main scripts:
 
-- **mw_monitor_coverage.py**. Allows to read the coverage binary log and to colorize the basic blocks that have been
-executed.
-- **mw_monitor_ida_functions_rename.py**. Opens a new tab in IDA that allows to load the api tracer binary log and to
-visualize the API calls traced, as well as their origin and destiny addresses and parameters.
+- **mw_monitor_coverage.py**. Allows to read the coverage binary log and to colorize the basic blocks that have been executed.
+- **mw_monitor_ida_functions_rename.py**. Opens a new tab in IDA that allows to load the api tracer binary log and to visualize the API calls traced, as well as their origin and destiny addresses and parameters.
 
 In order to run these scripts, you will need to copy the entire mw_monitor directory to a path that must be accessible
 from your IDA setup. These IDA scripts have several dependencies under the mw_monitor/ directory of this project.
 
 API tracer database
-===================
+-------------------
 
 The API tracer relies on an sqlite database in order to inspect automatically API parameters. This database can be 
 generated with a combination of the Deviare project, the MSDN crawler published by Zynamics, and a custom script
@@ -182,12 +161,12 @@ Finally, the last step involves running the populate_db.py_ script, in order to 
 information extracted with the MSDN crawler.
 
 Documentation
-=============
+-------------
 
 This documentation is also hosted toguether with the main PyREBox documentation at readthedocs.io_.
 
 Bugs, questions and support
-===========================
+---------------------------
 
 If you think you've found a bug, please report it here_.
 
