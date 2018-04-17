@@ -13,6 +13,7 @@
 .. _readthedocs.io: https://pyrebox.readthedocs.io/en/latest/
 .. _questions: https://github.com/Cisco-Talos/pyrebox/issues?utf8=%E2%9C%93&q=is%3Aissue%20label%3Aquestion%20
 .. _presentation: https://youtu.be/fvm5DikXoI8?t=22089
+.. _Contest: https://volatility-labs.blogspot.com/2017/11/results-from-5th-annual-2017-volatility.html 
 
 PyREBox is a Python scriptable Reverse Engineering sandbox. It is based on QEMU, and its goal is 
 to aid reverse engineering by providing dynamic analysis and debugging capabilities from a 
@@ -30,7 +31,9 @@ in C/C++, and implement several advanced features such as dynamic taint analysis
 or even record and replay of execution traces. With PyREBox, we aim to apply this technology focusing 
 on keeping the design simple, and on the usability of the system for threat analysts.
 
-PyREBox was presented at HITB Amsterdam 2018. You can see the slides_, or watch the presentation_.
+PyREBox won the Volatility Plugin Contest_ in 2017!
+
+Also, it was presented at HITB Amsterdam 2018. You can see the slides_, or watch the presentation_.
 
 What's new
 ==========

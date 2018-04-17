@@ -1,6 +1,6 @@
 .. _here: https://github.com/Cisco-Talos/pyrebox/issues
 .. _config_examples: https://github.com/Cisco-Talos/pyrebox/tree/master/mw_monitor/config_examples
-.. _readme: https://github.com/Cisco-Talos/pyrebox/tree/master/mw_monitor/third_party/deviare2_db/Readme.md
+.. _readme: https://github.com/Cisco-Talos/pyrebox/tree/master/mw_monitor/third_party/deviare2_db/README.rst
 .. _script: https://github.com/Cisco-Talos/pyrebox/tree/master/mw_monitor/third_party/msdn_parser/zynamics_msdn_crawler.py
 .. _populate_db.py: https://github.com/Cisco-Talos/pyrebox/tree/master/mw_monitor/populate_db.py
 .. _ida_scripts: https://github.com/Cisco-Talos/pyrebox/tree/master/mw_monitor/ida_scripts
@@ -106,10 +106,11 @@ dumper
 
 - **dump_on_exit.** Boolean that determines if the process memory should be dumped when it exits.
 - **dump_at.** Value that allows to configure when to dump the process memory. It accepts 3 possible formats: an address, a symbol, and a symbol followed by an address. In the first case, the process memory will be dumped when the control flow reaches a given address under the context of the process. In the second case, the process memory will be dumped when the control flow reaches the symbol specified (generally, an specific API call). The third option will dump the process memory when the process calls an API function, specifically from a given address.
-:: 
-  0x00400000
-  user32.dll!CharNextW
-  user32.dll!CharNextW!0x00400000
+
+.. code-block:: none
+   0x00400000
+   user32.dll!CharNextW
+   user32.dll!CharNextW!0x00400000
 
 coverage
 ^^^^^^^^
