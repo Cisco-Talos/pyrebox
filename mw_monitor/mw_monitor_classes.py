@@ -1064,6 +1064,11 @@ class Section:
                 "_SEGMENT")
             file_obj = self.segment.ControlArea.FilePointer
 
+            if "_EX_FAST_REF" in repr(file_obj):
+                # on newer volatility profiles, FilePointer is _EX_FAST_REF, needs deref
+                #  also might be cleaner to import the vol module and compare type() instead of repr str
+                file_obj = file_obj.dereference_as("_FILE_OBJECT")
+
             for fi in mwmon.data.files:
                 if fi.file_name == str(file_obj.FileName):
                     self.backing_file = fi
