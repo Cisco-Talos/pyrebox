@@ -685,7 +685,7 @@ class Process:
         # Check if we can remove the module from the list of modules with
         # pending symbol resolution
         for mod in api.get_module_list(self.get_pgd()):
-            if mod["symbols_resolved"] and mod["name"] in mods_pending_symbol_resolution[self.get_pgd()]:
+            if mod["symbols_resolved"] and mod["name"] in mods_pending_symbol_resolution.get(self.get_pgd(), []):
                 del mods_pending_symbol_resolution[self.get_pgd()][mod["name"]]
 
         for d in syms:
@@ -1063,6 +1063,16 @@ class Section:
             self.segment = self.section_object.Segment.dereference_as(
                 "_SEGMENT")
             file_obj = self.segment.ControlArea.FilePointer
+
+            from volatility.plugins.overlays.windows.windows import _FILE_OBJECT
+            if type(file_obj) is not _FILE_OBJECT:
+                from volatility.plugins.overlays.windows.windows import _EX_FAST_REF
+                if type(file_obj) is _EX_FAST_REF:
+                    # on newer volatility profiles, FilePointer is _EX_FAST_REF, needs deref
+                    file_obj = file_obj.dereference_as("_FILE_OBJECT")
+                else:
+                    raise TypeError("The type for self.segment.ControlArea.FilePointer in Section" + \
+                                    "class does not match _FILE_OBJECT or _EX_FAST_REF")
 
             for fi in mwmon.data.files:
                 if fi.file_name == str(file_obj.FileName):

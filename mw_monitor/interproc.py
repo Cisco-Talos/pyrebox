@@ -332,7 +332,7 @@ def ntopenprocessret(cpu_index, cpu, pid, callback_name, proc_hdl_p, proc, updat
                 return
         new_proc = Process(str(proc_obj.ImageFileName))
         new_proc.set_pid(int(proc_obj.UniqueProcessId))
-        new_proc.set_cr3(int(proc_obj.Pcb.DirectoryTableBase.v()))
+        new_proc.set_pgd(int(proc_obj.Pcb.DirectoryTableBase.v()))
         mw_monitor_start_monitoring_process(new_proc)
     else:
         if TARGET_LONG_SIZE == 4: 
