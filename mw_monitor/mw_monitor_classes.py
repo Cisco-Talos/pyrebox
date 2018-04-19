@@ -685,7 +685,7 @@ class Process:
         # Check if we can remove the module from the list of modules with
         # pending symbol resolution
         for mod in api.get_module_list(self.get_pgd()):
-            if mod["symbols_resolved"] and mod["name"] in mods_pending_symbol_resolution[self.get_pgd()]:
+            if mod["symbols_resolved"] and mod["name"] in mods_pending_symbol_resolution.get(self.get_pgd(), []):
                 del mods_pending_symbol_resolution[self.get_pgd()][mod["name"]]
 
         for d in syms:
