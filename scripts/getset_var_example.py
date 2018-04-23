@@ -29,9 +29,14 @@ cm = None
 pyrebox_print = None
 
 
-def my_createproc(pid, pgd, name):
+def my_createproc(params):
     global cm
     global pyrebox_print
+
+    pid = params["pid"] 
+    pgd = params["pid"]
+    name = params["name"]
+
     cm.set_trigger_var("createproc", "var1", pid)
     cm.set_trigger_var("createproc", "var2", pgd)
     cm.set_trigger_var("createproc", "var3", name)
@@ -69,7 +74,7 @@ def initialize_callbacks(module_hdl, printer):
     pyrebox_print = printer
 
     pyrebox_print("[*]    Initializing callbacks")
-    cm = CallbackManager(module_hdl)
+    cm = CallbackManager(module_hdl, new_style = True)
     cm.add_callback(CallbackManager.CREATEPROC_CB, my_createproc, name="createproc")
     cm.add_trigger("createproc", "triggers/trigger_getset_var_example.so")
     cm.set_trigger_var("createproc", "var1", 0)

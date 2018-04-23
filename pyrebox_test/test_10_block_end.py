@@ -28,10 +28,17 @@ cm = None
 pyrebox_print = None
 
 
-def my_function(cpu_index, cpu, tb, cur_pc, next_pc):
+def my_function(params):
     global cm
     import api
     from ipython_shell import start_shell
+
+    cpu_index = params["cpu_index"]
+    cpu = params["cpu"]
+    tb = params["tb"]
+    cur_pc = params["cur_pc"]
+    next_pc = params["next_pc"]
+
     pgd = api.get_running_process(cpu_index)
     pyrebox_print("Block end at (%x) %x -> %x\n" % (pgd, cur_pc, next_pc))
     start_shell()
@@ -61,7 +68,7 @@ def initialize_callbacks(module_hdl, printer):
     # Initialize printer
     pyrebox_print = printer
     pyrebox_print("[*]    Initializing callbacks\n")
-    cm = CallbackManager(module_hdl)
+    cm = CallbackManager(module_hdl, new_style = True)
     cm.add_callback(CallbackManager.BLOCK_END_CB, my_function, name="block_end")
     pyrebox_print("[*]    Initialized callbacks\n")
     pyrebox_print("[!]    Test: Open calc.exe and monitor the process")

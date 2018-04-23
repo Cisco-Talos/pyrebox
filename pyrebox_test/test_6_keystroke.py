@@ -29,9 +29,12 @@ counter = 0
 pyrebox_print = None
 
 
-def my_function(keycode):
+def my_function(params):
     global cm
     global counter
+
+    keycode = params["keycode"]
+
     pyrebox_print("A keystroke occurred with keycode 0x%x\n" % keycode)
     counter += 1
     if counter == 100:
@@ -62,7 +65,7 @@ def initialize_callbacks(module_hdl, printer):
     # Initialize printer
     pyrebox_print = printer
     pyrebox_print("[*]    Initializing callbacks\n")
-    cm = CallbackManager(module_hdl)
+    cm = CallbackManager(module_hdl, new_style = True)
     cm.add_callback(CallbackManager.KEYSTROKE_CB, my_function, name="keystroke")
     pyrebox_print("[*]    Initialized callbacks\n")
     pyrebox_print("[!]    Just type stuff on the guest")

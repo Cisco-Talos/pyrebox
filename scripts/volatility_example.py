@@ -44,8 +44,13 @@ cm = None
 pyrebox_print = None
 
 
-def new_proc(pid, pgd, name):
+def new_proc(params):
     global cm
+
+    pid = params["pid"]
+    pgd = params["pgd"] 
+    name = params["name"]
+
     pyrebox_print("Process %x started with pgd: %x. Name: %s" % (pid, pgd, name))
     # Get the volatility address space, adjusted for our current pgd
     addr_space = get_addr_space(pgd)
@@ -78,7 +83,7 @@ def initialize_callbacks(module_hdl, printer):
     global pyrebox_print
     pyrebox_print = printer
     pyrebox_print("[*]    Initializing callbacks")
-    cm = CallbackManager(module_hdl)
+    cm = CallbackManager(module_hdl, new_style = True)
     cm.add_callback(CallbackManager.CREATEPROC_CB, new_proc, name="vmi_new_proc")
     pyrebox_print("[*]    Initialized callbacks")
 

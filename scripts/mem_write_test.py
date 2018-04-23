@@ -30,9 +30,16 @@ counter = 0
 pyrebox_print = None
 
 
-def mem_write(cpu_index, addr, size, haddr, data):
+def mem_write(params):
     global cm
     global counter
+
+    cpu_index = params["cpu_index"]
+    addr = params["addr"]
+    size = params["size"]
+    haddr = params["haddr"] 
+    data = params["data"]
+
     pyrebox_print("Mem write at cpu %x, addr %x size %x\n" % (cpu_index, addr, size))
     counter += 1
     # Remove the callback after 5 writes
@@ -63,7 +70,7 @@ def initialize_callbacks(module_hdl, printer):
 
     pyrebox_print = printer
     pyrebox_print("[*]    Initializing callbacks\n")
-    cm = CallbackManager(module_hdl)
+    cm = CallbackManager(module_hdl, new_style = True)
     cm.add_callback(CallbackManager.MEM_WRITE_CB, mem_write, name="mem_write")
     # Add a bpw_memrange trigger to the callback, that will limit
     # the address range for which the callback will be triggered

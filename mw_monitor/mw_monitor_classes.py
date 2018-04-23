@@ -131,12 +131,19 @@ def is_in_pending_resolution(pgd, address):
                 return True
     return False
 
-def module_loaded(pid, pgd, base, size, name, fullname):
+def module_loaded(params):
     import api
     from mw_monitor_classes import mwmon
     from api import CallbackManager
     from functools import partial
     global mods_pending_symbol_resolution
+
+    pid = params["pid"]
+    pgd = params["pgd"]
+    base = params["base"]
+    size = params["size"]
+    name = params["name"]
+    fullname = params["fullname"]
 
     for proc in mwmon.data.procs:
         if pid == proc.get_pid():
@@ -187,7 +194,7 @@ def ntdll_breakpoint_func(proc, cpu_index, cpu):
     proc.update_symbols()
 
 
-def context_change(new_proc, target_mod_name, old_pgd, new_pgd):
+def context_change(new_proc, target_mod_name, params):
     '''Callback triggered for every context change'''
     global ntdll_breakpoint
     from mw_monitor_classes import mwmon
@@ -195,6 +202,9 @@ def context_change(new_proc, target_mod_name, old_pgd, new_pgd):
     import api
     from api import CallbackManager
     from functools import partial
+
+    old_pgd = params["old_pgd"]
+    new_pgd = params["new_pgd"]
 
     if new_proc.get_pgd() == new_pgd:
         ep = find_ep(new_proc, target_mod_name)

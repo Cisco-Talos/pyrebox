@@ -304,12 +304,14 @@ class GuestAgentPlugin(object):
             del self.__commands[cmd_number]
             self.__printer("[*] Command %d succesfully removed" % cmd_number)
 
-    def __context_change_callback(self, target_pgd, target_mod_name, old_pgd, new_pgd):
+    def __context_change_callback(self, target_pgd, target_mod_name, params):
         """
             Updates the module base (to have the absolute agent buffer address) as soon
             as it is available.
         """
         global cm
+        old_pgd = params["old_pgd"]
+        new_pgd = params["new_pgd"]
         try:
             if target_pgd == new_pgd and self.__status == GuestAgentPlugin.__AGENT_RUNNING:
                 lowest_addr = None
@@ -341,10 +343,13 @@ class GuestAgentPlugin(object):
         except Exception as e:
             self.__printer("Exception occurred on context change callback: %s" % str(e))
 
-    def __new_process_callback(self, pid, pgd, name):
+    def __new_process_callback(self, params):
         """
             Called by the callback manager when a new process is created.
         """
+        pid = params["pid"]
+        pgd = params["pgd"]
+        name = params["name"]
         try:
             # If we already have a running agent, ignore it
             if self.__status < GuestAgentPlugin.__AGENT_RUNNING:
@@ -365,10 +370,13 @@ class GuestAgentPlugin(object):
         except Exception as e:
             self.__printer("Exception occurred on create process callback: %s" % str(e))
 
-    def __remove_process_callback(self, pid, pgd, name):
+    def __remove_process_callback(self, params):
         """
             Called by the callback manager when a process is removed.
         """
+        pid = params["pid"]
+        pgd = params["pgd"]
+        name = params["name"]
         if self.__status == GuestAgentPlugin.__AGENT_RUNNING or \
             self.__status == GuestAgentPlugin.__AGENT_READY:
             if pgd == self.__agent_pgd:
@@ -386,10 +394,14 @@ class GuestAgentPlugin(object):
                 "Buffer offset and size have not been initialized, cannot perform security check!")
         return (buf == self.__agent_buffer_address and size == self.__agent_buffer_size)
 
-    def __opcode_range_callback(self, cpu_index, cpu, cur_pc, next_pc):
+    def __opcode_range_callback(self, params):
         """
             Called by the callback manager when the desired opcode is hit.
         """
+        cpu_index = params["cpu_index"]
+        cpu = params["cpu"]
+        cur_pc = params["cur_pc"]
+        next_pc = params["next_pc"]
         try:
             if self.__status == GuestAgentPlugin.__AGENT_READY:
                 function = api.r_va(api.get_running_process(cpu_index), cur_pc + 3, 2)
@@ -1026,7 +1038,7 @@ guest_agent = None
 def initialize_callbacks(module_hdl, printer):
     global guest_agent
     printer("[*]    Initializing guest_agent plugin")
-    guest_agent = GuestAgentPlugin(api.CallbackManager(module_hdl), printer)
+    guest_agent = GuestAgentPlugin(api.CallbackManager(module_hdl, new_style = True), printer)
 
 
 def clean():

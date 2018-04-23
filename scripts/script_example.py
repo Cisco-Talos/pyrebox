@@ -84,7 +84,7 @@ def initialize_callbacks(module_hdl, printer):
     pyrebox_print("[*]    Initializing callbacks")
     # Initialize the callback manager, and register a couple of named
     # callbacks.
-    cm = CallbackManager(module_hdl)
+    cm = CallbackManager(module_hdl, new_style = True)
     cm.add_callback(CallbackManager.CREATEPROC_CB, new_proc, name="vmi_new_proc")
     cm.add_callback(CallbackManager.REMOVEPROC_CB, remove_proc, name="vmi_remove_proc")
     pyrebox_print("[*]    Initialized callbacks")
@@ -212,11 +212,11 @@ def context_change(target_pgd, target_mod_name, old_pgd, new_pgd):
             pyrebox_print("The entry point for %s is %x\n" % (target_mod_name, ep))
             cm.rm_callback("context_change")
             # Set a breakpoint on the EP, that will start a shell
-            bp = BP(ep, target_pgd)
+            bp = BP(ep, target_pgd, new_style = True)
             bp.enable()
 
 
-def new_proc(pid, pgd, name):
+def new_proc(params):
     '''
     Process creation callback. Receives 3 parameters:
         :param pid: The pid of the process
@@ -230,6 +230,10 @@ def new_proc(pid, pgd, name):
     global procs_created
     global target_procname
     global cm
+
+    pid = params["pid"] 
+    pgd = params["pgd"]
+    name = params["name"]
 
     pyrebox_print("New process created! pid: %x, pgd: %x, name: %s" % (pid, pgd, name))
     procs_created += 1
@@ -245,7 +249,7 @@ def new_proc(pid, pgd, name):
         start_shell()
 
 
-def remove_proc(pid, pgd, name):
+def remove_proc(params):
     '''
     Process removal callback. Receives 3 parameters:
         :param pid: The pid of the process
@@ -255,6 +259,10 @@ def remove_proc(pid, pgd, name):
         :param name: The name of the process
         :type name: str
     '''
+    pid = params["pid"] 
+    pgd = params["pgd"]
+    name = params["name"]
+
     pyrebox_print("Process removed! pid: %x, pgd: %x, name: %s" % (pid, pgd, name))
 
 

@@ -78,10 +78,14 @@ class APICallData:
             mwmon.printer(str(e))
 
 
-def opcodes_ret(addr_from, addr_to, data, callback_name, argument_parser, mod, fun, proc, cpu_index, cpu):
+def opcodes_ret(addr_from, addr_to, data, callback_name, argument_parser, mod, fun, proc, params):
     from mw_monitor_classes import mwmon
     import api
     TARGET_LONG_SIZE = api.get_os_bits() / 8
+
+    cpu_index = params["cpu_index"]
+    cpu = params["cpu"]
+
     try:
         mwmon.cm.rm_callback(callback_name)
         if TARGET_LONG_SIZE == 4:
@@ -97,7 +101,7 @@ def opcodes_ret(addr_from, addr_to, data, callback_name, argument_parser, mod, f
         return
 
 
-def opcodes(cpu_index, cpu, pc, next_pc, db, proc):
+def opcodes(params, db, proc):
     from mw_monitor_classes import mwmon
     from mw_monitor_classes import is_in_pending_resolution
     from api import CallbackManager
@@ -105,6 +109,11 @@ def opcodes(cpu_index, cpu, pc, next_pc, db, proc):
     from DeviareDbParser import ArgumentParser
 
     TARGET_LONG_SIZE = api.get_os_bits() / 8
+
+    cpu_index = params["cpu_index"]
+    cpu = params["cpu"]
+    pc = params["cur_pc"]
+    next_pc = params["next_pc"]
 
     # First, check if the next_pc is located in a module with
     # pending symbol resolution, and update symbols

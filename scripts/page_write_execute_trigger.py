@@ -31,19 +31,31 @@ target_procname = None
 page_status = {}
 
 
-def mem_write(cpu_index, vaddr, size, haddr, data):
+def mem_write(params):
     global cm
     global page_status
     import api
+
+    cpu_index = params["cpu_index"]
+    vaddr = params["vaddr"]
+    size = params["size"]
+    haddr = params["haddr"]
+    data = params["data"]
+
     if not api.is_kernel_running(cpu_index):
         page = vaddr & 0xFFFFF000
         page_status[page] = "w"
 
 
-def block_exec(cpu_index, cpu, tb):
+def block_exec(params):
     global cm
     global page_status
     import api
+
+    cpu_index = params["cpu_index"]
+    cpu = params["cpu"]
+    tb = params["tb"]
+
     if not api.is_kernel_running(cpu_index):
         pc, size, icount = tb
         page = pc & 0xFFFFF000
@@ -54,11 +66,16 @@ def block_exec(cpu_index, cpu, tb):
         page_status[page] = "x"
 
 
-def new_proc(pid, pgd, name):
+def new_proc():
     global cm
     global target_procname
     global pyrebox_print
     import api
+
+    pid = params["pid"]
+    pgd = params["pgd"]
+    name = params["name"]
+
     if target_procname is not None and target_procname in name.lower():
         pyrebox_print("Started monitoring process %s" % name)
         cm.add_trigger("mem_write", "triggers/trigger_memwrite_wx.so")
@@ -111,7 +128,7 @@ def initialize_callbacks(module_hdl, printer):
     global pyrebox_print
     pyrebox_print = printer
     pyrebox_print("[*]    Initializing callbacks")
-    cm = CallbackManager(module_hdl)
+    cm = CallbackManager(module_hdl, new_style = True)
     cm.add_callback(CallbackManager.CREATEPROC_CB, new_proc, name="vmi_new_proc")
     cm.add_callback(CallbackManager.MEM_WRITE_CB, mem_write, name="mem_write")
     cm.add_callback(CallbackManager.BLOCK_BEGIN_CB, block_exec, name="block_begin")

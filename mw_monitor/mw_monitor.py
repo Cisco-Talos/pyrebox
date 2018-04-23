@@ -41,13 +41,17 @@ from mw_monitor_logging import log_coverage
 
 requirements = ["plugins.guest_agent"]
 
-def new_process(pid, pgd, name):
+def new_process(params):
     '''
     Monitor process creation in order to start tracing the first process.
     '''
     from DeviareDbParser import DbConnector
     from mw_monitor_classes import mwmon
     from mw_monitor_classes import mw_monitor_start_monitoring_process
+
+    pid = params["pid"]
+    pgd = params["pgd"]
+    name = params["name"]
 
     main_proc = mwmon.data.procs[0]
     if main_proc.get_proc_name() is not None and (main_proc.get_proc_name() in name or name in main_proc.get_proc_name()):
@@ -66,9 +70,13 @@ def new_process(pid, pgd, name):
         mwmon.cm.rm_callback("vmi_new_proc")
 
 # Monitor process removal 
-def remove_process(pid, pgd, name):
+def remove_process(params):
     from mw_monitor_classes import mwmon
     from api import unload_module
+
+    pid = params["pid"]
+    pgd = params["pgd"]
+    name = params["name"]
 
     for proc in mwmon.data.procs:
         if proc.get_pid() == pid and proc.has_exited() is False:
@@ -319,7 +327,7 @@ def initialize_callbacks(module_hdl, printer):
             mwmon.dumper_dumpat = config_run['dumper']['dump_at']
 
     mwmon.printer("Initializing callbacks")
-    mwmon.cm = CallbackManager(module_hdl)
+    mwmon.cm = CallbackManager(module_hdl, new_style = True)
 
     # Initialize first process
     proc_name = mwmon.main_executable
@@ -344,7 +352,7 @@ def initialize_callbacks(module_hdl, printer):
     elif len(match_procs) == 1:
         mwmon.printer(
             "Process found with the name specified, monitoring process...")
-        new_process(match_procs[0][0], match_procs[0][1], match_procs[0][2])
+        new_process({"pid": match_procs[0][0], "pgd": match_procs[0][1], "name": match_procs[0][2]})
     else:
         mwmon.printer(
             "Too many procs matching that name, please narrow down!!")

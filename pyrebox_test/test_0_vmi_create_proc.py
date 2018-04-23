@@ -28,13 +28,21 @@ cm = None
 pyrebox_print = None
 
 
-def new_proc(pid, pgd, name):
+def new_proc(params):
     global cm
+    pid = params["pid"]
+    pgd = params["pgd"]
+    name = params["name"]
+
     pyrebox_print("Process %s: PID:%x PGD:%x" % (name, pid, pgd))
 
 
-def remove_proc(pid, pgd, name):
+def remove_proc(params):
     global cm
+    pid = params["pid"]
+    pgd = params["pgd"]
+    name = params["name"]
+
     pyrebox_print("Removed process %s: PID:%x CR3:%x" % (name, pid, pgd))
 
 
@@ -62,7 +70,7 @@ def initialize_callbacks(module_hdl, printer):
     # Initialize printer
     pyrebox_print = printer
     pyrebox_print("[*]    Initializing callbacks")
-    cm = CallbackManager(module_hdl)
+    cm = CallbackManager(module_hdl, new_style = True)
     cm.add_callback(CallbackManager.CREATEPROC_CB, new_proc, name="vmi_new_proc")
     cm.add_callback(CallbackManager.REMOVEPROC_CB, remove_proc, name="vmi_remove_proc")
     pyrebox_print("[*]    Initialized callbacks")

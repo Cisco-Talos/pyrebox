@@ -22,9 +22,13 @@
 # -------------------------------------------------------------------------
 
 
-def block_executed(cpu_index, cpu, tb, proc=None):
+def block_executed(params, proc=None):
     import api
     TARGET_LONG_SIZE = api.get_os_bits() / 8
+
+    cpu_index = params["cpu_index"]
+    cpu = params["cpu"]
+    tb = params["tb"] 
 
     # Get the overlapping VAD, if we don't have it, update VADs
     if TARGET_LONG_SIZE == 4:

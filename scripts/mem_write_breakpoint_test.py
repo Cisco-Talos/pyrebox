@@ -35,10 +35,17 @@ memwrite_breakpoint = None
 target_procname = ""
 
 
-def mem_write(cpu_index, addr, size, haddr, data):
+def mem_write(params):
     global cm
     global counter
     global memwrite_breakpoint
+
+    cpu_index = params["cpu_index"]
+    addr = params["addr"]
+    size = params["size"] 
+    haddr = params["haddr"]
+    data = params["data"]
+
     pyrebox_print("Mem write at cpu %x, addr %x size %x\n" % (cpu_index, addr, size))
     counter += 1
     # Remove the callback after 5 writes
@@ -74,7 +81,7 @@ def do_set_target(line):
     pyrebox_print("Waiting for process %s to start\n" % target_procname)
 
 
-def new_proc(pid, pgd, name):
+def new_proc(params):
     '''
     Process creation callback. Receives 3 parameters:
         :param pid: The pid of the process
@@ -89,11 +96,15 @@ def new_proc(pid, pgd, name):
     global cm
     global memwrite_breakpoint
 
+    pid = params["pid"] 
+    pgd = params["pgd"] 
+    name = params["name"]
+
     pyrebox_print("New process created! pid: %x, pgd: %x, name: %s" % (pid, pgd, name))
     # For instance, we can start the shell whenever a process is created
     if target_procname != "" and target_procname.lower() in name.lower():
         pyrebox_print("Creating memory write callback for this process on user address space")
-        memwrite_breakpoint = BP(0x0, pgd, size=0x80000000, typ=BP.MEM_WRITE, func=mem_write)
+        memwrite_breakpoint = BP(0x0, pgd, size=0x80000000, typ=BP.MEM_WRITE, func=mem_write, new_style = True)
         memwrite_breakpoint.enable()
 
 
@@ -111,7 +122,7 @@ def initialize_callbacks(module_hdl, printer):
     pyrebox_print("[*]    Initializing callbacks")
     # Initialize the callback manager, and register a couple of named
     # callbacks.
-    cm = CallbackManager(module_hdl)
+    cm = CallbackManager(module_hdl, new_style = True)
     cm.add_callback(CallbackManager.CREATEPROC_CB, new_proc, name="vmi_new_proc")
     pyrebox_print("[*]    Initialized callbacks")
 

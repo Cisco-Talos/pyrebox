@@ -126,8 +126,7 @@ def dumper_start_monitoring_process(new_proc):
             mwmon.printer("Incorrect format for dumper dump_at parameter. No hook will be created")
 
 
-def dump(cpu_index=None,
-         cpu=None,
+def dump(params,
          pid=None,
          proc=None,
          update_vads=None,
@@ -146,6 +145,9 @@ def dump(cpu_index=None,
     import api
 
     TARGET_LONG_SIZE = api.get_os_bits() / 8
+
+    cpu_index = params["cpu_index"]
+    cpu = params["cpu"]
 
     mwmon.printer("Dumping process...")
 

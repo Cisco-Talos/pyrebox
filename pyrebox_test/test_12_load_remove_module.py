@@ -27,25 +27,46 @@ from __future__ import print_function
 cm = None
 pyrebox_print = None
 
-def module_loaded(pid, pgd, base, size, name, fullname):
+def module_loaded(params):
     '''
     Callback for loaded modules
     '''
     global cm
     global pyrebox_print
+
+    pid = params["pid"]
+    pgd = params["pgd"]
+    base = params["base"]
+    size = params["size"]
+    name = params["name"]
+    fullname = params["fullname"]
+
     pyrebox_print("Loaded module: PID: %x PGD: %x Base: %x Size: %x Name: %s" % (pid, pgd, base, size, name))
 
-def module_removed(pid, pgd, base, size, name, fullname):
+def module_removed(params):
     '''
     Callback for loaded modules
     '''
     global cm
     global pyrebox_print
+
+    pid = params["pid"]
+    pgd = params["pgd"]
+    base = params["base"]
+    size = params["size"]
+    name = params["name"]
+    fullname = params["fullname"]
+
     pyrebox_print("Removed module: PID: %x PGD: %x Base: %x Size: %x Name: %s" % (pid, pgd, base, size, name))
 
-def new_proc(pid, pgd, name):
+def new_proc(params):
     global cm
     from api import CallbackManager
+
+    pid = params["pid"]
+    pgd = params["pgd"]
+    name = params["name"]
+
     pyrebox_print("Process created: %s" % name)
     if "calc.exe" in name:
         pyrebox_print("Adding module load/remove callback on calc.exe")
@@ -76,7 +97,7 @@ def initialize_callbacks(module_hdl, printer):
     # Initialize printer
     pyrebox_print = printer
     pyrebox_print("[*]    Initializing callbacks\n")
-    cm = CallbackManager(module_hdl)
+    cm = CallbackManager(module_hdl, new_style = True)
     cm.add_callback(CallbackManager.CREATEPROC_CB, new_proc, name="vmi_new_proc")
     pyrebox_print("[*]    Initialized callbacks\n")
     pyrebox_print("[!]    Test: Open calc.exe and monitor the process")

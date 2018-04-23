@@ -30,9 +30,13 @@ cm = None
 pyrebox_print = None
 
 
-def insn_begin(cpu_index, cpu):
+def insn_begin(params):
     global cm
     global pyrebox_print
+
+    cpu_index = params["cpu_index"]
+    cpu = params["cpu"]
+
     if cpu.PC == 0x100218f and cm.callback_exists("insn_begin"):
         pgd = api.get_running_process(cpu_index)
         pyrebox_print("Process %x hit the callback at 0x100218f" % pgd)
@@ -67,7 +71,7 @@ def initialize_callbacks(module_hdl, printer):
 
     pyrebox_print = printer
     pyrebox_print("[*]    Initializing callbacks")
-    cm = CallbackManager(module_hdl)
+    cm = CallbackManager(module_hdl, new_style = True)
     cm.add_callback(CallbackManager.INSN_BEGIN_CB, insn_begin, name="insn_begin")
     # Add a trigger so that the callback is only triggered
     # for a certain range of addresses

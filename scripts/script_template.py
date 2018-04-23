@@ -45,7 +45,7 @@ def initialize_callbacks(module_hdl, printer):
     pyrebox_print = printer
     pyrebox_print("[*]    Initializing callbacks")
     # Initialize the callback manager
-    cm = CallbackManager(module_hdl)
+    cm = CallbackManager(module_hdl, new_style = True)
 
     # TODO: Register some callback
 

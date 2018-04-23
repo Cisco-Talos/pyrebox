@@ -28,21 +28,31 @@ cm = None
 pyrebox_print = None
 
 
-def optimized_block_begin(cpu_index, cpu, tb):
+def optimized_block_begin(params):
     global cm
     assert(cpu.PC == 0x100218f or cpu.PC == 0xfffff96000139f20)
     import api
+
+    cpu_index = params["cpu_index"]
+    cpu = params["cpu"]
+    tb = params["tb"]
+
     pgd = api.get_running_process(cpu_index)
     pyrebox_print("Process %x hit the callback at %x\n" % (pgd, cpu.PC))
     cm.rm_callback("block_begin_optimized")
     pyrebox_print("Unregistered callback\n")
 
 
-def block_begin(cpu_index, cpu, tb):
+def block_begin(params):
     global cm
     from api import CallbackManager
     import api
     from ipython_shell import start_shell
+
+    cpu_index = params["cpu_index"]
+    cpu = params["cpu"]
+    tb = params["tb"]
+
     pgd = api.get_running_process(cpu_index)
     start_shell()
     if api.get_os_bits() == 32:
@@ -87,7 +97,7 @@ def initialize_callbacks(module_hdl, printer):
     # Initialize printer
     pyrebox_print = printer
     pyrebox_print("[*]    Initializing callbacks\n")
-    cm = CallbackManager(module_hdl)
+    cm = CallbackManager(module_hdl, new_style = True)
     cm.add_callback(CallbackManager.BLOCK_BEGIN_CB, block_begin, name="block_begin")
     pyrebox_print("[*]    Initialized callbacks\n")
     pyrebox_print("[!]    In order to run the test, start calc.exe and monitor it\n")

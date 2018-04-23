@@ -28,17 +28,25 @@ cm = None
 pyrebox_print = None
 
 
-def tlb_exec(cpu, addr):
+def tlb_exec(params):
     global cm
     global counter
     import api
+
+    cpu = params["cpu"]
+    addr = params["addr"]
+
     pgd = api.get_running_process(cpu.CPU_INDEX)
     pyrebox_print("TLB exec, PGD %x Addr %x\n" % (pgd, addr))
 
 
-def context_change(old_pgd, new_pgd):
+def context_change(params):
     global cm
     global counter
+
+    old_pgd = params["old_pgd"]
+    new_pgd = params["new_pgd"]
+
     pyrebox_print("Context change %x -> %x\n" % (old_pgd, new_pgd))
 
 
@@ -66,7 +74,7 @@ def initialize_callbacks(module_hdl, printer):
     # Initialize printer
     pyrebox_print = printer
     pyrebox_print("[*]    Initializing callbacks")
-    cm = CallbackManager(module_hdl)
+    cm = CallbackManager(module_hdl, new_style = True)
     cm.add_callback(CallbackManager.TLB_EXEC_CB, tlb_exec, name="tlb_exec")
     cm.add_callback(CallbackManager.CONTEXTCHANGE_CB, context_change, name="context_change")
     pyrebox_print("[*]    Initialized callbacks")

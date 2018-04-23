@@ -36,7 +36,7 @@ if __name__ == "__main__":
     print("[*] Loading python module %s" % (__file__))
 
 
-def new_proc(pid, pgd, name):
+def new_proc(params):
     '''
     Process creation callback. Receives 3 parameters:
         :param pid: The pid of the process
@@ -48,6 +48,10 @@ def new_proc(pid, pgd, name):
     '''
     global pyrebox_print
     global cm
+
+    pid = params["pid"]
+    pgd = params["pgd"]
+    name = params["name"]
 
     # Print a message.
     pyrebox_print("New process created! pid: %x, pgd: %x, name: %s" % (pid, pgd, name))
@@ -65,7 +69,7 @@ def initialize_callbacks(module_hdl, printer):
     pyrebox_print = printer
     pyrebox_print("[*]    Initializing callbacks")
     # Initialize the callback manager
-    cm = CallbackManager(module_hdl)
+    cm = CallbackManager(module_hdl, new_style = True)
 
     # Register a process creation callback
     cm.add_callback(CallbackManager.CREATEPROC_CB, new_proc)

@@ -28,19 +28,27 @@ cm = None
 pyrebox_print = None
 
 
-def op_insn_begin(cpu_index, cpu):
+def op_insn_begin(params):
     global cm
     import api
+
+    cpu_index = params["cpu_index"]
+    cpu = params["cpu"]
+
     pgd = api.get_running_process(cpu_index)
     pyrebox_print("Process %x hit the callback at %x\n" % (pgd, cpu.PC))
     cm.rm_callback("insn_begin_optimized")
     pyrebox_print("Unregistered callback\n")
 
 
-def insn_begin(cpu_index, cpu):
+def insn_begin(params):
     global cm
     from api import CallbackManager
     import api
+
+    cpu_index = params["cpu_index"]
+    cpu = params["cpu"]
+
     pgd = api.get_running_process(cpu_index)
     pyrebox_print("Adding insn optimized callback at %x\n" % cpu.PC)
     cm.add_callback(CallbackManager.INSN_BEGIN_CB, op_insn_begin, name="insn_begin_optimized", addr=cpu.PC, pgd=pgd)
@@ -74,7 +82,7 @@ def initialize_callbacks(module_hdl, printer):
     # Initialize printer
     pyrebox_print = printer
     pyrebox_print("[*]    Initializing callbacks\n")
-    cm = CallbackManager(module_hdl)
+    cm = CallbackManager(module_hdl, new_style = True)
     cm.add_callback(CallbackManager.INSN_BEGIN_CB, insn_begin, name="insn_begin")
     pyrebox_print("[*]    Initialized callbacks\n")
     pyrebox_print("[!]    In order to run the rest, open calc.exe and monitor the process.")

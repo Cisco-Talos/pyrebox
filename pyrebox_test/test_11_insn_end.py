@@ -28,10 +28,14 @@ cm = None
 pyrebox_print = None
 
 
-def my_function(cpu_index, cpu):
+def my_function():
     global cm
     import api
     from ipython_shell import start_shell
+
+    cpu_index = params["cpu_index"]
+    cpu = params["cpu"]
+
     pgd = api.get_running_process(cpu_index)
     pyrebox_print("Insn end at (%x) %x\n" % (pgd, cpu.PC))
     start_shell()
@@ -61,7 +65,7 @@ def initialize_callbacks(module_hdl, printer):
     # Initialize printer
     pyrebox_print = printer
     pyrebox_print("[*]    Initializing callbacks\n")
-    cm = CallbackManager(module_hdl)
+    cm = CallbackManager(module_hdl, new_style = True)
     cm.add_callback(CallbackManager.INSN_END_CB, my_function, name="insn_end")
     pyrebox_print("[*]    Initialized callbacks\n")
     pyrebox_print("[!]    Test: Open calc.exe and monitor the process")

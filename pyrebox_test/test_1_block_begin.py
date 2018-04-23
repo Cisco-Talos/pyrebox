@@ -29,10 +29,15 @@ pyrebox_print = None
 counter = 0
 
 
-def my_function(cpu_index, cpu, tb):
+def my_function(params):
     global cm
     global counter
     import api
+
+    cpu_index = params["cpu_index"]
+    cpu = params["cpu"]
+    tb = params["tb"]
+
     pgd = api.get_running_process(cpu_index)
     pyrebox_print("Process %x hit the callback at %x\n" % (pgd, cpu.PC))
     counter = counter + 1
@@ -67,7 +72,7 @@ def initialize_callbacks(module_hdl, printer):
     # Initialize printer
     pyrebox_print = printer
     pyrebox_print("[*]    Initializing callbacks\n")
-    cm = CallbackManager(module_hdl)
+    cm = CallbackManager(module_hdl, new_style = True)
     cm.add_callback(CallbackManager.BLOCK_BEGIN_CB, my_function, name="block_begin")
     pyrebox_print("[*]    Initialized callbacks\n")
     pyrebox_print("[!]    In order to perform the test, start monitoring some process")

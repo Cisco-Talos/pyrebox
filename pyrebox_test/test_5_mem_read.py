@@ -28,8 +28,14 @@ cm = None
 pyrebox_print = None
 
 
-def my_function(cpu_index, addr, size, haddr):
+def my_function(params):
     global cm
+
+    cpu_index = params["cpu_index"]
+    addr = params["addr"]
+    size = params["size"]
+    haddr = params["haddr"]
+
     pyrebox_print("Memory read at address %x with size %x\n" % (addr, size))
 
 
@@ -57,7 +63,7 @@ def initialize_callbacks(module_hdl, printer):
     # Initialize printer
     pyrebox_print = printer
     pyrebox_print("[*]    Initializing callbacks\n")
-    cm = CallbackManager(module_hdl)
+    cm = CallbackManager(module_hdl, new_style = True)
     cm.add_callback(CallbackManager.MEM_READ_CB, my_function, name="mem_read")
     pyrebox_print("[*]    Initialized callbacks\n")
     pyrebox_print("[!]    Test: Open calc.exe and monitor the process")

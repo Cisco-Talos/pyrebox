@@ -28,10 +28,16 @@ cm = None
 pyrebox_print = None
 
 
-def opcode_range(cpu_index, cpu, cur_pc, next_pc):
+def opcode_range(params):
     global cm
     from ipython_shell import start_shell
     import api
+
+    cpu_index = params["cpu_index"]
+    cpu = params["cpu"]
+    cur_pc = params["cur_pc"]
+    next_pc = params["next_pc"]
+
     pgd = api.get_running_process(cpu_index)
     pyrebox_print("Opcode range callback (%x) PGD %x cur_pc %x next_pc %x\n" % (cpu_index, pgd, cur_pc, next_pc))
     start_shell()
@@ -62,7 +68,7 @@ def initialize_callbacks(module_hdl, printer):
     # Initialize printer
     pyrebox_print = printer
     pyrebox_print("[*]    Initializing callbacks")
-    cm = CallbackManager(module_hdl)
+    cm = CallbackManager(module_hdl, new_style = True)
     cm.add_callback(CallbackManager.OPCODE_RANGE_CB, opcode_range, name="opcode", start_opcode=0x90, end_opcode=0x90)
     pyrebox_print("[*]    Initialized callbacks")
     pyrebox_print("[!]    Test: Open calc.exe and monitor the process")

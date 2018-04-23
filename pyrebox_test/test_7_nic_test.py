@@ -28,18 +28,30 @@ cm = None
 pyrebox_print = None
 
 
-def my_function_send(addr, size, buff):
+def my_function_send(params):
     global cm
     global counter
     from hexdump import hexdump
+
+    addr = params["addr"]
+    size = params["size"]
+    buff = params["buff"]
+
     pyrebox_print("Sending data through NIC, addr %x, size %x" % (addr, size))
     pyrebox_print(hexdump(buff))
 
 
-def my_function_receive(buff, size, curr, start, stop):
+def my_function_receive(params):
     global cm
     global counter
     from hexdump import hexdump
+
+    buff = params["buff"]
+    size = params["size"]
+    curr = params["curr"]
+    start = params["start"]
+    stop = params["stop"]
+
     pyrebox_print("Receiving data through NIC, size %x, curr %x, start %x stop %x" % (size, curr, start, stop))
     pyrebox_print(hexdump(buff))
 
@@ -69,7 +81,7 @@ def initialize_callbacks(module_hdl, printer):
     # Initialize printer
     pyrebox_print = printer
     pyrebox_print("[*]    Initializing callbacks")
-    cm = CallbackManager(module_hdl)
+    cm = CallbackManager(module_hdl, new_style = True)
     cm.add_callback(CallbackManager.NIC_SEND_CB, my_function_send, name="send")
     cm.add_callback(CallbackManager.NIC_REC_CB, my_function_receive, name="receive")
     pyrebox_print("[*]    Initialized callbacks")

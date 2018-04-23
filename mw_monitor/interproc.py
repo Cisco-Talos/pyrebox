@@ -114,8 +114,7 @@ def dereference_target_long(addr, pgd):
 # =============================================================== HOOKS ==
 
 
-def ntcreateprocessret(cpu_index,
-                       cpu,
+def ntcreateprocessret(params,
                        pid,
                        callback_name,
                        proc_hdl_p,
@@ -131,6 +130,9 @@ def ntcreateprocessret(cpu_index,
     import api
 
     TARGET_LONG_SIZE = api.get_os_bits() / 8
+
+    cpu_index = params["cpu_index"]
+    cpu = params["cpu"]
 
     pgd = get_running_process(cpu_index)
 
@@ -196,8 +198,7 @@ def ntcreateprocessret(cpu_index,
     return
 
 
-def ntcreateprocess(cpu_index,
-                    cpu,
+def ntcreateprocess(params,
                     pid,
                     proc,
                     update_vads):
@@ -248,6 +249,10 @@ def ntcreateprocess(cpu_index,
 
     from mw_monitor_classes import mwmon
     import api
+
+    cpu_index = params["cpu_index"]
+    cpu = params["cpu"]
+
     pgd = api.get_running_process(cpu_index)
     # Set callback on return address
 
@@ -273,7 +278,7 @@ def ntcreateprocess(cpu_index,
                           pgd=pgd)
 
 
-def ntopenprocessret(cpu_index, cpu, pid, callback_name, proc_hdl_p, proc, update_vads):
+def ntopenprocessret(params, pid, callback_name, proc_hdl_p, proc, update_vads):
     import volatility.win32.tasks as tasks
     from mw_monitor_classes import mwmon
     from mw_monitor_classes import mw_monitor_start_monitoring_process
@@ -283,6 +288,9 @@ def ntopenprocessret(cpu_index, cpu, pid, callback_name, proc_hdl_p, proc, updat
     import api
 
     TARGET_LONG_SIZE = api.get_os_bits() / 8
+
+    cpu_index = params["cpu_index"]
+    cpu = params["cpu"]
 
     pgd = get_running_process(cpu_index)
 
@@ -346,13 +354,17 @@ def ntopenprocessret(cpu_index, cpu, pid, callback_name, proc_hdl_p, proc, updat
     return
 
 
-def ntopenprocess(cpu_index, cpu, pid, proc, update_vads):
+def ntopenprocess(params, pid, proc, update_vads):
     #  OUT PHANDLE             ProcessHandle,
     #  IN ACCESS_MASK          AccessMask,
     #  IN POBJECT_ATTRIBUTES   ObjectAttributes,
     #  IN PCLIENT_ID           ClientId );
     from mw_monitor_classes import mwmon
     import api
+
+    cpu_index = params["cpu_index"]
+    cpu = params["cpu"]
+
     pgd = api.get_running_process(cpu_index)
 
     # Read the first parameter (process handle)
@@ -375,7 +387,7 @@ def ntopenprocess(cpu_index, cpu, pid, proc, update_vads):
                           pgd=pgd)
 
 
-def ntwritevirtualmemory(cpu_index, cpu, pid, proc, update_vads, reverse=False):
+def ntwritevirtualmemory(params, pid, proc, update_vads, reverse=False):
     import volatility.win32.tasks as tasks
     from mw_monitor_classes import mwmon
     from mw_monitor_classes import Injection
@@ -383,6 +395,9 @@ def ntwritevirtualmemory(cpu_index, cpu, pid, proc, update_vads, reverse=False):
     from utils import get_addr_space
 
     TARGET_LONG_SIZE = api.get_os_bits() / 8
+
+    cpu_index = params["cpu_index"]
+    cpu = params["cpu"]
 
     # _In_ HANDLE     ProcessHandle,
     # _In_ PVOID  BaseAddress,
@@ -469,12 +484,16 @@ def ntwritevirtualmemory(cpu_index, cpu, pid, proc, update_vads, reverse=False):
         proc.update_vads()
 
 
-def ntreadvirtualmemory(cpu_index, cpu, pid, proc, update_vads):
+def ntreadvirtualmemory(params, pid, proc, update_vads):
     # Reuse implementation in write virtual memory
+
+    cpu_index = params["cpu_index"]
+    cpu = params["cpu"]
+
     ntwritevirtualmemory(cpu_index, cpu, pid, proc, update_vads, reverse=True)
 
 
-def ntreadfile(cpu_index, cpu, pid, proc, update_vads, is_write=False):
+def ntreadfile(params, pid, proc, update_vads, is_write=False):
     import volatility.win32.tasks as tasks
     from mw_monitor_classes import mwmon
     from mw_monitor_classes import FileRead
@@ -483,6 +502,9 @@ def ntreadfile(cpu_index, cpu, pid, proc, update_vads, is_write=False):
     from utils import get_addr_space
     import api
     TARGET_LONG_SIZE = api.get_os_bits() / 8
+
+    cpu_index = params["cpu_index"]
+    cpu = params["cpu"]
 
     # IN HANDLE   FileHandle,
     # IN HANDLE Event     OPTIONAL,
@@ -591,7 +613,7 @@ def ntreadfile(cpu_index, cpu, pid, proc, update_vads, is_write=False):
         proc.update_vads()
 
 
-def ntwritefile(cpu_index, cpu, pid, proc, update_vads):
+def ntwritefile(params, pid, proc, update_vads):
     # IN HANDLE               FileHandle,
     # IN HANDLE               Event OPTIONAL,
     # IN PIO_APC_ROUTINE      ApcRoutine OPTIONAL,
@@ -601,11 +623,14 @@ def ntwritefile(cpu_index, cpu, pid, proc, update_vads):
     # IN ULONG                Length,
     # IN PLARGE_INTEGER       ByteOffset OPTIONAL,
     # IN PULONG               Key OPTIONAL );
+
+    cpu_index = params["cpu_index"]
+    cpu = params["cpu"]
+
     ntreadfile(cpu_index, cpu, pid, proc, update_vads, is_write=True)
 
 
-def ntmapviewofsection_ret(cpu_index,
-                           cpu,
+def ntmapviewofsection_ret(params,
                            pid,
                            callback_name,
                            mapped_sec,
@@ -618,6 +643,9 @@ def ntmapviewofsection_ret(cpu_index,
     from mw_monitor_classes import SectionMap
     import api
     TARGET_LONG_SIZE = api.get_os_bits() / 8
+
+    cpu_index = params["cpu_index"]
+    cpu = params["cpu"]
 
     pgd = api.get_running_process(cpu_index)
 
@@ -660,7 +688,7 @@ def ntmapviewofsection_ret(cpu_index,
         proc.update_vads()
 
 
-def ntmapviewofsection(cpu_index, cpu, pid, proc, update_vads):
+def ntmapviewofsection(params, pid, proc, update_vads):
     import volatility.obj as obj
     import volatility.win32.tasks as tasks
     import volatility.plugins.overlays.windows.windows as windows
@@ -670,6 +698,9 @@ def ntmapviewofsection(cpu_index, cpu, pid, proc, update_vads):
     import api
     from api import CallbackManager
     TARGET_LONG_SIZE = api.get_os_bits() / 8
+
+    cpu_index = params["cpu_index"]
+    cpu = params["cpu"]
 
     # IN HANDLE               SectionHandle,
     # IN HANDLE               ProcessHandle,
@@ -778,12 +809,15 @@ def ntmapviewofsection(cpu_index, cpu, pid, proc, update_vads):
                               pgd=pgd)
 
 
-def ntunmapviewofsection(cpu_index, cpu, pid, proc, update_vads):
+def ntunmapviewofsection(params, pid, proc, update_vads):
     import volatility.win32.tasks as tasks
     from mw_monitor_classes import mwmon
     from utils import get_addr_space
     import api
     TARGET_LONG_SIZE = api.get_os_bits() / 8
+
+    cpu_index = params["cpu_index"]
+    cpu = params["cpu"]
 
     # IN HANDLE               ProcessHandle,
     # IN PVOID                BaseAddress);
@@ -841,12 +875,15 @@ def ntunmapviewofsection(cpu_index, cpu, pid, proc, update_vads):
         proc.update_vads()
 
 
-def ntvirtualprotect(cpu_index, cpu, pid, proc, update_vads):
+def ntvirtualprotect(params, pid, proc, update_vads):
     import volatility.win32.tasks as tasks
     from mw_monitor_classes import mwmon
     from utils import get_addr_space
     import api
     TARGET_LONG_SIZE = api.get_os_bits() / 8
+
+    cpu_index = params["cpu_index"]
+    cpu = params["cpu"]
 
     pgd = api.get_running_process(cpu_index)
 
@@ -917,8 +954,7 @@ def ntvirtualprotect(cpu_index, cpu, pid, proc, update_vads):
         proc.update_vads()
 
 
-def ntallocatevirtualmemory_ret(cpu_index,
-                                cpu,
+def ntallocatevirtualmemory_ret(params,
                                 pid,
                                 callback_name,
                                 mapping_proc=None,
@@ -933,6 +969,9 @@ def ntallocatevirtualmemory_ret(cpu_index,
     from mw_monitor_classes import mwmon
     import api
     TARGET_LONG_SIZE = api.get_os_bits() / 8
+
+    cpu_index = params["cpu_index"]
+    cpu = params["cpu"]
 
     pgd = api.get_running_process(cpu_index)
 
@@ -965,8 +1004,7 @@ def ntallocatevirtualmemory_ret(cpu_index,
         proc.update_vads()
 
 
-def ntallocatevirtualmemory(cpu_index,
-                            cpu,
+def ntallocatevirtualmemory(params,
                             pid,
                             proc,
                             update_vads):
@@ -977,6 +1015,9 @@ def ntallocatevirtualmemory(cpu_index,
     from api import CallbackManager
     from utils import get_addr_space
     TARGET_LONG_SIZE = api.get_os_bits() / 8
+
+    cpu_index = params["cpu_index"]
+    cpu = params["cpu"]
 
     pgd = api.get_running_process(cpu_index)
 
