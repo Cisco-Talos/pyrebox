@@ -12,7 +12,7 @@
 .. _scripts: https://github.com/Cisco-Talos/pyrebox/tree/master/scripts
 .. _readthedocs.io: https://pyrebox.readthedocs.io/en/latest/
 .. _questions: https://github.com/Cisco-Talos/pyrebox/issues?utf8=%E2%9C%93&q=is%3Aissue%20label%3Aquestion%20
-.. _presentation: https://youtu.be/fvm5DikXoI8?t=22089
+.. _presentation: https://www.youtube.com/watch?v=F2voG87obzM
 .. _Contest: https://volatility-labs.blogspot.com/2017/11/results-from-5th-annual-2017-volatility.html 
 
 PyREBox is a Python scriptable Reverse Engineering sandbox. It is based on QEMU, and its goal is 
