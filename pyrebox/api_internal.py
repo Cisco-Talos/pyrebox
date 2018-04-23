@@ -244,7 +244,12 @@ def dispatch_module_load_callback(pid, pgd, base, size, name, fullname):
     '''
     if pgd in module_load_callbacks:
         for cn in module_load_callbacks[pgd]:
-            module_load_callbacks[pgd][cn](pid, pgd, base, size, name, fullname)
+            module_load_callbacks[pgd][cn](pid = pid, 
+                                           pgd = pgd, 
+                                           base = base, 
+                                           size = size, 
+                                           name = name, 
+                                           fullname = fullname)
 
 def dispatch_module_remove_callback(pid, pgd, base, size, name, fullname):
     '''
@@ -252,7 +257,12 @@ def dispatch_module_remove_callback(pid, pgd, base, size, name, fullname):
     '''
     if pgd in module_remove_callbacks:
         for cn in module_remove_callbacks[pgd]:
-            module_remove_callbacks[pgd][cn](pid, pgd, base, size, name, fullname)
+            module_remove_callbacks[pgd][cn](pid = pid, 
+                                             pgd = pgd, 
+                                             base = base, 
+                                             size = size, 
+                                             name = name, 
+                                             fullname = fullname)
 
 def convert_x86_cpu(args):
     '''
@@ -268,19 +278,18 @@ def convert_x64_cpu(args):
     return X64CPU(*args)
 
 
-def bp_func(*arg):
+def bp_func(bp_num, params):
     '''
     Function to use as a callback on breakpoints
     '''
     from ipython_shell import start_shell
     import api
     from utils import pp_print
-    # bp_num = arg[0]
     # The first argument of insn begin and mem write/read callbacks should
     # always be cpu_index
-    cpu_index = arg[1]
+    cpu_index = params["cpu_index"] 
     cpu = api.r_cpu(cpu_index)
-    pp_print("[!] Breakpoint %s hit at address %x\n" % (arg[0], cpu.PC))
+    pp_print("[!] Breakpoint %s hit at address %x\n" % (bp_num, cpu.PC))
     start_shell()
 
 
@@ -328,19 +337,6 @@ def print_internal(plugin_name, string_to_print):
         else:
             c_api.plugin_print_internal("%s" % string_to_print)
     return None
-
-
-def function_wrapper(f, *args):
-    try:
-        f(*args)
-    except Exception:
-        traceback.print_exc()
-    finally:
-        return
-
-
-def wrap(f):
-    return lambda *args: function_wrapper(f, *args)
 
 
 def register_callback(

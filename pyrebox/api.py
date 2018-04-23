@@ -31,7 +31,6 @@
 from cpus import X86CPU
 from cpus import X64CPU
 from api_internal import bp_func
-from api_internal import wrap
 from api_internal import register_callback
 from api_internal import unregister_callback
 from api_internal import add_trigger
@@ -46,6 +45,8 @@ from api_internal import register_module_load_callback
 from api_internal import register_module_remove_callback
 
 import functools
+
+DISABLE_DEPRECATION_WARNINGS = False
 
 # ================================================== API FUNCTIONS ========
 
@@ -94,7 +95,7 @@ def r_pa(addr, length):
 def r_va(pgd, addr, length):
     """Read virtual address
 
-        :param pgd: The PGD (address space) to read from.
+        :param pgd: The PGD (address space) to read from
         :type pgd: int
 
         :param addr: The address to read
@@ -735,6 +736,71 @@ def get_loaded_modules():
 
 
 # ================================================== CLASSES  =============
+# These wrappers are helpers for the callback manager
+# that deal with the 2 possible callback parameter conventions
+def function_wrapper_old(f, callback_type, *args, **kwargs):
+    global DISABLE_DEPRECATION_WARNINGS
+    try:
+        if not DISABLE_DEPRECATION_WARNINGS:
+            from utils import pp_warning
+            pp_warning("You are using a deprecated callback format.\n" + \
+                       "Switch to new style callback format, that will become the default in the future.\n" + \
+                       "See the documentation of CallbackManager for further reference.\n")
+            # Set to True, so that we don't repeat the same message again and again
+            DISABLE_DEPRECATION_WARNINGS = True
+        # We need to treat each callback separately
+        if callback_type == CallbackManager.BLOCK_BEGIN_CB:
+            f(kwargs["cpu_index"], kwargs["cpu"], kwargs["tb"])
+        elif callback_type == CallbackManager.BLOCK_END_CB:
+            f(kwargs["cpu_index"], kwargs["cpu"], kwargs["tb"], kwargs["cur_pc"], kwargs["next_pc"])
+        elif callback_type == CallbackManager.INSN_BEGIN_CB:
+            f(kwargs["cpu_index"], kwargs["cpu"])
+        elif callback_type == CallbackManager.INSN_END_CB:
+            f(kwargs["cpu_index"], kwargs["cpu"])
+        elif callback_type == CallbackManager.MEM_READ_CB:
+            f(kwargs["cpu_index"], kwargs["vaddr"], kwargs["size"], kwargs["haddr"])
+        elif callback_type == CallbackManager.MEM_WRITE_CB:
+            f(kwargs["cpu_index"], kwargs["vaddr"], kwargs["size"], kwargs["haddr"], kwargs["data"])
+        elif callback_type == CallbackManager.KEYSTROKE_CB:
+            f(kwargs["keycode"])
+        elif callback_type == CallbackManager.NIC_REC_CB:
+            f(kwargs["buf"], kwargs["size"], kwargs["cur_pos"], kwargs["start"], kwargs["stop"])
+        elif callback_type == CallbackManager.NIC_SEND_CB:
+            f(kwargs["addr"], kwargs["size"], kwargs["buf"])
+        elif callback_type == CallbackManager.OPCODE_RANGE_CB:
+            f(kwargs["cpu_index"], kwargs["cpu"], kwargs["cur_pc"], kwargs["next_pc"])
+        elif callback_type == CallbackManager.TLB_EXEC_CB:
+            f(kwargs["cpu"], kwargs["vaddr"])
+        elif callback_type == CallbackManager.CREATEPROC_CB:
+            f(kwargs["pid"], kwargs["pgd"], kwargs["name"])
+        elif callback_type == CallbackManager.REMOVEPROC_CB:
+            f(kwargs["pid"], kwargs["pgd"], kwargs["name"])
+        elif callback_type == CallbackManager.CONTEXTCHANGE_CB:
+             f(kwargs["old_pgd"], kwargs["new_pgd"])
+        elif callback_type == CallbackManager.LOADMODULE_CB:
+             f(kwargs["pid"], kwargs["pgd"], kwargs["base"], kwargs["size"], kwargs["name"], kwargs["fullname"])
+        elif callback_type == CallbackManager.REMOVEMODULE_CB:
+             f(kwargs["pid"], kwargs["pgd"], kwargs["base"], kwargs["size"], kwargs["name"], kwargs["fullname"])
+        else:
+            raise Exception("Unsupported callback type!")
+    except Exception:
+        traceback.print_exc()
+    finally:
+        return
+
+def wrap_old(f, callback_type):
+    return lambda *args, **kwargs: function_wrapper_old(f, callback_type, *args, **kwargs)
+
+def function_wrapper_new(f, *args, **kwargs):
+    try:
+        f(kwargs)
+    except Exception:
+        traceback.print_exc()
+    finally:
+        return
+
+def wrap_new(f, callback_type):
+    return lambda *args, **kwargs: function_wrapper_new(f, *args, **kwargs)
 
 class CallbackManager:
     '''
@@ -760,18 +826,25 @@ class CallbackManager:
     LOADMODULE_CB = 16
     REMOVEMODULE_CB = 17
 
-    def __init__(self, module_hdl):
+    def __init__(self, module_hdl, new_style = False):
         """ Constructor of the class
 
             :param module_hdl: The module handle provided to the script as parameter to the initialize_callbacks
                                function. Use 0 if it doesn't apply.
             :type module_hdl: int
+
+            :param new_style: Enables the new-style callback parameter format. New-style callback functions accept
+                              a single parameter (dictionary), with a key (str) per parameter, and a value (value of
+                              the parameter), instead of positional arguments.
+            :type new_style: bool
         """
         self.callbacks = {}
         self.load_module_callbacks = {}
         self.remove_module_callbacks = {}
 
         self.module_hdl = module_hdl
+
+        self.new_style = new_style 
 
     def get_module_handle(self):
         """ Returns the module handle associated to this callback manager
@@ -807,7 +880,8 @@ class CallbackManager:
             addr=None,
             pgd=None,
             start_opcode=None,
-            end_opcode=None):
+            end_opcode=None,
+            new_style=None):
         """ Add a callback to the module, given a name, so that we can refer to it later.
 
             If the name is repeated, it will provide back a new name based on the one passed as argument,
@@ -824,12 +898,18 @@ class CallbackManager:
             :type func: function
 
             :param addr: Optional. The address where we want to place the callback. Only applies
-                         to INSN_BEGIN_CB, BLOCK_BEGIN_CB
+                         eo INSN_BEGIN_CB, BLOCK_BEGIN_CB
             :type addr: int
 
             :param pgd: Optional. The PGD (addr space) where we want to place the callback. Only applies
                         to INSN_BEGIN_CB, BLOCK_BEGIN_CB
             :type pgd: int
+
+            :param new_style: Optional. Enables the new-style callback parameter format. New-style callback functions accept
+                              a single parameter (dictionary), with a key (str) per parameter, and a value (value of
+                              the parameter), instead of positional arguments. This parameter overrides the class-wide
+                              new_style parameter in the CallbackManager __init__ function.
+            :type new_style: bool
 
             :return: The actual inserted callback name. If the callback name indicated already existed,
                      this name will be updated to make it unique. This name can be used as a handle to the callback
@@ -838,6 +918,31 @@ class CallbackManager:
         import random
         import string
         import time
+
+        # Old style vs new style callbacks:
+
+        # Old style is maintained for backwards compatibility,
+        # but will be removed at some point. For the moment, 
+        # we use old style by default to avoid breaking
+        # user's scripts, but print a deprecation warning
+        # to let users know that this style will be removed
+        # in the future, so that they can adapt their scripts
+        # to the new style.
+
+        # Old style means position based parameters, while new
+        # style means one single parameter (dictionary), with a 
+        # str key, and a value, for each of the parameters.
+
+        # This new approach allows to add new parameters in the future
+        # without breaking script compatibility.
+
+        # If not specified, apply the class default
+        if new_style is None:
+            new_style = self.new_style
+        if new_style is True:
+            wrap = wrap_new
+        else:
+            wrap = wrap_old
 
         # If a name was not provided, just provide a 16 lowercase letter random
         # name
@@ -848,10 +953,10 @@ class CallbackManager:
 
         # If the callback_type is a module callback, register it with specific API
         if callback_type == CallbackManager.LOADMODULE_CB:
-            self.load_module_callbacks[name] = register_module_load_callback(pgd, name, func)
+            self.load_module_callbacks[name] = register_module_load_callback(pgd, name, wrap(func, callback_type))
             return name
         if callback_type == CallbackManager.REMOVEMODULE_CB:
-            self.remove_module_callbacks[name] = register_module_remove_callback(pgd, name, func)
+            self.remove_module_callbacks[name] = register_module_remove_callback(pgd, name, wrap(func, callback_type))
             return name
 
         # addr,pgd and start_opcode,end_opcode are exclusive, so we join them
@@ -859,7 +964,7 @@ class CallbackManager:
         first_param = start_opcode if addr is None else addr
         second_param = end_opcode if pgd is None else pgd
         self.callbacks[name] = register_callback(
-            self.module_hdl, callback_type, wrap(func), first_param, second_param)
+            self.module_hdl, callback_type, wrap(func, callback_type), first_param, second_param)
         return name
 
     def rm_callback(self, name):
@@ -1048,10 +1153,10 @@ class BP:
     MEM_READ_PHYS = 3
     MEM_WRITE_PHYS = 4
     __active_bps = {}
-    __cm = CallbackManager(0)
+    __cm = CallbackManager(0, new_style = True)
     __bp_num = 0
 
-    def __init__(self, addr, pgd, size=0, typ=0, func=None):
+    def __init__(self, addr, pgd, size=0, typ=0, func=None, new_style = False):
         """ Constructor for a BreakPoint
 
             :param addr: The (start) address where we want to put the breakpoint
@@ -1074,6 +1179,10 @@ class BP:
                          MEM_WRITE_CB for memory read/write breakpoints. If no function is specified,
                          a shell is started when the breakpoint is hit.
             :type func: function
+
+            :param new_style: Defines whether the function *func* optionally passed as parameter uses old or new
+                              callback calling convention. See documentation for further reference. Defaults to False.
+            :type new_style: bool
 
             :return: An instance of class BP for the inserted breakpoint
             :rtype: BP
@@ -1099,10 +1208,15 @@ class BP:
             self.size = 1
         else:
             self.size = size
+
+        self.__new_style = new_style
+
         if func is not None:
             self.func = func
         else:
+            # Force new_style for this internal case
             self.func = functools.partial(bp_func, self.__bp_repr)
+            self.__new_style = True
 
     def __str__(self):
         """ String representation of the breakpoint
@@ -1167,7 +1281,8 @@ class BP:
                         self.func,
                         name=self.__bp_repr,
                         addr=self.addr,
-                        pgd=self.pgd)
+                        pgd=self.pgd,
+                        new_style = self.__new_style)
                 else:
                     if not is_monitored_process(self.pgd):
                         start_monitoring_process(self.pgd)
@@ -1176,7 +1291,8 @@ class BP:
                     else:
                         BP.__active_bps[self.pgd] += 1
                     self.__bp_repr = BP.__cm.add_callback(
-                        CallbackManager.INSN_BEGIN_CB, self.func, name=self.__bp_repr)
+                        CallbackManager.INSN_BEGIN_CB, self.func, name=self.__bp_repr,
+                        new_style = self.__new_style)
                     BP.__cm.add_trigger(
                         self.__bp_repr, "triggers/trigger_bp_memrange.so")
                     BP.__cm.set_trigger_var(self.__bp_repr, "begin", self.addr)
@@ -1191,7 +1307,8 @@ class BP:
                 else:
                     BP.__active_bps[self.pgd] += 1
                 self.__bp_repr = BP.__cm.add_callback(
-                    CallbackManager.MEM_READ_CB, self.func, name=self.__bp_repr)
+                    CallbackManager.MEM_READ_CB, self.func, name=self.__bp_repr,
+                    new_style = self.__new_style)
                 BP.__cm.add_trigger(
                     self.__bp_repr, "triggers/trigger_bpr_memrange.so")
                 BP.__cm.set_trigger_var(self.__bp_repr, "begin", self.addr)
@@ -1206,7 +1323,8 @@ class BP:
                 else:
                     BP.__active_bps[self.pgd] += 1
                 self.__bp_repr = BP.__cm.add_callback(
-                    CallbackManager.MEM_WRITE_CB, self.func, name=self.__bp_repr)
+                    CallbackManager.MEM_WRITE_CB, self.func, name=self.__bp_repr,
+                    new_style = self.__new_style)
                 BP.__cm.add_trigger(
                     self.__bp_repr, "triggers/trigger_bpw_memrange.so")
                 BP.__cm.set_trigger_var(self.__bp_repr, "begin", self.addr)
@@ -1215,7 +1333,8 @@ class BP:
                 BP.__cm.set_trigger_var(self.__bp_repr, "pgd", self.pgd)
             elif self.typ == self.MEM_READ_PHYS:
                 self.__bp_repr = BP.__cm.add_callback(
-                    CallbackManager.MEM_READ_CB, self.func, name=self.__bp_repr)
+                    CallbackManager.MEM_READ_CB, self.func, name=self.__bp_repr,
+                    new_style = self.__new_style)
                 BP.__cm.add_trigger(
                     self.__bp_repr, "triggers/trigger_bprh_memrange.so")
                 BP.__cm.set_trigger_var(self.__bp_repr, "begin", self.addr)
@@ -1223,7 +1342,8 @@ class BP:
                     self.__bp_repr, "end", self.addr + self.size)
             elif self.typ == self.MEM_WRITE_PHYS:
                 self.__bp_repr = BP.__cm.add_callback(
-                    CallbackManager.MEM_WRITE_CB, self.func, name=self.__bp_repr)
+                    CallbackManager.MEM_WRITE_CB, self.func, name=self.__bp_repr,
+                    new_style = self.__new_style)
                 BP.__cm.add_trigger(
                     self.__bp_repr, "triggers/trigger_bpwh_memrange.so")
                 BP.__cm.set_trigger_var(self.__bp_repr, "begin", self.addr)

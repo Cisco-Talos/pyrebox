@@ -575,7 +575,6 @@ void CallbackManager::deliver_callback(callback_type_t type, callback_params_t p
     fflush(stderr);
 
     //For each type of callback, trigger the python callback with its corresponding arguments 
-    PyObject* arg = 0;
     list<Callback*> callbacks_needed;
 
     //For delivering callbacks, we must do it as efficiently as possible.
@@ -695,158 +694,214 @@ void CallbackManager::deliver_callback(callback_type_t type, callback_params_t p
     }
 
 
+    //We pass the arguments as keyword arguments, so arg should be an empty tuple
+    PyObject* arg = Py_BuildValue("()");
+    PyObject* kwarg = 0; 
     switch(type)
     {
        case OP_BLOCK_BEGIN_CB:
-            arg =  Py_BuildValue("(i,N,N)",params.block_begin_params.cpu_index,get_cpu_state(params.block_begin_params.cpu),
-                                      get_tb(params.block_begin_params.tb));
+            kwarg =  Py_BuildValue("{s:i,s:N,s:N}", "cpu_index",
+                                                  params.block_begin_params.cpu_index,
+                                                  "cpu", 
+                                                  get_cpu_state(params.block_begin_params.cpu),
+                                                  "tb",
+                                                  get_tb(params.block_begin_params.tb));
             break;
        case OP_INSN_BEGIN_CB:
-            arg =  Py_BuildValue("(i,N)",params.insn_begin_params.cpu_index,get_cpu_state(params.insn_begin_params.cpu));
+            kwarg =  Py_BuildValue("{s:i,s:N}", "cpu_index",
+                                              params.insn_begin_params.cpu_index,
+                                              "cpu",
+                                              get_cpu_state(params.insn_begin_params.cpu));
             break;
        case BLOCK_BEGIN_CB:
-            arg =  Py_BuildValue("(i,N,N)",params.block_begin_params.cpu_index,get_cpu_state(params.block_begin_params.cpu),
-                                      get_tb(params.block_begin_params.tb));
+            kwarg =  Py_BuildValue("{s:i,s:N,s:N}", "cpu_index",
+                                                  params.block_begin_params.cpu_index,
+                                                  "cpu", 
+                                                  get_cpu_state(params.block_begin_params.cpu),
+                                                  "tb",
+                                                  get_tb(params.block_begin_params.tb));
             break;
        case BLOCK_END_CB:
 #if TARGET_LONG_SIZE == 4
-            arg =  Py_BuildValue("(i,N,N,I,I)",
+            kwarg =  Py_BuildValue("{s:i,s:N,s:N,s:I,s:I}",
 #elif TARGET_LONG_SIZE == 8
-            arg =  Py_BuildValue("(i,N,N,K,K)",
+            kwarg =  Py_BuildValue("{s:i,s:N,s:N,s:K,s:K}",
 #else
 #error TARGET_LONG_SIZE undefined
 #endif
+                                      "cpu_index",
                                       params.block_end_params.cpu_index,
+                                      "cpu",
                                       get_cpu_state(params.block_end_params.cpu),
+                                      "tb",
                                       get_tb(params.block_end_params.tb),
+                                      "cur_pc",
                                       params.block_end_params.cur_pc,
+                                      "next_pc",
                                       params.block_end_params.next_pc);
             break;
        case INSN_BEGIN_CB:
-            arg =  Py_BuildValue("(i,N)",params.insn_begin_params.cpu_index,get_cpu_state(params.insn_begin_params.cpu));
+            kwarg =  Py_BuildValue("{s:i,s:N}", "cpu_index",
+                                              params.insn_begin_params.cpu_index,
+                                              "cpu",
+                                              get_cpu_state(params.insn_begin_params.cpu));
             break;
        case INSN_END_CB:
-            arg =  Py_BuildValue("(i,N)",params.insn_end_params.cpu_index,get_cpu_state(params.insn_end_params.cpu));
+            kwarg =  Py_BuildValue("{s:i,s:N}", "cpu_index",
+                                              params.insn_end_params.cpu_index,
+                                              "cpu",
+                                              get_cpu_state(params.insn_end_params.cpu));
             break;
        case MEM_READ_CB:
 #if TARGET_LONG_SIZE == 4
-            arg =  Py_BuildValue("(i,I,I,K)",
+            kwarg =  Py_BuildValue("{s:i,s:I,s:I,s:K}",
 #elif TARGET_LONG_SIZE == 8
-            arg =  Py_BuildValue("(i,K,K,K)",
+            kwarg =  Py_BuildValue("{s:i,s:K,s:K,s:K}",
 #else
 #error TARGET_LONG_SIZE undefined
 #endif
+                                           "cpu_index",
                                            params.mem_read_params.cpu_index,
+                                           "vaddr",
                                            params.mem_read_params.vaddr,
+                                           "size",
                                            params.mem_read_params.size,
+                                           "haddr",
                                            params.mem_read_params.haddr);
             break;
        case MEM_WRITE_CB:
 #if TARGET_LONG_SIZE == 4
-            arg =  Py_BuildValue("(i,I,I,K,I)",
+            kwarg =  Py_BuildValue("{s:i,s:I,s:I,s:K,s:I}",
 #elif TARGET_LONG_SIZE == 8
-            arg =  Py_BuildValue("(i,K,K,K,K)",
+            kwarg =  Py_BuildValue("{s:i,s:K,s:K,s:K,s:K}",
 #else
 #error TARGET_LONG_SIZE undefined
 #endif
+                                           "cpu_index",
                                            params.mem_write_params.cpu_index,
+                                           "vaddr",
                                            params.mem_write_params.vaddr,
+                                           "size",
                                            params.mem_write_params.size,
+                                           "haddr",
                                            params.mem_write_params.haddr,
+                                           "data",
                                            params.mem_write_params.data);
             break;
        case KEYSTROKE_CB:
-            arg =  Py_BuildValue("(I)",params.keystroke_params.keycode);
+            kwarg =  Py_BuildValue("{s:I}", "keycode", params.keystroke_params.keycode);
             break;
        case NIC_REC_CB:
             //Size is duplicated, first for the size of the string, second one for the size parameter
 #if TARGET_LONG_SIZE == 4
             //Since this is target independent, we use always 64 bits
-            arg =  Py_BuildValue("(s#,K,K,K,K)",
+            kwarg =  Py_BuildValue("{s:s#,s:K,s:K,s:K,s:K}",
 #elif TARGET_LONG_SIZE == 8
-            arg =  Py_BuildValue("(s#,K,K,K,K)",
+            kwarg =  Py_BuildValue("{s:s#,s:K,s:K,s:K,s:K}",
 #else
 #error TARGET_LONG_SIZE undefined
 #endif
+                                           "buf",
                                            params.nic_rec_params.buf,
                                            params.nic_rec_params.size,
+                                           "size",
                                            params.nic_rec_params.size,
+                                           "cur_pos",
                                            params.nic_rec_params.cur_pos,
+                                           "start",
                                            params.nic_rec_params.start,
+                                           "stop",
                                            params.nic_rec_params.stop);
             break;
        case NIC_SEND_CB:
 #if TARGET_LONG_SIZE == 4
             //Since this is target independent, we use always 64 bits
-            arg =  Py_BuildValue("(K,K,s#)",
+            kwarg =  Py_BuildValue("{s:K,s:K,s:s#}",
 #elif TARGET_LONG_SIZE == 8
-            arg =  Py_BuildValue("(K,K,s#)",
+            kwarg =  Py_BuildValue("{s:K,s:K,s:s#}",
 #else
 #error TARGET_LONG_SIZE undefined
 #endif
+                                           "addr",
                                            params.nic_send_params.address,
+                                           "size",
                                            params.nic_send_params.size,
+                                           "buf",
                                            params.nic_send_params.buf,
                                            params.nic_send_params.size);
             break;
        case OPCODE_RANGE_CB:
 #if TARGET_LONG_SIZE == 4
-            arg =  Py_BuildValue("(i,N,I,I)",
+            kwarg =  Py_BuildValue("{s:i,s:N,s:I,s:I}",
 #elif TARGET_LONG_SIZE == 8
-            arg =  Py_BuildValue("(i,N,K,K)",
+            kwarg =  Py_BuildValue("{s:i,s:N,s:K,s:K}",
 #else
 #error TARGET_LONG_SIZE undefined
 #endif
+                                      "cpu_index",
                                       params.opcode_range_params.cpu_index,
+                                      "cpu",
                                       get_cpu_state(params.opcode_range_params.cpu),
+                                      "cur_pc",
                                       params.opcode_range_params.cur_pc,
+                                      "next_pc",
                                       params.opcode_range_params.next_pc);
             break;
        case TLB_EXEC_CB:
 #if TARGET_LONG_SIZE == 4
-            arg =  Py_BuildValue("(N,I)",
+            kwarg =  Py_BuildValue("{s: N, s: I}",
 #elif TARGET_LONG_SIZE == 8
-            arg =  Py_BuildValue("(N,K)",
+            kwarg =  Py_BuildValue("{s: N, s: K}",
 #else
 #error TARGET_LONG_SIZE undefined
 #endif
+                                      "cpu",
                                       get_cpu_state(params.tlb_exec_params.cpu),
+                                      "vaddr",
                                       params.tlb_exec_params.vaddr);
             break;
        case CREATEPROC_CB:
 #if TARGET_LONG_SIZE == 4
-            arg =  Py_BuildValue("(I,I,s)",
+            kwarg =  Py_BuildValue("{s:I,s:I,s:s}",
 #elif TARGET_LONG_SIZE == 8
-            arg =  Py_BuildValue("(K,K,s)",
+            kwarg =  Py_BuildValue("{s:K,s:K,s:s}",
 #else
 #error TARGET_LONG_SIZE undefined
 #endif
+                                        "pid",
                                         params.vmi_create_proc_params.pid,
+                                        "pgd",
                                         params.vmi_create_proc_params.pgd,
+                                        "name",
                                         params.vmi_create_proc_params.name);
 
             break;
        case REMOVEPROC_CB:
 #if TARGET_LONG_SIZE == 4
-            arg =  Py_BuildValue("(I,I,s)",
+            kwarg =  Py_BuildValue("{s:I,s:I,s:s}",
 #elif TARGET_LONG_SIZE == 8
-            arg =  Py_BuildValue("(K,K,s)",
+            kwarg =  Py_BuildValue("{s:K,s:K,s:s}",
 #else
 #error TARGET_LONG_SIZE undefined
 #endif
+                                        "pid",
                                         params.vmi_create_proc_params.pid,
+                                        "pgd",
                                         params.vmi_create_proc_params.pgd,
+                                        "name",
                                         params.vmi_create_proc_params.name);
             break;
        case CONTEXTCHANGE_CB:
 #if TARGET_LONG_SIZE == 4
-            arg =  Py_BuildValue("(I,I)",
+            kwarg =  Py_BuildValue("{s:I,s:I}",
 #elif TARGET_LONG_SIZE == 8
-            arg =  Py_BuildValue("(K,K)",
+            kwarg =  Py_BuildValue("{s:K,s:K)",
 #else
 #error TARGET_LONG_SIZE undefined
 #endif
+                                        "old_pgd",
                                         params.vmi_context_change_params.old_pgd,
+                                        "new_pgd",
                                         params.vmi_context_change_params.new_pgd);
             break;
        default:
@@ -858,11 +913,12 @@ void CallbackManager::deliver_callback(callback_type_t type, callback_params_t p
 
     for (list<Callback*>::iterator it = callbacks_needed.begin(); it != callbacks_needed.end(); ++it)
     {
-        PyObject* ret = PyObject_CallObject((*it)->get_callback_function(),arg);
+        PyObject* ret = PyObject_Call((*it)->get_callback_function(), arg, kwarg);
         Py_XDECREF(ret);
     }
     //Once all callbacks have been triggered, just decref the arguments
     Py_XDECREF(arg);
+    Py_XDECREF(kwarg);
     //Remove the installed callbacks whose removal was deferred until all callbacks have been dispatched
     this->commit_deferred_callback_removes();
     fflush(stdout);
