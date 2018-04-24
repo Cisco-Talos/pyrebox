@@ -783,8 +783,9 @@ def function_wrapper_old(f, callback_type, *args, **kwargs):
              f(kwargs["pid"], kwargs["pgd"], kwargs["base"], kwargs["size"], kwargs["name"], kwargs["fullname"])
         else:
             raise Exception("Unsupported callback type!")
-    except Exception:
-        traceback.print_exc()
+    except Exception as e:
+        from utils import pp_error
+        pp_error("\nException occurred when calling callback function %s - %s\n\n" % (str(f), str(e)))
     finally:
         return
 
@@ -794,8 +795,9 @@ def wrap_old(f, callback_type):
 def function_wrapper_new(f, *args, **kwargs):
     try:
         f(kwargs)
-    except Exception:
-        traceback.print_exc()
+    except Exception as e:
+        from utils import pp_error
+        pp_error("\nException occurred when calling callback function %s - %s" % (repr(f), str(e)))
     finally:
         return
 
