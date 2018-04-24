@@ -33,14 +33,16 @@ pyrebox_print = None
 def mem_write(params):
     global cm
     global counter
+    from ipython_shell import start_shell
 
     cpu_index = params["cpu_index"]
-    addr = params["addr"]
+    addr = params["vaddr"]
     size = params["size"]
     haddr = params["haddr"] 
     data = params["data"]
 
     pyrebox_print("Mem write at cpu %x, addr %x size %x\n" % (cpu_index, addr, size))
+    start_shell()
     counter += 1
     # Remove the callback after 5 writes
     if counter == 5:

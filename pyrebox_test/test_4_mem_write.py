@@ -32,7 +32,7 @@ def my_function(params):
     global cm
 
     cpu_index = params["cpu_index"]
-    addr = params["addr"]
+    addr = params["vaddr"]
     size = params["size"]
     haddr = params["haddr"]
     data = params["data"]
