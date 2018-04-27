@@ -77,7 +77,27 @@ Callback types
 --------------
 
 This section lists the different callback types, together with a description
-of the callback and the parameters that the python callback function expects.
+of the callback and the parameters provided to the function.
+
+Old style vs new style callback functions
+*****************************************
+
+PyREBox supports 2 different styles for callback functions. The old style requires
+each function to accept a variable number of positional arguments. The number and
+meaning of each positional argument depends on the callback type.
+
+In the new style, in contrast, callback functions have one single argument: a dictionary.
+In this dictionary, the keys are strings representing the parameter
+name, and the value represents the value associated to such parameter. This style simplifies
+the callback interfacem and will allow to add callback parameters in the future without breaking
+backwards compatibility.
+
+**At this moment, PyREBox defaults to old-style in order to preserve compatibility. 
+Nevertheless, whenever the user loads a script using old-style parameters, a warning is 
+shown informing that the style is deprecated and will be removed in the future. 
+New-style parameters can be enabled by providing the argument new_style = True when 
+either CallbackManager or the BP class are instantiated. Once a script is new_style
+compliant, the warning message will not be shown again.**
 
 There are some common data types used in many callbacks.
 
@@ -97,14 +117,20 @@ Callback type:  ``CallbackManager.BLOCK_BEGIN_CB``
 
 Example:
 ::
-    cm.add_callback(CallbackManager.BLOCK_BEGIN_CB,my_function)
+    cm.add_callback(CallbackManager.BLOCK_BEGIN_CB, my_function)
 
-    cm.add_callback(CallbackManager.BLOCK_BEGIN_CB,my_function,address=address,pgd=pgd)
+    cm.add_callback(CallbackManager.BLOCK_BEGIN_CB, my_function, address=address, pgd=pgd)
 
-Callback interface:
+Old-style callback interface:
 ::
-    def my_function(cpu_index,cpu,tb): 
+    def my_function(cpu_index, cpu, tb):
         ...
+
+New-style callback parameters:
+::
+    {"cpu_index": ...,
+     "cpu": ...,
+     "tb": ...}
 
 Block end
 *********
@@ -116,12 +142,20 @@ Callback type:  ``CallbackManager.BLOCK_END_CB``
 
 Example:
 ::
-    cm.add_callback(CallbackManager.BLOCK_END_CB,my_function)
+    cm.add_callback(CallbackManager.BLOCK_END_CB, my_function)
 
-Callback interface:
+Old-style callback interface:
 ::
-    def my_function(cpu_index,cpu,tb,cur_pc,next_pc): 
+    def my_function(cpu_index, cpu, tb, cur_pc, next_pc): 
         ...
+
+New-style callback parameters:
+::
+    {"cpu_index": ...,
+     "cpu": ...,
+     "tb": ...,
+     "cur_pc": ...,
+     "next_pc": ...}
 
 Instruction begin
 *****************
@@ -132,14 +166,19 @@ Callback type:  ``CallbackManager.INSN_BEGIN_CB``
 
 Example:
 ::
-    cm.add_callback(CallbackManager.INSN_BEGIN_CB,my_function)
+    cm.add_callback(CallbackManager.INSN_BEGIN_CB, my_function)
 
-    cm.add_callback(CallbackManager.INSN_BEGIN_CB,my_function,addr=addr,pgd=pgd)
+    cm.add_callback(CallbackManager.INSN_BEGIN_CB, my_function, addr=addr, pgd=pgd)
 
-Callback interface:
+Old-style callback interface:
 ::
-    def my_function(cpu_index,cpu): 
+    def my_function(cpu_index, cpu):
         ...
+
+New-style callback parameters:
+::
+    {"cpu_index": ...,
+     "cpu": ...}
 
 Instruction end
 ***************
@@ -150,12 +189,17 @@ Callback type:  ``CallbackManager.INSN_END_CB``
 
 Example:
 ::
-    cm.add_callback(CallbackManager.INSN_END_CB,my_function)
+    cm.add_callback(CallbackManager.INSN_END_CB, my_function)
 
-Callback interface:
+Old-style callback interface:
 ::
-    def my_function(cpu_index,cpu): 
+    def my_function(cpu_index, cpu):
         ...
+
+New-style callback parameters:
+::
+    {"cpu_index": ...,
+     "cpu": ...}
 
 Memory read
 ***********
@@ -166,12 +210,19 @@ Callback type: ``CallbackManager.MEM_READ_CB``
 
 Example:
 ::
-    cm.add_callback(CallbackManager.MEM_READ_CB,my_function)
+    cm.add_callback(CallbackManager.MEM_READ_CB, my_function)
 
-Callback interface:
+Old-style callback interface:
 ::
-    def my_function(cpu_index,vaddr,size,haddr):
+    def my_function(cpu_index, vaddr, size, haddr):
         ...
+
+New-style callback parameters:
+::
+    {"cpu_index": ...,
+     "vaddr": ...,
+     "size": ...,
+     "haddr": ...}
 
 Memory write
 ************
@@ -182,12 +233,20 @@ Callback type: ``CallbackManager.MEM_WRITE_CB``
 
 Example:
 ::
-    cm.add_callback(CallbackManager.MEM_WRITE_CB,my_function)
+    cm.add_callback(CallbackManager.MEM_WRITE_CB, my_function)
 
-Callback interface:
+Old-style callback interface:
 ::
-    def my_function(cpu_index,vaddr,size,haddr,data):
+    def my_function(cpu_index, vaddr, size, haddr, data):
         ...
+
+New-style callback parameters:
+::
+    {"cpu_index": ...,
+     "vaddr": ...,
+     "size": ...,
+     "haddr": ...,
+     "data": ...}
 
 Keystroke event
 ***************
@@ -198,13 +257,16 @@ Callback type:  ``CallbackManager.KEYSTROKE_CB``
 
 Example:
 ::
-    cm.add_callback(CallbackManager.KEYSTROKE_CB,my_function)
+    cm.add_callback(CallbackManager.KEYSTROKE_CB, my_function)
 
-Callback interface:
+Old-style callback interface:
 ::
     def my_function(keycode): 
         ...
 
+New-style callback parameters:
+::
+    {"keycode": ...}
 
 NIC send
 ********
@@ -219,12 +281,18 @@ Callback type:  ``CallbackManager.NIC_SEND_CB``
 
 Example:
 ::
-    cm.add_callback(CallbackManager.NIC_SEND_CB,my_function)
+    cm.add_callback(CallbackManager.NIC_SEND_CB, my_function)
 
-Callback interface:
+Old-style callback interface:
 ::
     def my_function(addr,size,buf): 
         ...
+
+New-style callback parameters:
+::
+    {"vaddr": ...,
+     "size": ...,
+     "buf": ...}
 
 NIC receive 
 ***********
@@ -239,12 +307,20 @@ Callback type:  ``CallbackManager.NIC_REC_CB``
 
 Example:
 ::
-    cm.add_callback(CallbackManager.NIC_REC_CB,my_function)
+    cm.add_callback(CallbackManager.NIC_REC_CB, my_function)
 
-Callback interface:
+Old-style callback interface:
 ::
-    def my_function(buf,size,cur_pos,start,stop): 
+    def my_function(buf, size, cur_pos, start, stop): 
         ...
+
+New-style callback parameters:
+::
+    {"buf": ...,
+     "size": ...,
+     "cur_pos": ...,
+     "start": ...,
+     "stop": ...}
 
 Opcode range callback
 *********************
@@ -260,12 +336,19 @@ Callback type:  ``CallbackManager.OPCODE_RANGE_CB``
 
 Example:
 ::
-    cm.add_callback(CallbackManager.OPCODE_RANGE_CB,my_function,start_opcode=0xE8,end_opcode=0xE9)
+    cm.add_callback(CallbackManager.OPCODE_RANGE_CB, my_function, start_opcode=0xE8, end_opcode=0xE9)
 
-Callback interface:
+Old-style callback interface:
 ::
-    def my_function(cpu_index,cpu,pc,next_pc): 
+    def my_function(cpu_index, cpu,pc, next_pc):
         ...
+
+New-style callback parameters:
+::
+    {"cpu_index": ...,
+     "cpu": ...,
+     "pc": ...,
+     "next_pc": ...}
 
 TLB callback
 ************
@@ -276,12 +359,17 @@ Callback type:  ``CallbackManager.TLB_EXEC_CB``
 
 Example:
 ::
-    cm.add_callback(CallbackManager.TLB_EXEC_CB,my_function)
+    cm.add_callback(CallbackManager.TLB_EXEC_CB, my_function)
 
-Callback interface:
+Old-style callback interface:
 ::
-    def my_function(cpu,vaddr): 
+    def my_function(cpu, vaddr):
         ...
+
+New-style callback parameters:
+::
+    {"cpu": ...,
+     "vaddr": ...}
 
 Context change
 **************
@@ -292,13 +380,17 @@ Callback type:  ``CallbackManager.CONTEXTCHANGE_CB``
 
 Example:
 ::
-    cm.add_callback(CallbackManager.CONTEXTCHANGE_CB,my_function)
+    cm.add_callback(CallbackManager.CONTEXTCHANGE_CB, my_function)
 
-Callback interface:
+Old-style callback interface:
 ::
-    def my_function(old_pgd, new_pgd): 
+    def my_function(old_pgd, new_pgd):
         ...
 
+New-style callback parameters:
+::
+    {"old_pgd": ...,
+     "new_pgd": ...}
 
 Create process
 **************
@@ -309,12 +401,18 @@ Callback type:  ``CallbackManager.CREATEPROC_CB``
 
 Example:
 ::
-    cm.add_callback(CallbackManager.VMI_CREATEPROC_CB,my_function)
+    cm.add_callback(CallbackManager.VMI_CREATEPROC_CB, my_function)
 
-Callback interface:
+Old-style callback interface:
 ::
-    def my_function(pid,cr3,name): 
+    def my_function(pid, pgd, name): 
         ...
+
+New-style callback parameters:
+::
+    {"pid": ...,
+     "pgd": ...,
+     "name": ...}
 
 Remove process
 **************
@@ -325,12 +423,18 @@ Callback type:  ``CallbackManager.REMOVEPROC_CB``
 
 Example:
 ::
-    cm.add_callback(CallbackManager.REMOVEPROC_CB,my_function)
+    cm.add_callback(CallbackManager.REMOVEPROC_CB, my_function)
 
-Interface:
+Old-style callback interface:
 ::
-    def my_function(pid,cr3,name): 
+    def my_function(pid, pgd, name): 
         ...
+
+New-style callback parameters:
+::
+    {"pid": ...,
+     "pgd": ...,
+     "name": ...}
 
 Module load
 ***********
@@ -343,10 +447,19 @@ Example:
 ::
     cm.add_callback(CallbackManager.LOADMODULE_CB, my_function, pgd = cpu.CR3)
 
-Callback interface:
+Old-style callback interface:
 ::
     def my_function(pid, pgd, base, size, name, fullname): 
         ...
+
+New-style callback parameters:
+::
+    {"pid": ...,
+     "pgd": ...,
+     "base": ...,
+     "size": ...,
+     "name": ...,
+     "fullname": ...}
 
 Module remove
 *************
@@ -359,10 +472,19 @@ Example:
 ::
     cm.add_callback(CallbackManager.REMOVEMODULE_CB, my_function, pgd = cpu.CR3)
 
-Interface:
+Old-style callback interface:
 ::
     def my_function(pid, pgd, base, size, name, fullname): 
         ...
+
+New-style callback parameters:
+::
+    {"pid": ...,
+     "pgd": ...,
+     "base": ...,
+     "size": ...,
+     "name": ...,
+     "fullname": ...}
 
 
 Triggers
