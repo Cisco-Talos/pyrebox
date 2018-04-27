@@ -490,7 +490,7 @@ def ntreadvirtualmemory(params, pid, proc, update_vads):
     cpu_index = params["cpu_index"]
     cpu = params["cpu"]
 
-    ntwritevirtualmemory(cpu_index, cpu, pid, proc, update_vads, reverse=True)
+    ntwritevirtualmemory(params, pid, proc, update_vads, reverse=True)
 
 
 def ntreadfile(params, pid, proc, update_vads, is_write=False):
@@ -627,7 +627,7 @@ def ntwritefile(params, pid, proc, update_vads):
     cpu_index = params["cpu_index"]
     cpu = params["cpu"]
 
-    ntreadfile(cpu_index, cpu, pid, proc, update_vads, is_write=True)
+    ntreadfile(params, pid, proc, update_vads, is_write=True)
 
 
 def ntmapviewofsection_ret(params,
