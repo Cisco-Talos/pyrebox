@@ -34,7 +34,7 @@ def tlb_exec(params):
     import api
 
     cpu = params["cpu"]
-    addr = params["addr"]
+    addr = params["vaddr"]
 
     pgd = api.get_running_process(cpu.CPU_INDEX)
     pyrebox_print("TLB exec, PGD %x Addr %x\n" % (pgd, addr))

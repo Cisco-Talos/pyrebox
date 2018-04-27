@@ -31,7 +31,7 @@ module_load_remove_pgds = []
 
 module_load_remove_breakpoints = {}
 
-def module_change_callback(pgd, bp_vaddr, bp_haddr, cpu_index, vaddr, size, haddr, data):
+def module_change_callback(pgd, bp_vaddr, bp_haddr, params):
     '''
     Callback function triggered whenever there is a change in the list of linked
     modules for a given process.
@@ -46,6 +46,12 @@ def module_change_callback(pgd, bp_vaddr, bp_haddr, cpu_index, vaddr, size, hadd
     from utils import pp_error
     from vmi import set_modules_non_present
     from vmi import clean_non_present_modules
+
+    cpu_index = params["cpu_index"]
+    vaddr = params["vaddr"]
+    size = params["size"]
+    haddr = params["haddr"]
+    data = params["data"]
 
     # First, we check if the memory address written points to a module
     # that we have already detected (it is in our list of hooking points).
@@ -81,7 +87,8 @@ def module_change_callback(pgd, bp_vaddr, bp_haddr, cpu_index, vaddr, size, hadd
                          None,
                          size = size,
                          typ = BP.MEM_WRITE_PHYS,
-                         func = functools.partial(module_change_callback, pgd, addr, haddr))
+                         func = functools.partial(module_change_callback, pgd, addr, haddr),
+                         new_style = True)
                  module_load_remove_breakpoints[pgd][hp] = bp
                  bp.enable()
     else:
@@ -118,7 +125,8 @@ def add_module_monitoring_hooks(pgd):
                     None, 
                     size = size, 
                     typ = BP.MEM_WRITE_PHYS,
-                    func = functools.partial(module_change_callback, pgd, addr, haddr))
+                    func = functools.partial(module_change_callback, pgd, addr, haddr),
+                    new_style = True)
             module_load_remove_breakpoints[pgd][(module_base, addr, size)] = bp
             bp.enable()
     else:

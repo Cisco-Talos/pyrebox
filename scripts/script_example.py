@@ -198,7 +198,7 @@ def do_copy_execute(line):
     pyrebox_print("Waiting for process %s to start\n" % target_procname)
 
 
-def context_change(target_pgd, target_mod_name, old_pgd, new_pgd):
+def context_change(target_pgd, target_mod_name, params):
     '''Callback triggered for every context change
         :param target_pgd: This parameter is inserted using functools.partial (see callback registration)
         :param target_mod_name: This parameter is inserted using functools.partial (see callback registration)
@@ -206,6 +206,8 @@ def context_change(target_pgd, target_mod_name, old_pgd, new_pgd):
         :param new_pgd: This is the second parameter of the callback
     '''
     global cm
+    old_pgd = params["old_pgd"]
+    new_pgd = params["new_pgd"]
     if target_pgd == new_pgd:
         ep = find_ep(target_pgd, target_mod_name)
         if ep is not None:

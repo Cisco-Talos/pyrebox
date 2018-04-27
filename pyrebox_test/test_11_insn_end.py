@@ -28,7 +28,7 @@ cm = None
 pyrebox_print = None
 
 
-def my_function():
+def my_function(params):
     global cm
     import api
     from ipython_shell import start_shell

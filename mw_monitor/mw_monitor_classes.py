@@ -126,9 +126,17 @@ ntdll_breakpoint = {}
 def is_in_pending_resolution(pgd, address):
     global mods_pending_symbol_resolution
     if pgd in mods_pending_symbol_resolution:
+        m_to_remove = None
         for name,m in mods_pending_symbol_resolution[pgd].iteritems():
             if address >= m['base'] and address < (m['base'] + m['size']):
-                return True
+                m['times'] += 1
+                if m['times'] >= 2:
+                    m_to_remove = name
+                else:
+                    return True
+        if m_to_remove is not None:
+            del mods_pending_symbol_resolution[pgd][name]
+            return True
     return False
 
 def module_loaded(params):
@@ -149,7 +157,7 @@ def module_loaded(params):
         if pid == proc.get_pid():
             if pgd not in mods_pending_symbol_resolution:
                 mods_pending_symbol_resolution[pgd] = {}
-            mods_pending_symbol_resolution[pgd][name] = {'base': base, 'size': size}
+            mods_pending_symbol_resolution[pgd][name] = {'base': base, 'size': size, 'times': 0}
 
             proc.set_module(name, base, size)
 
@@ -176,13 +184,16 @@ def find_ep(proc, proc_name):
         pass
     return None
 
-def ntdll_breakpoint_func(proc, cpu_index, cpu):
+def ntdll_breakpoint_func(proc, params):
     ''' 
         Breakpoint for the first instruction executed in the main module
     '''
     global ntdll_breakpoint
     from mw_monitor_classes import mwmon
     import api
+
+    cpu_index = params["cpu_index"]
+    cpu = params["cpu"]
 
     ntdll_breakpoint[proc.get_pgd()].disable()
     TARGET_LONG_SIZE = api.get_os_bits() / 8
@@ -229,7 +240,8 @@ def context_change(new_proc, target_mod_name, params):
                             ntdll_breakpoint[new_proc.get_pgd()] = BP(base, 
                                                   new_proc.get_pgd(), 
                                                   size = size,
-                                                  func = partial(ntdll_breakpoint_func, new_proc))
+                                                  func = partial(ntdll_breakpoint_func, new_proc),
+                                                  new_style = True)
                             ntdll_breakpoint[new_proc.get_pgd()].enable()
 
             except ValueError as e:

@@ -41,7 +41,7 @@ def mem_write(params):
     global memwrite_breakpoint
 
     cpu_index = params["cpu_index"]
-    addr = params["addr"]
+    addr = params["vaddr"]
     size = params["size"] 
     haddr = params["haddr"]
     data = params["data"]

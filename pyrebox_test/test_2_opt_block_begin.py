@@ -30,12 +30,13 @@ pyrebox_print = None
 
 def optimized_block_begin(params):
     global cm
-    assert(cpu.PC == 0x100218f or cpu.PC == 0xfffff96000139f20)
     import api
 
     cpu_index = params["cpu_index"]
     cpu = params["cpu"]
     tb = params["tb"]
+
+    assert(cpu.PC == 0x100218f or cpu.PC == 0xfffff96000139f20)
 
     pgd = api.get_running_process(cpu_index)
     pyrebox_print("Process %x hit the callback at %x\n" % (pgd, cpu.PC))

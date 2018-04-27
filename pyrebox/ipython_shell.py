@@ -1389,7 +1389,8 @@ class ShellMagics(Magics):
             addr,
             self.proc_context.get_pgd(),
             size=size,
-            typ=api.BP.EXECUTION)
+            typ=api.BP.EXECUTION,
+            new_style = True)
         self.bps[last_bp].enable()
 
     @line_magic
@@ -1424,7 +1425,8 @@ class ShellMagics(Magics):
             addr,
             self.proc_context.get_pgd(),
             size=size,
-            typ=api.BP.MEM_WRITE)
+            typ=api.BP.MEM_WRITE,
+            new_style = True)
         self.bps[last_bp].enable()
 
     @line_magic
@@ -1459,7 +1461,8 @@ class ShellMagics(Magics):
             addr,
             self.proc_context.get_pgd(),
             size=size,
-            typ=api.BP.MEM_READ)
+            typ=api.BP.MEM_READ,
+            new_style = True)
         self.bps[last_bp].enable()
 
     @line_magic
