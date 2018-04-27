@@ -41,6 +41,7 @@ What's new
 Remember to pull the latest version of PyREBox in order to enjoy its latest features. PyREBox is under
 active development and new cool features are yet to come!
 
+- [Apr 28, 2018] Created a development branch for new and potentially unstable features in PyREBox.
 - [Apr 13, 2018] Presented PyREBox at HITB Amsterdam (CommSec track).
 - [Apr 13, 2018] Added malware monitoring scripts (mw_mon).
 - [Mar 08, 2018] **Triggers are now called for every process in the system (not only monitored processes). See documentation**
