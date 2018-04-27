@@ -15,6 +15,7 @@ DEF_HELPER_1(qemu_insn_begin_callback, void, ptr)
 DEF_HELPER_1(qemu_insn_end_callback, void, ptr)
 //void qemu_opcode_range_callback(CPUState* cpu, target_ulong from, target_ulong to, uint32_t opcode);
 DEF_HELPER_4(qemu_opcode_range_callback, void, ptr,tl,tl,i32)
+DEF_HELPER_1(qemu_trigger_cpu_loop_exit_if_needed, void, ptr)
 
 DEF_HELPER_3(write_eflags, void, env, tl, i32)
 DEF_HELPER_1(read_eflags, tl, env)

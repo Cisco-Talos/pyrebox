@@ -40,6 +40,8 @@ void helper_qemu_insn_end_callback(CPUState* cpu);
 
 void helper_qemu_opcode_range_callback(CPUState* cpu, target_ulong from, target_ulong to, uint32_t opcode);
 
+void helper_qemu_trigger_cpu_loop_exit_if_needed(CPUState* cpu);
+
 //Emulation time
 //Always needed
 void notify_cpu_executing(CPUState* cpu);

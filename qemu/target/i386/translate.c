@@ -2259,6 +2259,11 @@ static inline void gen_goto_tb(DisasContext *s, int tb_num, target_ulong eip)
             tcg_temp_free_ptr(tcg_cpu);
         }
 
+        //Pyrebox: trigger cpu loop exit if needed
+        TCGv_ptr tcg_cpu = tcg_const_ptr((tcg_target_ulong)s->cs);
+        gen_helper_qemu_trigger_cpu_loop_exit_if_needed(tcg_cpu);
+        tcg_temp_free_ptr(tcg_cpu);
+
         tcg_gen_exit_tb((uintptr_t)s->base.tb + tb_num);
         s->base.is_jmp = DISAS_NORETURN;
     } else {
@@ -2556,6 +2561,11 @@ static void gen_illegal_opcode(DisasContext *s)
         tcg_temp_free_i32(tcg_opcode);
         tcg_temp_free_ptr(tcg_cpu);
     }
+    //Pyrebox: trigger cpu loop exit if needed
+    TCGv_ptr tcg_cpu = tcg_const_ptr((tcg_target_ulong)s->cs);
+    gen_helper_qemu_trigger_cpu_loop_exit_if_needed(tcg_cpu);
+    tcg_temp_free_ptr(tcg_cpu);
+
     gen_exception(s, EXCP06_ILLOP, s->pc_start - s->cs_base);
 }
 
@@ -2702,6 +2712,11 @@ do_gen_eob_worker(DisasContext *s, bool inhibit, bool recheck_tf, bool jr, TCGv 
             tcg_temp_free_ptr(tcg_cpu);
         }
 
+        //Pyrebox: trigger cpu loop exit if needed
+        TCGv_ptr tcg_cpu = tcg_const_ptr((tcg_target_ulong)s->cs);
+        gen_helper_qemu_trigger_cpu_loop_exit_if_needed(tcg_cpu);
+        tcg_temp_free_ptr(tcg_cpu);
+
 
         tcg_gen_lookup_and_goto_ptr();
     } else {
@@ -2742,6 +2757,11 @@ do_gen_eob_worker(DisasContext *s, bool inhibit, bool recheck_tf, bool jr, TCGv 
             tcg_temp_free_i32(tcg_opcode);
             tcg_temp_free_ptr(tcg_cpu);
         }
+
+        //Pyrebox: trigger cpu loop exit if needed
+        TCGv_ptr tcg_cpu = tcg_const_ptr((tcg_target_ulong)s->cs);
+        gen_helper_qemu_trigger_cpu_loop_exit_if_needed(tcg_cpu);
+        tcg_temp_free_ptr(tcg_cpu);
 
         tcg_gen_exit_tb(0);
     }
@@ -7204,6 +7224,11 @@ static target_ulong disas_insn(DisasContext *s, CPUState *cpu)
             tcg_temp_free_ptr(tcg_cpu);
         }
 
+        //Pyrebox: trigger cpu loop exit if needed
+        TCGv_ptr tcg_cpu = tcg_const_ptr((tcg_target_ulong)s->cs);
+        gen_helper_qemu_trigger_cpu_loop_exit_if_needed(tcg_cpu);
+        tcg_temp_free_ptr(tcg_cpu);
+
         gen_interrupt(s, EXCP03_INT3, pc_start - s->cs_base, s->pc - s->cs_base);
         break;
     case 0xcd: /* int N */
@@ -7226,6 +7251,11 @@ static target_ulong disas_insn(DisasContext *s, CPUState *cpu)
             tcg_temp_free_i32(tcg_opcode);
             tcg_temp_free_ptr(tcg_cpu);
         }
+
+        //Pyrebox: trigger cpu loop exit if needed
+        tcg_cpu = tcg_const_ptr((tcg_target_ulong)s->cs);
+        gen_helper_qemu_trigger_cpu_loop_exit_if_needed(tcg_cpu);
+        tcg_temp_free_ptr(tcg_cpu);
 
         if (s->vm86 && s->iopl != 3) {
             gen_exception(s, EXCP0D_GPF, pc_start - s->cs_base);
@@ -8647,6 +8677,11 @@ static target_ulong disas_insn(DisasContext *s, CPUState *cpu)
             tcg_temp_free_ptr(tcg_cpu);
 
         }
+
+        //Pyrebox: trigger cpu loop exit if needed
+        TCGv_ptr tcg_cpu = tcg_const_ptr((tcg_target_ulong)s->cs);
+        gen_helper_qemu_trigger_cpu_loop_exit_if_needed(tcg_cpu);
+        tcg_temp_free_ptr(tcg_cpu);
     }
 
     return s->pc;

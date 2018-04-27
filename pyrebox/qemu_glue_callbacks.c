@@ -63,10 +63,6 @@ void qemu_tlb_exec_callback(CPUState* cpu, target_ulong vaddr){
     params.tlb_exec_params.vaddr = (pyrebox_target_ulong) vaddr;
     //Call pyrebox callback
     tlb_exec_callback(params); 
-    if (is_cpu_loop_exit_needed()) {
-        cpu->exception_index = EXCP_INTERRUPT;
-        cpu_loop_exit(cpu);
-    }
 }
 
 void notify_cpu_executing(CPUState* cpu){
@@ -102,10 +98,6 @@ void helper_qemu_block_begin_callback(CPUState* cpu,TranslationBlock* tb){
     params.block_begin_params.tb = (qemu_tb_opaque_t) tb;
     params.block_begin_params.cpu = (qemu_cpu_opaque_t) cpu;
     block_begin_callback(params);
-    if (is_cpu_loop_exit_needed()) {
-        cpu->exception_index = EXCP_INTERRUPT;
-        cpu_loop_exit(cpu);
-    }
 }
 void helper_qemu_block_end_callback(CPUState* cpu,TranslationBlock* tb, target_ulong from, target_ulong to){
     callback_params_t params;
@@ -122,10 +114,6 @@ void helper_qemu_block_end_callback(CPUState* cpu,TranslationBlock* tb, target_u
     params.block_end_params.cur_pc = from;
     params.block_end_params.next_pc = to;
     block_end_callback(params);
-    if (is_cpu_loop_exit_needed()) {
-        cpu->exception_index = EXCP_INTERRUPT;
-        cpu_loop_exit(cpu);
-    }
 }
 
 void helper_qemu_insn_begin_callback(CPUState* cpu){
@@ -140,10 +128,6 @@ void helper_qemu_insn_begin_callback(CPUState* cpu){
 #endif
     params.insn_begin_params.cpu = (qemu_cpu_opaque_t) cpu;
     insn_begin_callback(params);
-    if (is_cpu_loop_exit_needed()) {
-        cpu->exception_index = EXCP_INTERRUPT;
-        cpu_loop_exit(cpu);
-    }
 }
 
 void helper_qemu_insn_end_callback(CPUState* cpu){
@@ -158,10 +142,6 @@ void helper_qemu_insn_end_callback(CPUState* cpu){
 #endif
     params.insn_end_params.cpu = (qemu_cpu_opaque_t) cpu;
     insn_end_callback(params);
-    if (is_cpu_loop_exit_needed()) {
-        cpu->exception_index = EXCP_INTERRUPT;
-        cpu_loop_exit(cpu);
-    }
 }
 
 void helper_qemu_opcode_range_callback(CPUState* cpu, target_ulong from, target_ulong to, uint32_t opcode){
@@ -180,10 +160,6 @@ void helper_qemu_opcode_range_callback(CPUState* cpu, target_ulong from, target_
     params.opcode_range_params.opcode = opcode;
 
     opcode_range_callback(params);
-    if (is_cpu_loop_exit_needed()) {
-        cpu->exception_index = EXCP_INTERRUPT;
-        cpu_loop_exit(cpu);
-    }
 }
 
 void helper_qemu_mem_read_callback(CPUState* cpu, target_ulong vaddr, uintptr_t haddr, target_ulong size){
@@ -201,10 +177,6 @@ void helper_qemu_mem_read_callback(CPUState* cpu, target_ulong vaddr, uintptr_t 
     params.mem_read_params.haddr = haddr;
     params.mem_read_params.size = size;
     mem_read_callback(params);
-    if (is_cpu_loop_exit_needed()) {
-        cpu->exception_index = EXCP_INTERRUPT;
-        cpu_loop_exit(cpu);
-    }
 }
 
 void helper_qemu_mem_write_callback(CPUState* cpu, target_ulong vaddr, uintptr_t haddr, target_ulong data, target_ulong size){
@@ -224,20 +196,12 @@ void helper_qemu_mem_write_callback(CPUState* cpu, target_ulong vaddr, uintptr_t
     params.mem_write_params.data = data;
 
     mem_write_callback(params);
-    if (is_cpu_loop_exit_needed()) {
-        cpu->exception_index = EXCP_INTERRUPT;
-        cpu_loop_exit(cpu);
-    }
 }
 
 void qemu_keystroke_callback(unsigned int keycode){
     callback_params_t params;
     params.keystroke_params.keycode = keycode;
     keystroke_callback(params);
-    if (is_cpu_loop_exit_needed()) {
-        current_cpu->exception_index = EXCP_INTERRUPT;
-        cpu_loop_exit(current_cpu);
-    }
 }
 
 void qemu_nic_rec_callback(unsigned char* buf, uint64_t size, uint64_t cur_pos, uint64_t start, uint64_t stop) {
@@ -248,10 +212,6 @@ void qemu_nic_rec_callback(unsigned char* buf, uint64_t size, uint64_t cur_pos, 
     params.nic_rec_params.start = start;
     params.nic_rec_params.stop = stop;
     nic_rec_callback(params);
-    if (is_cpu_loop_exit_needed()) {
-        current_cpu->exception_index = EXCP_INTERRUPT;
-        cpu_loop_exit(current_cpu);
-    }
 }
 
 void qemu_nic_send_callback(unsigned char* buf, uint64_t size, uint64_t address){
@@ -260,11 +220,15 @@ void qemu_nic_send_callback(unsigned char* buf, uint64_t size, uint64_t address)
     params.nic_send_params.size = size;
     params.nic_send_params.address = address;
     nic_send_callback(params);
+}
+
+void helper_qemu_trigger_cpu_loop_exit_if_needed(CPUState* cpu){
     if (is_cpu_loop_exit_needed()) {
-        current_cpu->exception_index = EXCP_INTERRUPT;
-        cpu_loop_exit(current_cpu);
+        cpu->exception_index = EXCP_INTERRUPT;
+        cpu_loop_exit(cpu);
     }
 }
+
 
 int is_opcode_range_callback_needed(target_ulong start_opcode, target_ulong pgd){
     return is_callback_needed(OPCODE_RANGE_CB, start_opcode, pgd);
@@ -315,6 +279,12 @@ int is_tb_flush_needed(void){
 
 void pyrebox_flush_tb(void){
     flush_needed = 1;    
+    // Exit the CPU loop too,
+    // It could be an address specific
+    // callback for the same translation block,
+    // which will execute until the end before
+    // it is flushed and translated again.
+    cpu_loop_exit_needed = 1;
 }
 
 int is_cpu_loop_exit_needed(void){
