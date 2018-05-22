@@ -2221,6 +2221,8 @@ static inline void gen_goto_tb(DisasContext *s, int tb_num, target_ulong eip)
         //At this point, we take the pgd from the DisasContext, 
         //because we previously saved it
         if (is_insn_end_callback_needed(s->pgd)){
+            //Update flags before callback
+            gen_update_cc_op(s);
             TCGv_ptr tcg_cpu = tcg_const_ptr((tcg_target_ulong)s->cs);
             gen_helper_qemu_insn_end_callback(tcg_cpu);
             tcg_temp_free_ptr(tcg_cpu);
@@ -2228,6 +2230,8 @@ static inline void gen_goto_tb(DisasContext *s, int tb_num, target_ulong eip)
         //Pyrebox: block_end
         //helper_qemu_block_end_callback(CPUState* cpu,TranslationBlock* next_tb, target_ulong from,target_ulong to)
         if (is_block_end_callback_needed(s->pgd)){
+            //Update flags before callback
+            gen_update_cc_op(s);
             TCGv_ptr tcg_tb = tcg_const_ptr((tcg_target_ulong)s->base.tb);
             TCGv tcg_from = tcg_temp_new();
             tcg_gen_movi_tl(tcg_from, s->saved_pc);
@@ -2244,6 +2248,8 @@ static inline void gen_goto_tb(DisasContext *s, int tb_num, target_ulong eip)
         //helper_qemu_opcode_range_callback(CPUState* cpu, target_ulong from, target_ulong to, uint16_t opcode)
         
         if (is_opcode_range_callback_needed((target_ulong)s->saved_opcode,s->pgd)){
+            //Update flags before callback
+            gen_update_cc_op(s);
             //CPU points to the next instruction
             TCGv tcg_saved_pc = tcg_temp_new();
             tcg_gen_movi_tl(tcg_saved_pc, s->saved_pc);
@@ -2258,11 +2264,6 @@ static inline void gen_goto_tb(DisasContext *s, int tb_num, target_ulong eip)
             tcg_temp_free_i32(tcg_opcode);
             tcg_temp_free_ptr(tcg_cpu);
         }
-
-        //Pyrebox: trigger cpu loop exit if needed
-        TCGv_ptr tcg_cpu = tcg_const_ptr((tcg_target_ulong)s->cs);
-        gen_helper_qemu_trigger_cpu_loop_exit_if_needed(tcg_cpu);
-        tcg_temp_free_ptr(tcg_cpu);
 
         tcg_gen_exit_tb((uintptr_t)s->base.tb + tb_num);
         s->base.is_jmp = DISAS_NORETURN;
@@ -2547,6 +2548,8 @@ static void gen_illegal_opcode(DisasContext *s)
 {
     //Call opcode range callback before exception for illegal opcode is generated
     if (is_opcode_range_callback_needed((target_ulong)s->saved_opcode,s->pgd)){
+        //Update flags before callback
+        gen_update_cc_op(s);
         //CPU points to the next instruction
         TCGv tcg_saved_pc = tcg_temp_new();
         tcg_gen_movi_tl(tcg_saved_pc, s->saved_pc);
@@ -2562,6 +2565,11 @@ static void gen_illegal_opcode(DisasContext *s)
         tcg_temp_free_ptr(tcg_cpu);
     }
     //Pyrebox: trigger cpu loop exit if needed
+    //Update flags. In QEMU flags are only updated when needed (on block
+    //transitions). But for us to be able to exit a block in the middle
+    //of its execution, we need to update flags as well on every instruction
+    //transition
+    gen_update_cc_op(s);
     TCGv_ptr tcg_cpu = tcg_const_ptr((tcg_target_ulong)s->cs);
     gen_helper_qemu_trigger_cpu_loop_exit_if_needed(tcg_cpu);
     tcg_temp_free_ptr(tcg_cpu);
@@ -2678,6 +2686,8 @@ do_gen_eob_worker(DisasContext *s, bool inhibit, bool recheck_tf, bool jr, TCGv 
         //At this point, we take the pgd from the DisasContext, 
         //because we previously saved it
         if (is_insn_end_callback_needed(s->pgd)){
+            //Update flags before callback
+            gen_update_cc_op(s);
             TCGv_ptr tcg_cpu = tcg_const_ptr((tcg_target_ulong)s->cs);
             gen_helper_qemu_insn_end_callback(tcg_cpu);
             tcg_temp_free_ptr(tcg_cpu);
@@ -2686,6 +2696,8 @@ do_gen_eob_worker(DisasContext *s, bool inhibit, bool recheck_tf, bool jr, TCGv 
         //Pyrebox: block_end
         //helper_qemu_block_end_callback(CPUState* cpu,TranslationBlock* next_tb, target_ulong from)
         if (is_block_end_callback_needed(s->pgd)){
+            //Update flags before callback
+            gen_update_cc_op(s);
             TCGv_ptr tcg_tb = tcg_const_ptr((tcg_target_ulong)s->base.tb);
             TCGv tcg_from = tcg_temp_new();
             tcg_gen_movi_tl(tcg_from, s->saved_pc);
@@ -2700,6 +2712,8 @@ do_gen_eob_worker(DisasContext *s, bool inhibit, bool recheck_tf, bool jr, TCGv 
         //helper_qemu_opcode_range_callback(CPUState* cpu, target_ulong from, target_ulong to, uint16_t opcode)
         
         if (is_opcode_range_callback_needed((target_ulong)s->saved_opcode, s->pgd)){
+            //Update flags before callback
+            gen_update_cc_op(s);
             //CPU points to next instruction
             TCGv tcg_saved_pc = tcg_temp_new();
             tcg_gen_movi_tl(tcg_saved_pc, s->saved_pc);
@@ -2713,10 +2727,14 @@ do_gen_eob_worker(DisasContext *s, bool inhibit, bool recheck_tf, bool jr, TCGv 
         }
 
         //Pyrebox: trigger cpu loop exit if needed
+        //Update flags. In QEMU flags are only updated when needed (on block
+        //transitions). But for us to be able to exit a block in the middle
+        //of its execution, we need to update flags as well on every instruction
+        //transition
+        gen_update_cc_op(s);
         TCGv_ptr tcg_cpu = tcg_const_ptr((tcg_target_ulong)s->cs);
         gen_helper_qemu_trigger_cpu_loop_exit_if_needed(tcg_cpu);
         tcg_temp_free_ptr(tcg_cpu);
-
 
         tcg_gen_lookup_and_goto_ptr();
     } else {
@@ -2726,6 +2744,8 @@ do_gen_eob_worker(DisasContext *s, bool inhibit, bool recheck_tf, bool jr, TCGv 
         //At this point, we take the pgd from the DisasContext, 
         //because we previously saved it
         if (is_insn_end_callback_needed(s->pgd)){
+            //Update flags before callback
+            gen_update_cc_op(s);
             TCGv_ptr tcg_cpu = tcg_const_ptr((tcg_target_ulong)s->cs);
             gen_helper_qemu_insn_end_callback(tcg_cpu);
             tcg_temp_free_ptr(tcg_cpu);
@@ -2733,6 +2753,8 @@ do_gen_eob_worker(DisasContext *s, bool inhibit, bool recheck_tf, bool jr, TCGv 
         //Pyrebox: block_end
         //helper_qemu_block_end_callback(CPUState* cpu,TranslationBlock* next_tb, target_ulong from)
         if (is_block_end_callback_needed(s->pgd)){
+            //Update flags before callback
+            gen_update_cc_op(s);
             TCGv_ptr tcg_tb = tcg_const_ptr((tcg_target_ulong)s->base.tb);
             TCGv tcg_from = tcg_temp_new();
             tcg_gen_movi_tl(tcg_from, s->saved_pc);
@@ -2746,6 +2768,8 @@ do_gen_eob_worker(DisasContext *s, bool inhibit, bool recheck_tf, bool jr, TCGv 
         //helper_qemu_opcode_range_callback(CPUState* cpu, target_ulong from, target_ulong to, uint16_t opcode)
         
         if (is_opcode_range_callback_needed((target_ulong)s->saved_opcode,s->pgd)){
+            //Update flags before callback
+            gen_update_cc_op(s);
             //CPU points to next instruction
             TCGv tcg_saved_pc = tcg_temp_new();
             tcg_gen_movi_tl(tcg_saved_pc, s->saved_pc);
@@ -2757,11 +2781,6 @@ do_gen_eob_worker(DisasContext *s, bool inhibit, bool recheck_tf, bool jr, TCGv 
             tcg_temp_free_i32(tcg_opcode);
             tcg_temp_free_ptr(tcg_cpu);
         }
-
-        //Pyrebox: trigger cpu loop exit if needed
-        TCGv_ptr tcg_cpu = tcg_const_ptr((tcg_target_ulong)s->cs);
-        gen_helper_qemu_trigger_cpu_loop_exit_if_needed(tcg_cpu);
-        tcg_temp_free_ptr(tcg_cpu);
 
         tcg_gen_exit_tb(0);
     }
@@ -7210,6 +7229,8 @@ static target_ulong disas_insn(DisasContext *s, CPUState *cpu)
         //so whatever we insert after that will never be executed.
         
         if (is_opcode_range_callback_needed((target_ulong)s->saved_opcode,s->pgd)){
+            //Update flags before callback
+            gen_update_cc_op(s);
             TCGv tcg_saved_pc = tcg_temp_new();
             tcg_gen_movi_tl(tcg_saved_pc, s->saved_pc);
             TCGv tcg_next_pc = tcg_temp_new();
@@ -7225,6 +7246,11 @@ static target_ulong disas_insn(DisasContext *s, CPUState *cpu)
         }
 
         //Pyrebox: trigger cpu loop exit if needed
+        //Update flags. In QEMU flags are only updated when needed (on block
+        //transitions). But for us to be able to exit a block in the middle
+        //of its execution, we need to update flags as well on every instruction
+        //transition
+        gen_update_cc_op(s);
         TCGv_ptr tcg_cpu = tcg_const_ptr((tcg_target_ulong)s->cs);
         gen_helper_qemu_trigger_cpu_loop_exit_if_needed(tcg_cpu);
         tcg_temp_free_ptr(tcg_cpu);
@@ -7238,6 +7264,8 @@ static target_ulong disas_insn(DisasContext *s, CPUState *cpu)
         //so whatever we insert after that will never be executed.
         
         if (is_opcode_range_callback_needed((target_ulong)s->saved_opcode,s->pgd)){
+            //Update flags before callback
+            gen_update_cc_op(s);
             TCGv tcg_saved_pc = tcg_temp_new();
             tcg_gen_movi_tl(tcg_saved_pc, s->saved_pc);
             TCGv tcg_next_pc = tcg_temp_new();
@@ -7253,6 +7281,11 @@ static target_ulong disas_insn(DisasContext *s, CPUState *cpu)
         }
 
         //Pyrebox: trigger cpu loop exit if needed
+        //Update flags. In QEMU flags are only updated when needed (on block
+        //transitions). But for us to be able to exit a block in the middle
+        //of its execution, we need to update flags as well on every instruction
+        //transition
+        gen_update_cc_op(s);
         tcg_cpu = tcg_const_ptr((tcg_target_ulong)s->cs);
         gen_helper_qemu_trigger_cpu_loop_exit_if_needed(tcg_cpu);
         tcg_temp_free_ptr(tcg_cpu);
@@ -8655,6 +8688,8 @@ static target_ulong disas_insn(DisasContext *s, CPUState *cpu)
         //At this point, we take the pgd from the DisasContext, 
         //because we previously saved it
         if (is_insn_end_callback_needed(s->pgd)){
+            //Update flags before callback
+            gen_update_cc_op(s);
             TCGv_ptr tcg_cpu = tcg_const_ptr((tcg_target_ulong)s->cs);
             gen_helper_qemu_insn_end_callback(tcg_cpu);
             tcg_temp_free_ptr(tcg_cpu);
@@ -8663,6 +8698,8 @@ static target_ulong disas_insn(DisasContext *s, CPUState *cpu)
         //helper_qemu_opcode_range_callback(CPUState* cpu, target_ulong from, target_ulong to, uint16_t opcode)
         
         if (is_opcode_range_callback_needed((target_ulong)s->saved_opcode,s->pgd)){
+            //Update flags before callback
+            gen_update_cc_op(s);
             TCGv tcg_saved_pc = tcg_temp_new();
             tcg_gen_movi_tl(tcg_saved_pc, s->saved_pc);
             TCGv tcg_next_pc = tcg_temp_new();
@@ -8679,6 +8716,11 @@ static target_ulong disas_insn(DisasContext *s, CPUState *cpu)
         }
 
         //Pyrebox: trigger cpu loop exit if needed
+        //Update flags. In QEMU flags are only updated when needed (on block
+        //transitions). But for us to be able to exit a block in the middle
+        //of its execution, we need to update flags as well on every instruction
+        //transition
+        gen_update_cc_op(s);
         TCGv_ptr tcg_cpu = tcg_const_ptr((tcg_target_ulong)s->cs);
         gen_helper_qemu_trigger_cpu_loop_exit_if_needed(tcg_cpu);
         tcg_temp_free_ptr(tcg_cpu);
