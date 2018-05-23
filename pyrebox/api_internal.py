@@ -523,3 +523,18 @@ def get_trigger_var(handle, name):
     """
     import c_api
     return c_api.get_trigger_var(handle, name)
+
+def call_trigger_function(handle, function_name):
+    """ Call a declared function from a trigger.
+
+        :param handle: Handle of the callback with the trigger.
+        :type handle: int
+
+        :param name: Name of the function
+        :type name: str
+
+        :return: None
+        :rtype: None
+    """
+    import c_api
+    return c_api.call_trigger_function(handle, function_name)

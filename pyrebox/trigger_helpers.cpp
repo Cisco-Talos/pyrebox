@@ -35,6 +35,7 @@ extern "C"{
 using namespace std;
 
 map<callback_handle_t,map<string,void*> > trigger_vars;
+map<callback_handle_t,map<string,function_t> > trigger_functions;
 
 extern "C"{
 
@@ -99,6 +100,33 @@ void delete_var(callback_handle_t handle, const char* key_str, int bool_free){
             free(trigger_vars[handle][key]);
         }
         trigger_vars[handle].erase(key);
+    }
+}
+
+void declare_function(callback_handle_t handle, const char* function_name, function_t function){
+    map<callback_handle_t, map<string,function_t> >::iterator it1 =  trigger_functions.find(handle);
+    if (it1 == trigger_functions.end())
+    {
+        trigger_functions[handle] = map<string, function_t>();
+    }
+    string key(function_name);
+    if (trigger_functions[handle].find(key) != trigger_functions[handle].end())
+    {
+        trigger_functions[handle].erase(key);
+    }
+    trigger_functions[handle][key] = function;
+}
+
+void call_function(callback_handle_t handle, const char* function_name){
+    map<callback_handle_t, map<string, function_t> >::iterator it1 = trigger_functions.find(handle); 
+    if (it1 != trigger_functions.end())
+    {
+        string key(function_name);
+        if (it1->second.find(key) != it1->second.end())
+        {
+            function_t func = (function_t) it1->second[key];
+            func(handle);
+        }
     }
 }
 

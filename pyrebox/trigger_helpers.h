@@ -29,10 +29,17 @@ extern std::map<callback_handle_t,std::map<std::string,void*> > trigger_vars;
 extern "C" {
 #endif
 
+// Type for a function name that can be called from Python
+typedef void (*function_t)(callback_handle_t);
+
 void erase_trigger_vars(callback_handle_t handle);
 void* get_var(callback_handle_t handle, const char* key_str);
 void set_var(callback_handle_t handle, const char* key_str,void* val);
 void delete_var(callback_handle_t handle, const char* key_str,int bool_free);
+
+// Declare a function name that can be triggered from Python
+void declare_function(callback_handle_t handle, const char* function_name, function_t function);
+void call_function(callback_handle_t handle, const char* function_name);
 
 #ifdef __cplusplus
 };

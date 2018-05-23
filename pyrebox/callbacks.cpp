@@ -105,7 +105,12 @@ void* get_trigger_var(callback_handle_t callback_handle,const char* var){
     }
     return 0;
 }
-
+void* call_trigger_function(callback_handle_t callback_handle, const char* function_name){
+    if (cb_manager != 0) {
+        return cb_manager->call_trigger_function(callback_handle, function_name);
+    }
+    return 0;
+}
 void remove_callback_deferred(callback_handle_t handle){
     if (cb_manager != 0) {
         cb_manager->remove_callback_deferred(handle);
@@ -372,6 +377,47 @@ void* CallbackManager::get_trigger_var(callback_handle_t callback_handle,const c
     }
     //Call the function
     return func(callback_handle,var);
+}
+
+void* CallbackManager::call_trigger_function(callback_handle_t callback_handle, const char* function_name){
+    multiset<Callback*,CompareCallbackP>::iterator it;
+    int i;
+    int found = 0;
+    for (i = 0; found == 0 && i<LAST_CB;i++)
+    {
+        for (it = this->callbacks[i].begin();it!=this->callbacks[i].end();++it)
+        {
+            if ((*it)->get_handle() == callback_handle)
+            {
+                found = 1;
+                break;
+            }
+        }
+        if (found == 1){
+            //Break to avoid incrementing i
+            break;
+        }
+    }
+    if (found == 0)
+    {
+        utils_print_error("[!] Could not get trigger on unregistered callback handle %x\n",callback_handle);
+        return 0;
+    }
+    //iterator points to the callback.
+    //We first fetch the set_var method from the plugin.
+    if ((*it)->get_dll_handle() == 0)
+    {
+        utils_print_error("[!] Cannot call function on unloaded trigger\n");
+        return 0;
+    }
+    call_function_t func = (call_function_t)dlsym((*it)->get_dll_handle(),"call_function");
+    if (func == 0)
+    {
+        utils_print_error("[!] Could not fetch call_function function from plugin\n");
+        return 0;
+    }
+    //Call the function
+    return func(callback_handle, function_name);
 }
 
 void CallbackManager::add_trigger(callback_handle_t callback_handle,char* trigger_path){

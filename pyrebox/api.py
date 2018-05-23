@@ -39,6 +39,7 @@ from api_internal import set_trigger_uint32
 from api_internal import set_trigger_uint64
 from api_internal import set_trigger_str
 from api_internal import get_trigger_var
+from api_internal import call_trigger_function
 from api_internal import unregister_module_load_callback
 from api_internal import unregister_module_remove_callback
 from api_internal import register_module_load_callback
@@ -1122,6 +1123,26 @@ class CallbackManager:
                 (name))
             return
         return get_trigger_var(self.callbacks[name], var_name)
+
+    def call_trigger_function(self, name, function_name):
+        '''
+        Call a trigger function associated to callback (name) with function name function_name
+
+            :param name: The callback name
+            :type name: str
+
+            :param function_name: The function name
+            :type function_name: str
+
+            :return: The value, if it exists, None otherwise
+            :rtype: str or int
+        '''
+        if name not in self.callbacks:
+            raise ValueError(
+                "[!] CallbackManager: A callback with name %s does not exist, or it is a module callback (non-trigger compatible)\n" %
+                (name))
+            return
+        return call_trigger_function(self.callbacks[name], function_name)
 
     def clean(self):
         """ Clean all the inserted callbacks.

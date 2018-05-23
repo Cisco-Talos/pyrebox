@@ -685,6 +685,21 @@ PyObject* py_get_trigger_var(PyObject *dummy, PyObject *args){
     }
 }
 
+PyObject* py_call_trigger_function(PyObject *dummy, PyObject *args){
+    int handle;
+    char* str;
+    int length;
+    if (PyArg_ParseTuple(args, "Is#",&handle,&str,&length)){
+        call_trigger_function(handle,str);
+        Py_INCREF(Py_None);
+        return Py_None;
+    }
+    else{
+        PyErr_SetString(PyExc_ValueError, "Incorrect parameters passed to call_trigger_function");
+        return 0;
+    }
+}
+
 PyObject* py_vol_get_memory_size(PyObject *dummy, PyObject *args){
     uint64_t size = get_memory_size();
     PyObject *result = Py_BuildValue("K",size);
@@ -1006,6 +1021,7 @@ PyMethodDef api_methods[] = {
       {"set_trigger_uint64",set_trigger_uint64, METH_VARARGS, "set_trigger_uint64"},
       {"set_trigger_str",set_trigger_str, METH_VARARGS, "set_trigger_str"},
       {"get_trigger_var",py_get_trigger_var, METH_VARARGS, "get_trigger_var"},
+      {"call_trigger_function",py_call_trigger_function, METH_VARARGS, "call_trigger_function"},
       {"vol_get_memory_size",py_vol_get_memory_size, METH_VARARGS, "vol_get_memory_size"},
       {"vol_read_memory",py_vol_read_memory, METH_VARARGS, "vol_read_memory"},
       {"vol_write_memory",py_vol_write_memory, METH_VARARGS, "vol_write_memory"},

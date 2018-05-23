@@ -36,17 +36,34 @@ extern "C"{
 
 extern "C"{
     std::unordered_set<pyrebox_target_ulong> page_status;
+    int function_declared = 0;
+    pyrebox_target_ulong* begin;
+    pyrebox_target_ulong* end;
+    pyrebox_target_ulong* pgd;
+
+    void erase_vars(callback_handle_t handle){
+        begin = (pyrebox_target_ulong*) get_var(handle,"begin");
+        end = (pyrebox_target_ulong*) get_var(handle,"end");
+        pgd = (pyrebox_target_ulong*) get_var(handle,"pgd");
+        page_status.clear();
+    }
     //Define trigger type. This type is checked when trigger is loaded
     callback_type_t get_type(){
         return MEM_WRITE_CB;
     }
     //Trigger, return 1 if event should be passed to python callback 
     int trigger(callback_handle_t handle, callback_params_t params){
-        pyrebox_target_ulong* begin = (pyrebox_target_ulong*) get_var(handle,"begin");
-        pyrebox_target_ulong* end = (pyrebox_target_ulong*) get_var(handle,"end");
-        pyrebox_target_ulong* pgd = (pyrebox_target_ulong*) get_var(handle,"pgd");
+        if (function_declared == 0){
+            begin = (pyrebox_target_ulong*) get_var(handle,"begin");
+            end = (pyrebox_target_ulong*) get_var(handle,"end");
+            pgd = (pyrebox_target_ulong*) get_var(handle,"pgd");
+
+            declare_function(handle, "erase_vars", erase_vars);
+            function_declared = 1;
+        }
 
         int status = 0;
+
         pyrebox_target_ulong vaddr = params.mem_write_params.vaddr;
         pyrebox_target_ulong page_mask = (((pyrebox_target_ulong) -1) - 0xFFF);
 

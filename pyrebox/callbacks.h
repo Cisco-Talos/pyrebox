@@ -195,6 +195,7 @@ typedef int (*trigger_get_type_t)(void);
 typedef void (*trigger_clean_t)(callback_handle_t);
 typedef void* (*get_var_t)(callback_handle_t,const char*);
 typedef void (*set_var_t)(callback_handle_t,const char*,void*);
+typedef void* (*call_function_t)(callback_handle_t, const char*);
 
 typedef struct memory_address{
     pyrebox_target_ulong address;
@@ -222,6 +223,7 @@ void add_trigger(callback_handle_t callback_handle, char* trigger_path);
 void remove_trigger(callback_handle_t callback_handle);
 void set_trigger_var(callback_handle_t callback_handle, const char* var, void* val);
 void* get_trigger_var(callback_handle_t callback_handle, const char* var);
+void* call_trigger_function(callback_handle_t callback_handle, const char* function_name);
 void InitCallbacks(void);
 void FinalizeCallbacks(void);
 
@@ -372,6 +374,7 @@ class CallbackManager
             void remove_trigger(callback_handle_t callback_handle);
             void set_trigger_var(callback_handle_t callback_handle,const char* var,void* val);
             void* get_trigger_var(callback_handle_t callback_handle,const char* var);
+            void* call_trigger_function(callback_handle_t callback_handle, const char* function_name);
             int is_callback_needed(callback_type_t callback_type, pyrebox_target_ulong address, pyrebox_target_ulong pgd);
         protected:
         private:
