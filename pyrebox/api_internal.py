@@ -251,26 +251,34 @@ def dispatch_module_load_callback(pid, pgd, base, size, name, fullname):
     Internal function. Dispatch all module load callbacks.
     '''
     if pgd in module_load_callbacks:
-        for cn in module_load_callbacks[pgd]:
-            module_load_callbacks[pgd][cn](pid = pid, 
-                                           pgd = pgd, 
-                                           base = base, 
-                                           size = size, 
-                                           name = name, 
-                                           fullname = fullname)
+        cns = module_load_callbacks[pgd].keys()
+        for cn in cns:
+            # We iterate like this because the list/dictionary can change as
+            # a result of a callback being called
+            if pgd in module_load_callbacks and cn in module_load_callbacks[pgd]:
+                module_load_callbacks[pgd][cn](pid = pid, 
+                                               pgd = pgd, 
+                                               base = base, 
+                                               size = size, 
+                                               name = name, 
+                                               fullname = fullname)
 
 def dispatch_module_remove_callback(pid, pgd, base, size, name, fullname):
     '''
     Internal function. Dispatch all module remove callbacks.
     '''
     if pgd in module_remove_callbacks:
-        for cn in module_remove_callbacks[pgd]:
-            module_remove_callbacks[pgd][cn](pid = pid, 
-                                             pgd = pgd, 
-                                             base = base, 
-                                             size = size, 
-                                             name = name, 
-                                             fullname = fullname)
+        cns = module_remove_callbacks[pgd].keys()
+        for cn in cns:
+            # We iterate like this because the list/dictionary can change as
+            # a result of a callback being called
+            if pgd in module_remove_callbacks and cn in module_remove_callbacks[pgd]:
+                module_remove_callbacks[pgd][cn](pid = pid, 
+                                                 pgd = pgd, 
+                                                 base = base, 
+                                                 size = size, 
+                                                 name = name, 
+                                                 fullname = fullname)
 
 def convert_x86_cpu(args):
     '''
