@@ -87,7 +87,21 @@ PyObject* register_callback(PyObject *dummy, PyObject *args){
         {
             //First parameter(address) is the start_opcode
             //Second parameter(pgd) is the end_opcode
-            hdl = add_callback_at(casted_callback_type,module_handle,py_callback,(first_param & 0xFFFF),(second_param & 0xFFFF));
+            
+            //Translate extended opcodes to what QEMU understands in the translation switch (see target/i386/translate.c
+            //: "reswitch")
+            if ((first_param & 0xFF00) == 0x0F00){
+                first_param = 0x0100 | (0x00FF & first_param);
+            } else {
+                first_param &= 0xFFFF;
+            }
+            if ((second_param & 0xFF00) == 0x0F00){
+                second_param = 0x0100 | (0x00FF & second_param);
+            } else {
+                second_param &= 0xFFFF;
+            }
+
+            hdl = add_callback_at(casted_callback_type,module_handle,py_callback,first_param,second_param);
         }
         //Rewrite callback type appropriately
         else if (casted_callback_type == BLOCK_BEGIN_CB || casted_callback_type == INSN_BEGIN_CB){
