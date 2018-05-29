@@ -118,12 +118,15 @@ class DefaultRapHandler(BaseRapHandler):
         BaseRapHandler.__init__(self, *args, **kwargs)
 
     def rap_open(self, name, flags):
-        procs = find_procs(name)
-        if len(procs) == 0:
-            pp_warning("Process not found: {}\n".format(name))
+        for proc in api.get_process_list():
+            if (name.isdigit() and int(name) == proc["pid"]) or (name in proc["name"]):
+                self.pid = proc["pid"]
+                self.pgd = proc["pgd"]
+                self.pname = proc["name"]
+                break
+        else:
+            pp_error("Process not found: {}\n".format(name))
             return 0
-
-        (self.pid, self.pgd, self.pname) = procs[0]
 
         module_list = api.get_module_list(self.pgd)
         for m in module_list:
@@ -133,7 +136,7 @@ class DefaultRapHandler(BaseRapHandler):
             self.size = m["size"]
 
         pp_debug("Selecting name={} pid={} base={:#x} size={}\n".format(
-            self.pid, self.pname, self.base, self.size))
+            self.pname, self.pid, self.base, self.size))
 
         return 0
 
