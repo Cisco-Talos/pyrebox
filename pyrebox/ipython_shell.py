@@ -59,6 +59,7 @@ import volatility.obj as obj
 import api
 from cpus import X86CPU
 from cpus import X64CPU
+from r2 import RapServer
 from utils import ConfigurationManager as conf_m
 from utils import pp_print
 from utils import pp_debug
@@ -1594,6 +1595,7 @@ class ShellMagics(Magics):
     unmon             - Stop monitoring process
     savevm            - Save vm status
     loadvm            - Load vm status
+    rap               - Start a radare2 RAP server
     quit              - Exit this prompt
     q                 - Exit this prompt
     cont              - Exit this prompt
@@ -1731,6 +1733,36 @@ class ShellMagics(Magics):
                 cmd = elements[0]
                 args = " ".join(elements[1:])
                 run_custom_command(cmd, args)
+
+    @line_magic
+    def rap(self, line):
+        '''
+            Start a radare2 RAP server
+                Usage: rap :1234         - start a RAP server listening on localhost:1234
+                       rap 0.0.0.0:1234  - start a RAP server listening on 0.0.0.0:1234
+        '''
+
+        elements = line.split(":")
+        if len(elements) != 2:
+            self.do_help("rap")
+            return
+
+        rap_host = elements[0]
+        rap_port = int(elements[1])
+
+        if rap_host == "":
+            rap_host = "localhost"
+
+        try:
+            rs = RapServer(rap_host, rap_port)
+
+            pp_print("RAP server listening on {}:{}\n".format(rap_host, rap_port))
+            rs.serve_forever()
+        except KeyboardInterrupt:
+            pp_print("Killing RAP server\n")
+            rs.shutdown()
+        except Exception as ex:
+            pp_error("RAP server error: {}\n".format(ex))
 
 
 class CustomCommand(IPyAutocall):
