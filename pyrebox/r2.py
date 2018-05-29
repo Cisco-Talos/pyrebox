@@ -8,6 +8,7 @@ from utils import pp_debug
 from utils import pp_warning
 from utils import pp_error
 
+
 class BaseRapHandler(SocketServer.BaseRequestHandler):
     def handle(self):
         while True:
@@ -165,7 +166,7 @@ class DefaultRapHandler(BaseRapHandler):
         elif whence == RapServer.RAP_SEEK_CUR:
             self.curseek = self.curseek + offset
         elif whence == RapServer.RAP_SEEK_END:
-            self.curseek = self.base + self.size - offset
+            self.curseek = ((1<<64) - 1) - offset
 
         return self.curseek
 
