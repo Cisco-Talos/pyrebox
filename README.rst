@@ -39,8 +39,12 @@ What's new
 ==========
 
 Remember to pull the latest version of PyREBox in order to enjoy its latest features. PyREBox is under
-active development and new cool features are yet to come!
+active development and new cool features are yet to come! The master branch should always contain an stable
+version, while the dev branches contain the latest, work-in progress features. The following announcement
+list refers to the master branch, and the date when the development changes were merged into master.
 
+- [May 29, 2018] Added the possibility to call trigger functions (in C/C++) from python scripts.
+- [May 29, 2018] **Changed the callback parameter format.** See documentation. Default is still the old-style.
 - [Apr 28, 2018] Created a development branch for new and potentially unstable features in PyREBox.
 - [Apr 13, 2018] Presented PyREBox at HITB Amsterdam (CommSec track).
 - [Apr 13, 2018] Added malware monitoring scripts (mw_mon).
@@ -174,4 +178,4 @@ are based on these works.
 PyREBox benefits from third-party code, which can be found under the directory pyrebox/third_party. 
 For each third-party project, we include an indication of its original license, the original source
 code files taken from the project, as well as the modified versions of the source code files (if applicable),
-used by PyREBox. 
+used by PyREBox.
