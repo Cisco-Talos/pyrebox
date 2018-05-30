@@ -1594,7 +1594,6 @@ class ShellMagics(Magics):
     unmon             - Stop monitoring process
     savevm            - Save vm status
     loadvm            - Load vm status
-    rap               - Start a radare2 RAP server
     quit              - Exit this prompt
     q                 - Exit this prompt
     cont              - Exit this prompt
