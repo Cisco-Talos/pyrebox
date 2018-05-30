@@ -7,6 +7,7 @@ import api
 # Printer
 pyrebox_print = None
 
+
 class BaseRapHandler(SocketServer.BaseRequestHandler):
     def handle(self):
         while True:
@@ -20,7 +21,7 @@ class BaseRapHandler(SocketServer.BaseRequestHandler):
                 break
 
     def handle_packet(self):
-        buf = self.request.recv(1)
+        buf = self._read_request(1)
 
         if len(buf) == 0:
             raise EOFError
@@ -28,54 +29,54 @@ class BaseRapHandler(SocketServer.BaseRequestHandler):
         packet_type = ord(buf)
 
         if packet_type == RapServer.RAP_OPEN:
-            buf = self.request.recv(2)
+            buf = self._read_request(2)
             (flags, size) = struct.unpack(">BB", buf)
-            name = self.request.recv(size)
+            name = self._read_request(size)
             fd = self.rap_open(name, flags)
             buf = struct.pack(">BI", RapServer.RAP_OPEN|RapServer.RAP_REPLY, fd)
             self.request.sendall(buf)
 
         elif packet_type == RapServer.RAP_READ:
-            buf = self.request.recv(4)
+            buf = self._read_request(4)
             (size,) = struct.unpack(">I", buf)
             ret = self.rap_read(size)
             buf = struct.pack(">BI", RapServer.RAP_READ|RapServer.RAP_REPLY, len(ret))
             self.request.sendall(buf + ret)
 
         elif packet_type == RapServer.RAP_WRITE:
-            buf = self.request.recv(4)
+            buf = self._read_request(4)
             (size,) = struct.unpack(">I", buf)
-            buf = self.request.recv(size)
+            buf = self._read_request(size)
             ret = self.rap_write(buf)
             buf = struct.pack(">BI", RapServer.RAP_WRITE|RapServer.RAP_REPLY, ret)
             self.request.sendall(buf)
 
         elif packet_type == RapServer.RAP_SEEK:
-            buf = self.request.recv(9)
+            buf = self._read_request(9)
             (whence, offset) = struct.unpack(">BQ", buf)
             ret = self.rap_seek(offset, whence)
             buf = struct.pack(">BQ", RapServer.RAP_SEEK|RapServer.RAP_REPLY, ret)
             self.request.sendall(buf)
 
         elif packet_type == RapServer.RAP_CLOSE:
-            buf = self.request.recv(4)
+            buf = self._read_request(4)
             (fd,) = struct.unpack(">I", buf)
             self.rap_close(fd)
             buf = struct.pack(">B", RapServer.RAP_CLOSE|RapServer.RAP_REPLY)
             self.request.sendall(buf)
 
         elif packet_type == RapServer.RAP_SYSTEM:
-            buf = self.request.recv(4)
+            buf = self._read_request(4)
             (size,) = struct.unpack(">I", buf)
-            buf = self.request.recv(size)
+            buf = self._read_request(size)
             ret = self.rap_system(buf)
             buf = struct.pack(">BI", RapServer.RAP_SYSTEM|RapServer.RAP_REPLY, len(ret))
             self.request.sendall(buf + ret)
 
         elif packet_type == RapServer.RAP_CMD:
-            buf = self.request.recv(4)
+            buf = self._read_request(4)
             (size,) = struct.unpack(">I", buf)
-            buf = self.request.recv(size)
+            buf = self._read_request(size)
             ret = self.rap_cmd(buf)
             buf = struct.pack(">BI", RapServer.RAP_CMD|RapServer.RAP_REPLY, len(ret))
             self.request.sendall(buf + ret)
@@ -103,6 +104,20 @@ class BaseRapHandler(SocketServer.BaseRequestHandler):
 
     def rap_cmd(self, cmd):
         raise NotImplementedError
+
+    def _read_request(self, sz, recvsz=1024):
+        buf = ''
+
+        while len(buf) < sz:
+            if recvsz > sz - len(buf):
+                recvsz = sz - len(buf)
+
+            chunk = self.request.recv(recvsz)
+            if len(chunk) == 0:
+                break
+            buf += chunk
+
+        return buf
 
 
 class DefaultRapHandler(BaseRapHandler):
