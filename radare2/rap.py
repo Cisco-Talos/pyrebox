@@ -2,12 +2,10 @@ import SocketServer
 import struct
 
 import api
-from utils import find_procs
-from utils import pp_print
-from utils import pp_debug
-from utils import pp_warning
-from utils import pp_error
 
+
+# Printer
+pyrebox_print = None
 
 class BaseRapHandler(SocketServer.BaseRequestHandler):
     def handle(self):
@@ -15,10 +13,10 @@ class BaseRapHandler(SocketServer.BaseRequestHandler):
             try:
                 self.handle_packet()
             except EOFError:
-                pp_debug("Closed connection\n")
+                pyrebox_print("Connection closed\n")
                 break
             except Exception as e:
-                pp_error("Protocol error: {}\n".format(e))
+                pyrebox_print("Protocol error: {}\n".format(e))
                 break
 
     def handle_packet(self):
@@ -126,7 +124,7 @@ class DefaultRapHandler(BaseRapHandler):
                 self.pname = proc["name"]
                 break
         else:
-            pp_error("Process not found: {}\n".format(name))
+            pyrebox_print("Process not found: {}\n".format(name))
             return 0
 
         module_list = api.get_module_list(self.pgd)
@@ -136,7 +134,7 @@ class DefaultRapHandler(BaseRapHandler):
             self.base = m["base"]
             self.size = m["size"]
 
-        pp_debug("Selecting name={} pid={} base={:#x} size={}\n".format(
+        pyrebox_print("Selecting name={} pid={} base={:#x} size={}\n".format(
             self.pname, self.pid, self.base, self.size))
 
         return 0
@@ -145,7 +143,7 @@ class DefaultRapHandler(BaseRapHandler):
         try:
             data = api.r_va(self.pgd, self.curseek, size)
         except Exception:
-            pp_error("Cannot read memory at {:#x}\n".format(self.curseek))
+            pyrebox_print("Cannot read memory at {:#x}\n".format(self.curseek))
             data = ""
 
         return data
@@ -155,7 +153,7 @@ class DefaultRapHandler(BaseRapHandler):
             api.w_va(self.pgd, self.curseek, data, len(data))
             size = len(data)
         except Exception:
-            pp_error("Cannot write memory at {:#x}\n".format(self.curseek))
+            pyrebox_print("Cannot write memory at {:#x}\n".format(self.curseek))
             size = 0
 
         return size
@@ -179,11 +177,11 @@ class DefaultRapHandler(BaseRapHandler):
         self.curseek = 0
 
     def rap_system(self, cmd):
-        pp_debug("system not implemented\n")
+        pyrebox_print("system not implemented\n")
         return ""
 
     def rap_cmd(self, cmd):
-        pp_debug("cmd not implemented\n")
+        pyrebox_print("cmd not implemented\n")
         return ""
 
 
@@ -213,3 +211,42 @@ class RapServer():
     def shutdown(self):
         self.server.shutdown()
         self.server.server_close()
+
+
+def initialize_callbacks(module_hdl, printer):
+    global pyrebox_print
+    pyrebox_print = printer
+
+
+def clean():
+    pass
+
+
+def do_rap(line):
+    '''Start a radare2 RAP server
+
+       Usage: custom rap :1234         - start a RAP server listening on localhost:1234
+              custom rap 0.0.0.0:1234  - start a RAP server listening on 0.0.0.0:1234
+    '''
+
+    elements = line.split(":")
+    if len(elements) != 2:
+        pyrebox_print(do_rap.__doc__)
+        return
+
+    rap_host = elements[0]
+    rap_port = int(elements[1])
+
+    if rap_host == "":
+        rap_host = "localhost"
+
+    try:
+        rs = RapServer(rap_host, rap_port)
+
+        pyrebox_print("RAP server listening on {}:{}\n".format(rap_host, rap_port))
+        rs.serve_forever()
+    except KeyboardInterrupt:
+        pyrebox_print("Killing RAP server\n")
+        rs.shutdown()
+    except Exception as ex:
+        pyrebox_print("RAP server error: {}\n".format(ex))
