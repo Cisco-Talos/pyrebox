@@ -43,6 +43,7 @@ active development and new cool features are yet to come! The master branch shou
 version, while the dev branches contain the latest, work-in progress features. The following announcement
 list refers to the master branch, and the date when the development changes were merged into master.
 
+- [May 31, 2018] Upgraded to Qemu v2.12.0.
 - [May 29, 2018] Added the possibility to call trigger functions (in C/C++) from python scripts.
 - [May 29, 2018] **Changed the callback parameter format.** See documentation. Default is still the old-style.
 - [Apr 28, 2018] Created a development branch for new and potentially unstable features in PyREBox.
