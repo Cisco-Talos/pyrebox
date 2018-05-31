@@ -35,7 +35,7 @@
 #include "elf.h"
 #include "exec/log.h"
 #include "trace/control.h"
-#include "glib-compat.h"
+#include "target_elf.h"
 
 char *exec_path;
 
@@ -45,6 +45,7 @@ static const char *argv0;
 static int gdbstub_port;
 static envlist_t *envlist;
 static const char *cpu_model;
+static const char *cpu_type;
 unsigned long mmap_min_addr;
 unsigned long guest_base;
 int have_guest_base;
@@ -128,6 +129,7 @@ int cpu_get_pic_interrupt(CPUX86State *env)
 /* Make sure everything is in a consistent state for calling fork().  */
 void fork_start(void)
 {
+    start_exclusive();
     mmap_fork_start();
     qemu_mutex_lock(&tb_ctx.tb_lock);
     cpu_list_lock();
@@ -148,9 +150,13 @@ void fork_end(int child)
         qemu_mutex_init(&tb_ctx.tb_lock);
         qemu_init_cpu_list();
         gdbserver_fork(thread_cpu);
+        /* qemu_init_cpu_list() takes care of reinitializing the
+         * exclusive state, so we don't need to end_exclusive() here.
+         */
     } else {
         qemu_mutex_unlock(&tb_ctx.tb_lock);
         cpu_list_unlock();
+        end_exclusive();
     }
 }
 
@@ -877,95 +883,6 @@ void cpu_loop(CPUARMState *env)
 }
 #endif /* ndef TARGET_ABI32 */
 
-#endif
-
-#ifdef TARGET_UNICORE32
-
-void cpu_loop(CPUUniCore32State *env)
-{
-    CPUState *cs = CPU(uc32_env_get_cpu(env));
-    int trapnr;
-    unsigned int n, insn;
-    target_siginfo_t info;
-
-    for (;;) {
-        cpu_exec_start(cs);
-        trapnr = cpu_exec(cs);
-        cpu_exec_end(cs);
-        process_queued_cpu_work(cs);
-
-        switch (trapnr) {
-        case UC32_EXCP_PRIV:
-            {
-                /* system call */
-                get_user_u32(insn, env->regs[31] - 4);
-                n = insn & 0xffffff;
-
-                if (n >= UC32_SYSCALL_BASE) {
-                    /* linux syscall */
-                    n -= UC32_SYSCALL_BASE;
-                    if (n == UC32_SYSCALL_NR_set_tls) {
-                            cpu_set_tls(env, env->regs[0]);
-                            env->regs[0] = 0;
-                    } else {
-                        abi_long ret = do_syscall(env,
-                                                  n,
-                                                  env->regs[0],
-                                                  env->regs[1],
-                                                  env->regs[2],
-                                                  env->regs[3],
-                                                  env->regs[4],
-                                                  env->regs[5],
-                                                  0, 0);
-                        if (ret == -TARGET_ERESTARTSYS) {
-                            env->regs[31] -= 4;
-                        } else if (ret != -TARGET_QEMU_ESIGRETURN) {
-                            env->regs[0] = ret;
-                        }
-                    }
-                } else {
-                    goto error;
-                }
-            }
-            break;
-        case UC32_EXCP_DTRAP:
-        case UC32_EXCP_ITRAP:
-            info.si_signo = TARGET_SIGSEGV;
-            info.si_errno = 0;
-            /* XXX: check env->error_code */
-            info.si_code = TARGET_SEGV_MAPERR;
-            info._sifields._sigfault._addr = env->cp0.c4_faultaddr;
-            queue_signal(env, info.si_signo, QEMU_SI_FAULT, &info);
-            break;
-        case EXCP_INTERRUPT:
-            /* just indicate that signals should be handled asap */
-            break;
-        case EXCP_DEBUG:
-            {
-                int sig;
-
-                sig = gdb_handlesig(cs, TARGET_SIGTRAP);
-                if (sig) {
-                    info.si_signo = sig;
-                    info.si_errno = 0;
-                    info.si_code = TARGET_TRAP_BRKPT;
-                    queue_signal(env, info.si_signo, QEMU_SI_FAULT, &info);
-                }
-            }
-            break;
-        case EXCP_ATOMIC:
-            cpu_exec_step_atomic(cs);
-            break;
-        default:
-            goto error;
-        }
-        process_pending_signals(env);
-    }
-
-error:
-    EXCP_DUMP(env, "qemu: unhandled CPU exception 0x%x - aborting\n", trapnr);
-    abort();
-}
 #endif
 
 #ifdef TARGET_SPARC
@@ -2680,6 +2597,8 @@ void cpu_loop(CPUSH4State *env)
     target_siginfo_t info;
 
     while (1) {
+        bool arch_interrupt = true;
+
         cpu_exec_start(cs);
         trapnr = cpu_exec(cs);
         cpu_exec_end(cs);
@@ -2711,13 +2630,14 @@ void cpu_loop(CPUSH4State *env)
                 int sig;
 
                 sig = gdb_handlesig(cs, TARGET_SIGTRAP);
-                if (sig)
-                  {
+                if (sig) {
                     info.si_signo = sig;
                     info.si_errno = 0;
                     info.si_code = TARGET_TRAP_BRKPT;
                     queue_signal(env, info.si_signo, QEMU_SI_FAULT, &info);
-                  }
+                } else {
+                    arch_interrupt = false;
+                }
             }
             break;
 	case 0xa0:
@@ -2728,9 +2648,9 @@ void cpu_loop(CPUSH4State *env)
             info._sifields._sigfault._addr = env->tea;
             queue_signal(env, info.si_signo, QEMU_SI_FAULT, &info);
 	    break;
-
         case EXCP_ATOMIC:
             cpu_exec_step_atomic(cs);
+            arch_interrupt = false;
             break;
         default:
             printf ("Unhandled trap: 0x%x\n", trapnr);
@@ -2738,6 +2658,14 @@ void cpu_loop(CPUSH4State *env)
             exit(EXIT_FAILURE);
         }
         process_pending_signals (env);
+
+        /* Most of the traps imply an exception or interrupt, which
+           implies an REI instruction has been executed.  Which means
+           that LDST (aka LOK_ADDR) should be cleared.  But there are
+           a few exceptions for traps internal to QEMU.  */
+        if (arch_interrupt) {
+            env->lock_addr = -1;
+        }
     }
 }
 #endif
@@ -2972,6 +2900,13 @@ void cpu_loop(CPUM68KState *env)
             info.si_signo = TARGET_SIGILL;
             info.si_errno = 0;
             info.si_code = TARGET_ILL_ILLOPN;
+            info._sifields._sigfault._addr = env->pc;
+            queue_signal(env, info.si_signo, QEMU_SI_FAULT, &info);
+            break;
+        case EXCP_CHK:
+            info.si_signo = TARGET_SIGFPE;
+            info.si_errno = 0;
+            info.si_code = TARGET_FPE_INTOVF;
             info._sifields._sigfault._addr = env->pc;
             queue_signal(env, info.si_signo, QEMU_SI_FAULT, &info);
             break;
@@ -3630,6 +3565,100 @@ void cpu_loop(CPUTLGState *env)
 
 #endif
 
+#ifdef TARGET_RISCV
+
+void cpu_loop(CPURISCVState *env)
+{
+    CPUState *cs = CPU(riscv_env_get_cpu(env));
+    int trapnr, signum, sigcode;
+    target_ulong sigaddr;
+    target_ulong ret;
+
+    for (;;) {
+        cpu_exec_start(cs);
+        trapnr = cpu_exec(cs);
+        cpu_exec_end(cs);
+        process_queued_cpu_work(cs);
+
+        signum = 0;
+        sigcode = 0;
+        sigaddr = 0;
+
+        switch (trapnr) {
+        case EXCP_INTERRUPT:
+            /* just indicate that signals should be handled asap */
+            break;
+        case EXCP_ATOMIC:
+            cpu_exec_step_atomic(cs);
+            break;
+        case RISCV_EXCP_U_ECALL:
+            env->pc += 4;
+            if (env->gpr[xA7] == TARGET_NR_arch_specific_syscall + 15) {
+                /* riscv_flush_icache_syscall is a no-op in QEMU as
+                   self-modifying code is automatically detected */
+                ret = 0;
+            } else {
+                ret = do_syscall(env,
+                                 env->gpr[xA7],
+                                 env->gpr[xA0],
+                                 env->gpr[xA1],
+                                 env->gpr[xA2],
+                                 env->gpr[xA3],
+                                 env->gpr[xA4],
+                                 env->gpr[xA5],
+                                 0, 0);
+            }
+            if (ret == -TARGET_ERESTARTSYS) {
+                env->pc -= 4;
+            } else if (ret != -TARGET_QEMU_ESIGRETURN) {
+                env->gpr[xA0] = ret;
+            }
+            if (cs->singlestep_enabled) {
+                goto gdbstep;
+            }
+            break;
+        case RISCV_EXCP_ILLEGAL_INST:
+            signum = TARGET_SIGILL;
+            sigcode = TARGET_ILL_ILLOPC;
+            break;
+        case RISCV_EXCP_BREAKPOINT:
+            signum = TARGET_SIGTRAP;
+            sigcode = TARGET_TRAP_BRKPT;
+            sigaddr = env->pc;
+            break;
+        case RISCV_EXCP_INST_PAGE_FAULT:
+        case RISCV_EXCP_LOAD_PAGE_FAULT:
+        case RISCV_EXCP_STORE_PAGE_FAULT:
+            signum = TARGET_SIGSEGV;
+            sigcode = TARGET_SEGV_MAPERR;
+            break;
+        case EXCP_DEBUG:
+        gdbstep:
+            signum = gdb_handlesig(cs, TARGET_SIGTRAP);
+            sigcode = TARGET_TRAP_BRKPT;
+            break;
+        default:
+            EXCP_DUMP(env, "\nqemu: unhandled CPU exception %#x - aborting\n",
+                     trapnr);
+            exit(EXIT_FAILURE);
+        }
+
+        if (signum) {
+            target_siginfo_t info = {
+                .si_signo = signum,
+                .si_errno = 0,
+                .si_code = sigcode,
+                ._sifields._sigfault._addr = sigaddr
+            };
+            queue_signal(env, info.si_signo, QEMU_SI_KILL, &info);
+        }
+
+        process_pending_signals(env);
+    }
+}
+
+#endif /* TARGET_RISCV */
+
 #ifdef TARGET_HPPA
 
 static abi_ulong hppa_lws(CPUHPPAState *env)
@@ -3751,21 +3780,41 @@ void cpu_loop(CPUHPPAState *env)
             env->iaoq_f = env->gr[31];
             env->iaoq_b = env->gr[31] + 4;
             break;
-        case EXCP_SIGSEGV:
+        case EXCP_ITLB_MISS:
+        case EXCP_DTLB_MISS:
+        case EXCP_NA_ITLB_MISS:
+        case EXCP_NA_DTLB_MISS:
+        case EXCP_IMP:
+        case EXCP_DMP:
+        case EXCP_DMB:
+        case EXCP_PAGE_REF:
+        case EXCP_DMAR:
+        case EXCP_DMPI:
             info.si_signo = TARGET_SIGSEGV;
             info.si_errno = 0;
             info.si_code = TARGET_SEGV_ACCERR;
-            info._sifields._sigfault._addr = env->ior;
+            info._sifields._sigfault._addr = env->cr[CR_IOR];
             queue_signal(env, info.si_signo, QEMU_SI_FAULT, &info);
             break;
-        case EXCP_SIGILL:
+        case EXCP_UNALIGN:
+            info.si_signo = TARGET_SIGBUS;
+            info.si_errno = 0;
+            info.si_code = 0;
+            info._sifields._sigfault._addr = env->cr[CR_IOR];
+            queue_signal(env, info.si_signo, QEMU_SI_FAULT, &info);
+            break;
+        case EXCP_ILL:
+        case EXCP_PRIV_OPR:
+        case EXCP_PRIV_REG:
             info.si_signo = TARGET_SIGILL;
             info.si_errno = 0;
             info.si_code = TARGET_ILL_ILLOPN;
             info._sifields._sigfault._addr = env->iaoq_f;
             queue_signal(env, info.si_signo, QEMU_SI_FAULT, &info);
             break;
-        case EXCP_SIGFPE:
+        case EXCP_OVERFLOW:
+        case EXCP_COND:
+        case EXCP_ASSIST:
             info.si_signo = TARGET_SIGFPE;
             info.si_errno = 0;
             info.si_code = 0;
@@ -3793,7 +3842,246 @@ void cpu_loop(CPUHPPAState *env)
 
 #endif /* TARGET_HPPA */
 
-THREAD CPUState *thread_cpu;
+#ifdef TARGET_XTENSA
+
+static void xtensa_rfw(CPUXtensaState *env)
+{
+    xtensa_restore_owb(env);
+    env->pc = env->sregs[EPC1];
+}
+
+static void xtensa_rfwu(CPUXtensaState *env)
+{
+    env->sregs[WINDOW_START] |= (1 << env->sregs[WINDOW_BASE]);
+    xtensa_rfw(env);
+}
+
+static void xtensa_rfwo(CPUXtensaState *env)
+{
+    env->sregs[WINDOW_START] &= ~(1 << env->sregs[WINDOW_BASE]);
+    xtensa_rfw(env);
+}
+
+static void xtensa_overflow4(CPUXtensaState *env)
+{
+    put_user_ual(env->regs[0], env->regs[5] - 16);
+    put_user_ual(env->regs[1], env->regs[5] - 12);
+    put_user_ual(env->regs[2], env->regs[5] -  8);
+    put_user_ual(env->regs[3], env->regs[5] -  4);
+    xtensa_rfwo(env);
+}
+
+static void xtensa_underflow4(CPUXtensaState *env)
+{
+    get_user_ual(env->regs[0], env->regs[5] - 16);
+    get_user_ual(env->regs[1], env->regs[5] - 12);
+    get_user_ual(env->regs[2], env->regs[5] -  8);
+    get_user_ual(env->regs[3], env->regs[5] -  4);
+    xtensa_rfwu(env);
+}
+
+static void xtensa_overflow8(CPUXtensaState *env)
+{
+    put_user_ual(env->regs[0], env->regs[9] - 16);
+    get_user_ual(env->regs[0], env->regs[1] - 12);
+    put_user_ual(env->regs[1], env->regs[9] - 12);
+    put_user_ual(env->regs[2], env->regs[9] -  8);
+    put_user_ual(env->regs[3], env->regs[9] -  4);
+    put_user_ual(env->regs[4], env->regs[0] - 32);
+    put_user_ual(env->regs[5], env->regs[0] - 28);
+    put_user_ual(env->regs[6], env->regs[0] - 24);
+    put_user_ual(env->regs[7], env->regs[0] - 20);
+    xtensa_rfwo(env);
+}
+
+static void xtensa_underflow8(CPUXtensaState *env)
+{
+    get_user_ual(env->regs[0], env->regs[9] - 16);
+    get_user_ual(env->regs[1], env->regs[9] - 12);
+    get_user_ual(env->regs[2], env->regs[9] -  8);
+    get_user_ual(env->regs[7], env->regs[1] - 12);
+    get_user_ual(env->regs[3], env->regs[9] -  4);
+    get_user_ual(env->regs[4], env->regs[7] - 32);
+    get_user_ual(env->regs[5], env->regs[7] - 28);
+    get_user_ual(env->regs[6], env->regs[7] - 24);
+    get_user_ual(env->regs[7], env->regs[7] - 20);
+    xtensa_rfwu(env);
+}
+
+static void xtensa_overflow12(CPUXtensaState *env)
+{
+    put_user_ual(env->regs[0],  env->regs[13] - 16);
+    get_user_ual(env->regs[0],  env->regs[1]  - 12);
+    put_user_ual(env->regs[1],  env->regs[13] - 12);
+    put_user_ual(env->regs[2],  env->regs[13] -  8);
+    put_user_ual(env->regs[3],  env->regs[13] -  4);
+    put_user_ual(env->regs[4],  env->regs[0]  - 48);
+    put_user_ual(env->regs[5],  env->regs[0]  - 44);
+    put_user_ual(env->regs[6],  env->regs[0]  - 40);
+    put_user_ual(env->regs[7],  env->regs[0]  - 36);
+    put_user_ual(env->regs[8],  env->regs[0]  - 32);
+    put_user_ual(env->regs[9],  env->regs[0]  - 28);
+    put_user_ual(env->regs[10], env->regs[0]  - 24);
+    put_user_ual(env->regs[11], env->regs[0]  - 20);
+    xtensa_rfwo(env);
+}
+
+static void xtensa_underflow12(CPUXtensaState *env)
+{
+    get_user_ual(env->regs[0],  env->regs[13] - 16);
+    get_user_ual(env->regs[1],  env->regs[13] - 12);
+    get_user_ual(env->regs[2],  env->regs[13] -  8);
+    get_user_ual(env->regs[11], env->regs[1]  - 12);
+    get_user_ual(env->regs[3],  env->regs[13] -  4);
+    get_user_ual(env->regs[4],  env->regs[11] - 48);
+    get_user_ual(env->regs[5],  env->regs[11] - 44);
+    get_user_ual(env->regs[6],  env->regs[11] - 40);
+    get_user_ual(env->regs[7],  env->regs[11] - 36);
+    get_user_ual(env->regs[8],  env->regs[11] - 32);
+    get_user_ual(env->regs[9],  env->regs[11] - 28);
+    get_user_ual(env->regs[10], env->regs[11] - 24);
+    get_user_ual(env->regs[11], env->regs[11] - 20);
+    xtensa_rfwu(env);
+}
+
+void cpu_loop(CPUXtensaState *env)
+{
+    CPUState *cs = CPU(xtensa_env_get_cpu(env));
+    target_siginfo_t info;
+    abi_ulong ret;
+    int trapnr;
+
+    while (1) {
+        cpu_exec_start(cs);
+        trapnr = cpu_exec(cs);
+        cpu_exec_end(cs);
+        process_queued_cpu_work(cs);
+
+        env->sregs[PS] &= ~PS_EXCM;
+        switch (trapnr) {
+        case EXCP_INTERRUPT:
+            break;
+
+        case EXC_WINDOW_OVERFLOW4:
+            xtensa_overflow4(env);
+            break;
+        case EXC_WINDOW_UNDERFLOW4:
+            xtensa_underflow4(env);
+            break;
+        case EXC_WINDOW_OVERFLOW8:
+            xtensa_overflow8(env);
+            break;
+        case EXC_WINDOW_UNDERFLOW8:
+            xtensa_underflow8(env);
+            break;
+        case EXC_WINDOW_OVERFLOW12:
+            xtensa_overflow12(env);
+            break;
+        case EXC_WINDOW_UNDERFLOW12:
+            xtensa_underflow12(env);
+            break;
+
+        case EXC_USER:
+            switch (env->sregs[EXCCAUSE]) {
+            case ILLEGAL_INSTRUCTION_CAUSE:
+            case PRIVILEGED_CAUSE:
+                info.si_signo = TARGET_SIGILL;
+                info.si_errno = 0;
+                info.si_code =
+                    env->sregs[EXCCAUSE] == ILLEGAL_INSTRUCTION_CAUSE ?
+                    TARGET_ILL_ILLOPC : TARGET_ILL_PRVOPC;
+                info._sifields._sigfault._addr = env->sregs[EPC1];
+                queue_signal(env, info.si_signo, QEMU_SI_FAULT, &info);
+                break;
+
+            case SYSCALL_CAUSE:
+                env->pc += 3;
+                ret = do_syscall(env, env->regs[2],
+                                 env->regs[6], env->regs[3],
+                                 env->regs[4], env->regs[5],
+                                 env->regs[8], env->regs[9], 0, 0);
+                switch (ret) {
+                default:
+                    env->regs[2] = ret;
+                    break;
+
+                case -TARGET_ERESTARTSYS:
+                    env->pc -= 3;
+                    break;
+
+                case -TARGET_QEMU_ESIGRETURN:
+                    break;
+                }
+                break;
+
+            case ALLOCA_CAUSE:
+                env->sregs[PS] = deposit32(env->sregs[PS],
+                                           PS_OWB_SHIFT,
+                                           PS_OWB_LEN,
+                                           env->sregs[WINDOW_BASE]);
+
+                switch (env->regs[0] & 0xc0000000) {
+                case 0x00000000:
+                case 0x40000000:
+                    xtensa_rotate_window(env, -1);
+                    xtensa_underflow4(env);
+                    break;
+
+                case 0x80000000:
+                    xtensa_rotate_window(env, -2);
+                    xtensa_underflow8(env);
+                    break;
+
+                case 0xc0000000:
+                    xtensa_rotate_window(env, -3);
+                    xtensa_underflow12(env);
+                    break;
+                }
+                break;
+
+            case INTEGER_DIVIDE_BY_ZERO_CAUSE:
+                info.si_signo = TARGET_SIGFPE;
+                info.si_errno = 0;
+                info.si_code = TARGET_FPE_INTDIV;
+                info._sifields._sigfault._addr = env->sregs[EPC1];
+                queue_signal(env, info.si_signo, QEMU_SI_FAULT, &info);
+                break;
+
+            case LOAD_PROHIBITED_CAUSE:
+            case STORE_PROHIBITED_CAUSE:
+                info.si_signo = TARGET_SIGSEGV;
+                info.si_errno = 0;
+                info.si_code = TARGET_SEGV_ACCERR;
+                info._sifields._sigfault._addr = env->sregs[EXCVADDR];
+                queue_signal(env, info.si_signo, QEMU_SI_FAULT, &info);
+                break;
+
+            default:
+                fprintf(stderr, "exccause = %d\n", env->sregs[EXCCAUSE]);
+                g_assert_not_reached();
+            }
+            break;
+        case EXCP_DEBUG:
+            trapnr = gdb_handlesig(cs, TARGET_SIGTRAP);
+            if (trapnr) {
+                info.si_signo = trapnr;
+                info.si_errno = 0;
+                info.si_code = TARGET_TRAP_BRKPT;
+                queue_signal(env, trapnr, QEMU_SI_FAULT, &info);
+            }
+            break;
+        case EXC_DEBUG:
+        default:
+            fprintf(stderr, "trapnr = %d\n", trapnr);
+            g_assert_not_reached();
+        }
+        process_pending_signals(env);
+    }
+}
+
+#endif /* TARGET_XTENSA */
+
+__thread CPUState *thread_cpu;
 
 bool qemu_cpu_is_self(CPUState *cpu)
 {
@@ -3830,7 +4118,7 @@ void init_task_state(TaskState *ts)
 CPUArchState *cpu_copy(CPUArchState *env)
 {
     CPUState *cpu = ENV_GET_CPU(env);
-    CPUState *new_cpu = cpu_init(cpu_model);
+    CPUState *new_cpu = cpu_create(cpu_type);
     CPUArchState *new_env = new_cpu->env_ptr;
     CPUBreakpoint *bp;
     CPUWatchpoint *wp;
@@ -4026,7 +4314,7 @@ static void handle_arg_strace(const char *arg)
 
 static void handle_arg_version(const char *arg)
 {
-    printf("qemu-" TARGET_NAME " version " QEMU_VERSION QEMU_PKGVERSION
+    printf("qemu-" TARGET_NAME " version " QEMU_FULL_VERSION
            "\n" QEMU_COPYRIGHT "\n");
     exit(EXIT_SUCCESS);
 }
@@ -4301,51 +4589,25 @@ int main(int argc, char **argv, char **envp)
 
     init_qemu_uname_release();
 
-    if (cpu_model == NULL) {
-#if defined(TARGET_I386)
-#ifdef TARGET_X86_64
-        cpu_model = "qemu64";
-#else
-        cpu_model = "qemu32";
-#endif
-#elif defined(TARGET_ARM)
-        cpu_model = "any";
-#elif defined(TARGET_UNICORE32)
-        cpu_model = "any";
-#elif defined(TARGET_M68K)
-        cpu_model = "any";
-#elif defined(TARGET_SPARC)
-#ifdef TARGET_SPARC64
-        cpu_model = "TI UltraSparc II";
-#else
-        cpu_model = "Fujitsu MB86904";
-#endif
-#elif defined(TARGET_MIPS)
-#if defined(TARGET_ABI_MIPSN32) || defined(TARGET_ABI_MIPSN64)
-        cpu_model = "5KEf";
-#else
-        cpu_model = "24Kf";
-#endif
-#elif defined TARGET_OPENRISC
-        cpu_model = "or1200";
-#elif defined(TARGET_PPC)
-# ifdef TARGET_PPC64
-        cpu_model = "POWER8";
-# else
-        cpu_model = "750";
-# endif
-#elif defined TARGET_SH4
-        cpu_model = "sh7785";
-#elif defined TARGET_S390X
-        cpu_model = "qemu";
-#else
-        cpu_model = "any";
-#endif
+    execfd = qemu_getauxval(AT_EXECFD);
+    if (execfd == 0) {
+        execfd = open(filename, O_RDONLY);
+        if (execfd < 0) {
+            printf("Error while loading %s: %s\n", filename, strerror(errno));
+            _exit(EXIT_FAILURE);
+        }
     }
+
+    if (cpu_model == NULL) {
+        cpu_model = cpu_get_model(get_elf_eflags(execfd));
+    }
+    cpu_type = parse_cpu_model(cpu_model);
+
     tcg_exec_init(0);
     /* NOTE: we need to init the CPU at this stage to get
        qemu_host_page_size */
-    cpu = cpu_init(cpu_model);
+
+    cpu = cpu_create(cpu_type);
     env = cpu->env_ptr;
     cpu_reset(cpu);
 
@@ -4432,15 +4694,6 @@ int main(int argc, char **argv, char **envp)
     ts->bprm = &bprm;
     cpu->opaque = ts;
     task_settid(ts);
-
-    execfd = qemu_getauxval(AT_EXECFD);
-    if (execfd == 0) {
-        execfd = open(filename, O_RDONLY);
-        if (execfd < 0) {
-            printf("Error while loading %s: %s\n", filename, strerror(errno));
-            _exit(EXIT_FAILURE);
-        }
-    }
 
     ret = loader_exec(execfd, filename, target_argv, target_environ, regs,
         info, &bprm);
@@ -4612,6 +4865,12 @@ int main(int argc, char **argv, char **envp)
         }
         env->pc = regs->pc;
         env->xregs[31] = regs->sp;
+#ifdef TARGET_WORDS_BIGENDIAN
+        env->cp15.sctlr_el[1] |= SCTLR_E0E;
+        for (i = 1; i < 4; ++i) {
+            env->cp15.sctlr_el[i] |= SCTLR_EE;
+        }
+#endif
     }
 #elif defined(TARGET_ARM)
     {
@@ -4631,14 +4890,6 @@ int main(int argc, char **argv, char **envp)
             env->cp15.sctlr_el[1] |= SCTLR_B;
         }
 #endif
-    }
-#elif defined(TARGET_UNICORE32)
-    {
-        int i;
-        cpu_asr_write(env, regs->uregs[32], 0xffffffff);
-        for (i = 0; i < 32; i++) {
-            env->regs[i] = regs->uregs[i];
-        }
     }
 #elif defined(TARGET_SPARC)
     {
@@ -4792,6 +5043,11 @@ int main(int argc, char **argv, char **envp)
         env->pc = regs->pc;
         cpu_set_sr(env, regs->sr);
     }
+#elif defined(TARGET_RISCV)
+    {
+        env->pc = regs->sepc;
+        env->gpr[xSP] = regs->sp;
+    }
 #elif defined(TARGET_SH4)
     {
         int i;
@@ -4860,11 +5116,20 @@ int main(int argc, char **argv, char **envp)
         env->iaoq_f = regs->iaoq[0];
         env->iaoq_b = regs->iaoq[1];
     }
+#elif defined(TARGET_XTENSA)
+    {
+        int i;
+        for (i = 0; i < 16; ++i) {
+            env->regs[i] = regs->areg[i];
+        }
+        env->sregs[WINDOW_START] = regs->windowstart;
+        env->pc = regs->pc;
+    }
 #else
 #error unsupported target CPU
 #endif
 
-#if defined(TARGET_ARM) || defined(TARGET_M68K) || defined(TARGET_UNICORE32)
+#if defined(TARGET_ARM) || defined(TARGET_M68K)
     ts->stack_base = info->start_stack;
     ts->heap_base = info->brk;
     /* This will be filled in on the first SYS_HEAPINFO call.  */

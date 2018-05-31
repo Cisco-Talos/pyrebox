@@ -5,9 +5,22 @@
 
 #include "standard-headers/linux/input.h"
 
+#include "ui/input-keymap-atset1-to-qcode.c"
 #include "ui/input-keymap-linux-to-qcode.c"
+#include "ui/input-keymap-qcode-to-atset1.c"
+#include "ui/input-keymap-qcode-to-atset2.c"
+#include "ui/input-keymap-qcode-to-atset3.c"
+#include "ui/input-keymap-qcode-to-linux.c"
 #include "ui/input-keymap-qcode-to-qnum.c"
+#include "ui/input-keymap-qcode-to-sun.c"
 #include "ui/input-keymap-qnum-to-qcode.c"
+#include "ui/input-keymap-usb-to-qcode.c"
+#include "ui/input-keymap-win32-to-qcode.c"
+#include "ui/input-keymap-x11-to-qcode.c"
+#include "ui/input-keymap-xorgevdev-to-qcode.c"
+#include "ui/input-keymap-xorgkbd-to-qcode.c"
+#include "ui/input-keymap-xorgxquartz-to-qcode.c"
+#include "ui/input-keymap-xorgxwin-to-qcode.c"
 
 int qemu_input_linux_to_qcode(unsigned int lnx)
 {

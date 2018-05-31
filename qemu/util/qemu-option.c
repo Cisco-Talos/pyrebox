@@ -28,7 +28,10 @@
 #include "qapi/error.h"
 #include "qemu-common.h"
 #include "qemu/error-report.h"
-#include "qapi/qmp/types.h"
+#include "qapi/qmp/qbool.h"
+#include "qapi/qmp/qdict.h"
+#include "qapi/qmp/qnum.h"
+#include "qapi/qmp/qstring.h"
 #include "qapi/qmp/qerror.h"
 #include "qemu/option_int.h"
 #include "qemu/cutils.h"
@@ -89,40 +92,6 @@ const char *get_opt_value(char *buf, int buf_size, const char *p)
         *q = '\0';
 
     return p;
-}
-
-int get_next_param_value(char *buf, int buf_size,
-                         const char *tag, const char **pstr)
-{
-    const char *p;
-    char option[128];
-
-    p = *pstr;
-    for(;;) {
-        p = get_opt_name(option, sizeof(option), p, '=');
-        if (*p != '=')
-            break;
-        p++;
-        if (!strcmp(tag, option)) {
-            *pstr = get_opt_value(buf, buf_size, p);
-            if (**pstr == ',') {
-                (*pstr)++;
-            }
-            return strlen(buf);
-        } else {
-            p = get_opt_value(NULL, 0, p);
-        }
-        if (*p != ',')
-            break;
-        p++;
-    }
-    return 0;
-}
-
-int get_param_value(char *buf, int buf_size,
-                    const char *tag, const char *str)
-{
-    return get_next_param_value(buf, buf_size, tag, &str);
 }
 
 static void parse_option_bool(const char *name, const char *value, bool *ret,
@@ -766,7 +735,7 @@ void qemu_opts_print(QemuOpts *opts, const char *separator)
     }
     for (; desc && desc->name; desc++) {
         const char *value;
-        QemuOpt *opt = qemu_opt_find(opts, desc->name);
+        opt = qemu_opt_find(opts, desc->name);
 
         value = opt ? opt->str : desc->def_value_str;
         if (!value) {
@@ -950,15 +919,15 @@ static void qemu_opts_from_qdict_1(const char *key, QObject *obj, void *opaque)
 
     switch (qobject_type(obj)) {
     case QTYPE_QSTRING:
-        value = qstring_get_str(qobject_to_qstring(obj));
+        value = qstring_get_str(qobject_to(QString, obj));
         break;
     case QTYPE_QNUM:
-        tmp = qnum_to_string(qobject_to_qnum(obj));
+        tmp = qnum_to_string(qobject_to(QNum, obj));
         value = tmp;
         break;
     case QTYPE_QBOOL:
         pstrcpy(buf, sizeof(buf),
-                qbool_get_bool(qobject_to_qbool(obj)) ? "on" : "off");
+                qbool_get_bool(qobject_to(QBool, obj)) ? "on" : "off");
         value = buf;
         break;
     default:
@@ -1038,14 +1007,23 @@ void qemu_opts_absorb_qdict(QemuOpts *opts, QDict *qdict, Error **errp)
 }
 
 /*
- * Convert from QemuOpts to QDict.
- * The QDict values are of type QString.
+ * Convert from QemuOpts to QDict. The QDict values are of type QString.
+ *
+ * If @list is given, only add those options to the QDict that are contained in
+ * the list. If @del is true, any options added to the QDict are removed from
+ * the QemuOpts, otherwise they remain there.
+ *
+ * If two options in @opts have the same name, they are processed in order
+ * so that the last one wins (consistent with the reverse iteration in
+ * qemu_opt_find()), but all of them are deleted if @del is true.
+ *
  * TODO We'll want to use types appropriate for opt->desc->type, but
  * this is enough for now.
  */
-QDict *qemu_opts_to_qdict(QemuOpts *opts, QDict *qdict)
+QDict *qemu_opts_to_qdict_filtered(QemuOpts *opts, QDict *qdict,
+                                   QemuOptsList *list, bool del)
 {
-    QemuOpt *opt;
+    QemuOpt *opt, *next;
 
     if (!qdict) {
         qdict = qdict_new();
@@ -1053,10 +1031,33 @@ QDict *qemu_opts_to_qdict(QemuOpts *opts, QDict *qdict)
     if (opts->id) {
         qdict_put_str(qdict, "id", opts->id);
     }
-    QTAILQ_FOREACH(opt, &opts->head, next) {
+    QTAILQ_FOREACH_SAFE(opt, &opts->head, next, next) {
+        if (list) {
+            QemuOptDesc *desc;
+            bool found = false;
+            for (desc = list->desc; desc->name; desc++) {
+                if (!strcmp(desc->name, opt->name)) {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                continue;
+            }
+        }
         qdict_put_str(qdict, opt->name, opt->str);
+        if (del) {
+            qemu_opt_del(opt);
+        }
     }
     return qdict;
+}
+
+/* Copy all options in a QemuOpts to the given QDict. See
+ * qemu_opts_to_qdict_filtered() for details. */
+QDict *qemu_opts_to_qdict(QemuOpts *opts, QDict *qdict)
+{
+    return qemu_opts_to_qdict_filtered(opts, qdict, NULL, false);
 }
 
 /* Validate parsed opts against descriptions where no

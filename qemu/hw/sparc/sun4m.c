@@ -28,7 +28,7 @@
 #include "hw/sysbus.h"
 #include "qemu/error-report.h"
 #include "qemu/timer.h"
-#include "hw/sparc/sun4m.h"
+#include "hw/sparc/sun4m_iommu.h"
 #include "hw/timer/m48t59.h"
 #include "hw/sparc/sparc32_dma.h"
 #include "hw/block/fdc.h"
@@ -36,7 +36,6 @@
 #include "net/net.h"
 #include "hw/boards.h"
 #include "hw/scsi/esp.h"
-#include "hw/i386/pc.h"
 #include "hw/isa/isa.h"
 #include "hw/nvram/sun_nvram.h"
 #include "hw/nvram/chrp_nvram.h"
@@ -45,7 +44,6 @@
 #include "hw/empty_slot.h"
 #include "hw/loader.h"
 #include "elf.h"
-#include "sysemu/block-backend.h"
 #include "trace.h"
 #include "qemu/cutils.h"
 
@@ -99,10 +97,6 @@ struct sun4m_hwdef {
     uint16_t machine_id;
     uint8_t nvram_machine_id;
 };
-
-void DMA_init(ISABus *bus, int high_page_enable)
-{
-}
 
 static void fw_cfg_boot_set(void *opaque, const char *boot_device,
                             Error **errp)
@@ -260,8 +254,7 @@ static unsigned long sun4m_load_kernel(const char *kernel_filename,
                                               KERNEL_LOAD_ADDR,
                                               RAM_size - KERNEL_LOAD_ADDR);
         if (kernel_size < 0) {
-            fprintf(stderr, "qemu: could not load kernel '%s'\n",
-                    kernel_filename);
+            error_report("could not load kernel '%s'", kernel_filename);
             exit(1);
         }
 
@@ -272,8 +265,8 @@ static unsigned long sun4m_load_kernel(const char *kernel_filename,
                                               INITRD_LOAD_ADDR,
                                               RAM_size - INITRD_LOAD_ADDR);
             if (initrd_size < 0) {
-                fprintf(stderr, "qemu: could not load initial ram disk '%s'\n",
-                        initrd_filename);
+                error_report("could not load initial ram disk '%s'",
+                             initrd_filename);
                 exit(1);
             }
         }
@@ -326,6 +319,7 @@ static void *sparc32_dma_init(hwaddr dma_base,
 
     esp = ESP_STATE(object_resolve_path_component(OBJECT(espdma), "esp"));
     sysbus_mmio_map(SYS_BUS_DEVICE(esp), 0, esp_base);
+    scsi_bus_legacy_handle_cmdline(&esp->esp.bus);
 
     ledma = SPARC32_LEDMA_DEVICE(object_resolve_path_component(
                                  OBJECT(dma), "ledma"));
@@ -681,7 +675,7 @@ static void prom_init(hwaddr addr, const char *bios_name)
         ret = -1;
     }
     if (ret < 0 || ret > PROM_SIZE_MAX) {
-        fprintf(stderr, "qemu: could not load prom '%s'\n", bios_name);
+        error_report("could not load prom '%s'", bios_name);
         exit(1);
     }
 }
@@ -747,10 +741,9 @@ static void ram_init(hwaddr addr, ram_addr_t RAM_size,
 
     /* allocate RAM */
     if ((uint64_t)RAM_size > max_mem) {
-        fprintf(stderr,
-                "qemu: Too much memory for this machine: %d, maximum %d\n",
-                (unsigned int)(RAM_size / (1024 * 1024)),
-                (unsigned int)(max_mem / (1024 * 1024)));
+        error_report("Too much memory for this machine: %d, maximum %d",
+                     (unsigned int)(RAM_size / (1024 * 1024)),
+                     (unsigned int)(max_mem / (1024 * 1024)));
         exit(1);
     }
     dev = qdev_create(NULL, "memory");
@@ -821,6 +814,8 @@ static void sun4m_hw_init(const struct sun4m_hwdef *hwdef,
     DriveInfo *fd[MAX_FD];
     FWCfgState *fw_cfg;
     unsigned int num_vsimms;
+    DeviceState *dev;
+    SysBusDevice *s;
 
     /* init CPUs */
     for(i = 0; i < smp_cpus; i++) {
@@ -928,12 +923,36 @@ static void sun4m_hw_init(const struct sun4m_hwdef *hwdef,
 
     slavio_timer_init_all(hwdef->counter_base, slavio_irq[19], slavio_cpu_irq, smp_cpus);
 
-    slavio_serial_ms_kbd_init(hwdef->ms_kb_base, slavio_irq[14],
-                              !machine->enable_graphics, ESCC_CLOCK, 1);
     /* Slavio TTYA (base+4, Linux ttyS0) is the first QEMU serial device
        Slavio TTYB (base+0, Linux ttyS1) is the second QEMU serial device */
-    escc_init(hwdef->serial_base, slavio_irq[15], slavio_irq[15],
-              serial_hds[0], serial_hds[1], ESCC_CLOCK, 1);
+    dev = qdev_create(NULL, TYPE_ESCC);
+    qdev_prop_set_uint32(dev, "disabled", !machine->enable_graphics);
+    qdev_prop_set_uint32(dev, "frequency", ESCC_CLOCK);
+    qdev_prop_set_uint32(dev, "it_shift", 1);
+    qdev_prop_set_chr(dev, "chrB", NULL);
+    qdev_prop_set_chr(dev, "chrA", NULL);
+    qdev_prop_set_uint32(dev, "chnBtype", escc_mouse);
+    qdev_prop_set_uint32(dev, "chnAtype", escc_kbd);
+    qdev_init_nofail(dev);
+    s = SYS_BUS_DEVICE(dev);
+    sysbus_connect_irq(s, 0, slavio_irq[14]);
+    sysbus_connect_irq(s, 1, slavio_irq[14]);
+    sysbus_mmio_map(s, 0, hwdef->ms_kb_base);
+
+    dev = qdev_create(NULL, TYPE_ESCC);
+    qdev_prop_set_uint32(dev, "disabled", 0);
+    qdev_prop_set_uint32(dev, "frequency", ESCC_CLOCK);
+    qdev_prop_set_uint32(dev, "it_shift", 1);
+    qdev_prop_set_chr(dev, "chrB", serial_hds[1]);
+    qdev_prop_set_chr(dev, "chrA", serial_hds[0]);
+    qdev_prop_set_uint32(dev, "chnBtype", escc_serial);
+    qdev_prop_set_uint32(dev, "chnAtype", escc_serial);
+    qdev_init_nofail(dev);
+
+    s = SYS_BUS_DEVICE(dev);
+    sysbus_connect_irq(s, 0, slavio_irq[15]);
+    sysbus_connect_irq(s, 1,  slavio_irq[15]);
+    sysbus_mmio_map(s, 0, hwdef->serial_base);
 
     if (hwdef->apc_base) {
         apc_init(hwdef->apc_base, qemu_allocate_irq(cpu_halt_signal, NULL, 0));

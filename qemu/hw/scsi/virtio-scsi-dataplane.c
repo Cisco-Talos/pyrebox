@@ -107,9 +107,10 @@ static int virtio_scsi_vring_init(VirtIOSCSI *s, VirtQueue *vq, int n,
     return 0;
 }
 
-/* assumes s->ctx held */
-static void virtio_scsi_clear_aio(VirtIOSCSI *s)
+/* Context: BH in IOThread */
+static void virtio_scsi_dataplane_stop_bh(void *opaque)
 {
+    VirtIOSCSI *s = opaque;
     VirtIOSCSICommon *vs = VIRTIO_SCSI_COMMON(s);
     int i;
 
@@ -171,10 +172,11 @@ int virtio_scsi_dataplane_start(VirtIODevice *vdev)
     return 0;
 
 fail_vrings:
-    virtio_scsi_clear_aio(s);
+    aio_wait_bh_oneshot(s->ctx, virtio_scsi_dataplane_stop_bh, s);
     aio_context_release(s->ctx);
     for (i = 0; i < vs->conf.num_queues + 2; i++) {
         virtio_bus_set_host_notifier(VIRTIO_BUS(qbus), i, false);
+        virtio_bus_cleanup_host_notifier(VIRTIO_BUS(qbus), i);
     }
     k->set_guest_notifiers(qbus->parent, vs->conf.num_queues + 2, false);
 fail_guest_notifiers:
@@ -206,13 +208,14 @@ void virtio_scsi_dataplane_stop(VirtIODevice *vdev)
     s->dataplane_stopping = true;
 
     aio_context_acquire(s->ctx);
-    virtio_scsi_clear_aio(s);
+    aio_wait_bh_oneshot(s->ctx, virtio_scsi_dataplane_stop_bh, s);
     aio_context_release(s->ctx);
 
     blk_drain_all(); /* ensure there are no in-flight requests */
 
     for (i = 0; i < vs->conf.num_queues + 2; i++) {
         virtio_bus_set_host_notifier(VIRTIO_BUS(qbus), i, false);
+        virtio_bus_cleanup_host_notifier(VIRTIO_BUS(qbus), i);
     }
 
     /* Clean up guest notifier (irq) */

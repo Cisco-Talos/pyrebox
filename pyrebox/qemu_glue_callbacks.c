@@ -31,7 +31,6 @@
 #include "qapi/qmp/qstring.h"
 #include "qemu/option.h"
 #include "migration/vmstate.h"
-#include "qapi-types.h"
 #include "sysemu/sysemu.h"
 #include "monitor/monitor.h"
 #include "cpu.h"

@@ -15,6 +15,7 @@
 #include "hw/xen/xen_backend.h"
 #include "hw/9pfs/xen-9pfs.h"
 #include "qemu/config-file.h"
+#include "qemu/option.h"
 #include "fsdev/qemu-fsdev.h"
 
 #define VERSIONS "1"
@@ -233,7 +234,7 @@ static void xen_9pfs_push_and_notify(V9fsPDU *pdu)
     qemu_bh_schedule(ring->bh);
 }
 
-static const struct V9fsTransport xen_9p_transport = {
+static const V9fsTransport xen_9p_transport = {
     .pdu_vmarshal = xen_9pfs_pdu_vmarshal,
     .pdu_vunmarshal = xen_9pfs_pdu_vunmarshal,
     .init_in_iov_from_pdu = xen_9pfs_init_in_iov_from_pdu,
@@ -446,7 +447,6 @@ static int xen_9pfs_connect(struct XenDevice *xendev)
     xen_9pdev->id = s->fsconf.fsdev_id =
         g_strdup_printf("xen9p%d", xendev->dev);
     xen_9pdev->tag = s->fsconf.tag = xenstore_read_fe_str(xendev, "tag");
-    v9fs_register_transport(s, &xen_9p_transport);
     fsdev = qemu_opts_create(qemu_find_opts("fsdev"),
             s->fsconf.tag,
             1, NULL);
@@ -455,7 +455,7 @@ static int xen_9pfs_connect(struct XenDevice *xendev)
     qemu_opt_set(fsdev, "security_model", xen_9pdev->security_model, NULL);
     qemu_opts_set_id(fsdev, s->fsconf.fsdev_id);
     qemu_fsdev_add(fsdev);
-    v9fs_device_realize_common(s, NULL);
+    v9fs_device_realize_common(s, &xen_9p_transport, NULL);
 
     return 0;
 

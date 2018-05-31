@@ -33,7 +33,7 @@
 //#define DEBUG
 
 #ifdef DEBUG
-#define DPRINTF(fmt, ...) fprintf(stderr, "%s: " fmt, __FUNCTION__, ##__VA_ARGS__)
+#define DPRINTF(fmt, ...) fprintf(stderr, "%s: " fmt, __func__, ##__VA_ARGS__)
 #else
 #define DPRINTF(fmt, ...)
 #endif
@@ -1171,12 +1171,12 @@ PCIBus *gt64120_register(qemu_irq *pic)
     phb = PCI_HOST_BRIDGE(dev);
     memory_region_init(&d->pci0_mem, OBJECT(dev), "pci0-mem", UINT32_MAX);
     address_space_init(&d->pci0_mem_as, &d->pci0_mem, "pci0-mem");
-    phb->bus = pci_register_bus(dev, "pci",
-                                gt64120_pci_set_irq, gt64120_pci_map_irq,
-                                pic,
-                                &d->pci0_mem,
-                                get_system_io(),
-                                PCI_DEVFN(18, 0), 4, TYPE_PCI_BUS);
+    phb->bus = pci_register_root_bus(dev, "pci",
+                                     gt64120_pci_set_irq, gt64120_pci_map_irq,
+                                     pic,
+                                     &d->pci0_mem,
+                                     get_system_io(),
+                                     PCI_DEVFN(18, 0), 4, TYPE_PCI_BUS);
     qdev_init_nofail(dev);
     memory_region_init_io(&d->ISD_mem, OBJECT(dev), &isd_mem_ops, d, "isd-mem", 0x1000);
 

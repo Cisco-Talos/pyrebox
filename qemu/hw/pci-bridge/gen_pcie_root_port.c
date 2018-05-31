@@ -101,6 +101,7 @@ static void gen_rp_realize(DeviceState *dev, Error **errp)
 
 static const VMStateDescription vmstate_rp_dev = {
     .name = "pcie-root-port",
+    .priority = MIG_PRI_PCI_BUS,
     .version_id = 1,
     .minimum_version_id = 1,
     .post_load = pcie_cap_slot_post_load,
@@ -137,8 +138,7 @@ static void gen_rp_dev_class_init(ObjectClass *klass, void *data)
     dc->vmsd = &vmstate_rp_dev;
     dc->props = gen_rp_props;
 
-    rpc->parent_realize = dc->realize;
-    dc->realize = gen_rp_realize;
+    device_class_set_parent_realize(dc, gen_rp_realize, &rpc->parent_realize);
 
     rpc->aer_vector = gen_rp_aer_vector;
     rpc->interrupts_init = gen_rp_interrupts_init;

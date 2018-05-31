@@ -24,6 +24,7 @@
 #include "migration.h"
 #include "qemu-file.h"
 #include "io/channel-socket.h"
+#include "io/net-listener.h"
 #include "trace.h"
 
 
@@ -79,12 +80,10 @@ static void socket_outgoing_migration(QIOTask *task,
 
     if (qio_task_propagate_error(task, &err)) {
         trace_migration_socket_outgoing_error(error_get_pretty(err));
-        migrate_fd_error(data->s, err);
-        error_free(err);
     } else {
         trace_migration_socket_outgoing_connected(data->hostname);
-        migration_channel_connect(data->s, sioc, data->hostname);
     }
+    migration_channel_connect(data->s, sioc, data->hostname, err);
     object_unref(OBJECT(sioc));
 }
 
@@ -105,7 +104,8 @@ static void socket_start_outgoing_migration(MigrationState *s,
                                      saddr,
                                      socket_outgoing_migration,
                                      data,
-                                     socket_connect_data_free);
+                                     socket_connect_data_free,
+                                     NULL);
     qapi_free_SocketAddress(saddr);
 }
 
@@ -130,34 +130,20 @@ void unix_start_outgoing_migration(MigrationState *s,
 }
 
 
-static gboolean socket_accept_incoming_migration(QIOChannel *ioc,
-                                                 GIOCondition condition,
-                                                 gpointer opaque)
+static void socket_accept_incoming_migration(QIONetListener *listener,
+                                             QIOChannelSocket *cioc,
+                                             gpointer opaque)
 {
-    QIOChannelSocket *sioc;
-    Error *err = NULL;
-
-    sioc = qio_channel_socket_accept(QIO_CHANNEL_SOCKET(ioc),
-                                     &err);
-    if (!sioc) {
-        error_report("could not accept migration connection (%s)",
-                     error_get_pretty(err));
-        goto out;
-    }
-
     trace_migration_socket_incoming_accepted();
 
-    qio_channel_set_name(QIO_CHANNEL(sioc), "migration-socket-incoming");
-    migration_channel_process_incoming(QIO_CHANNEL(sioc));
-    object_unref(OBJECT(sioc));
+    qio_channel_set_name(QIO_CHANNEL(cioc), "migration-socket-incoming");
+    migration_channel_process_incoming(QIO_CHANNEL(cioc));
 
-out:
     if (migration_has_all_channels()) {
         /* Close listening socket as its no longer needed */
-        qio_channel_close(ioc, NULL);
-        return G_SOURCE_REMOVE;
-    } else {
-        return G_SOURCE_CONTINUE;
+        qio_net_listener_disconnect(listener);
+
+        object_unref(OBJECT(listener));
     }
 }
 
@@ -165,23 +151,18 @@ out:
 static void socket_start_incoming_migration(SocketAddress *saddr,
                                             Error **errp)
 {
-    QIOChannelSocket *listen_ioc = qio_channel_socket_new();
+    QIONetListener *listener = qio_net_listener_new();
 
-    qio_channel_set_name(QIO_CHANNEL(listen_ioc),
-                         "migration-socket-listener");
+    qio_net_listener_set_name(listener, "migration-socket-listener");
 
-    if (qio_channel_socket_listen_sync(listen_ioc, saddr, errp) < 0) {
-        object_unref(OBJECT(listen_ioc));
-        qapi_free_SocketAddress(saddr);
+    if (qio_net_listener_open_sync(listener, saddr, errp) < 0) {
+        object_unref(OBJECT(listener));
         return;
     }
 
-    qio_channel_add_watch(QIO_CHANNEL(listen_ioc),
-                          G_IO_IN,
-                          socket_accept_incoming_migration,
-                          listen_ioc,
-                          (GDestroyNotify)object_unref);
-    qapi_free_SocketAddress(saddr);
+    qio_net_listener_set_client_func(listener,
+                                     socket_accept_incoming_migration,
+                                     NULL, NULL);
 }
 
 void tcp_start_incoming_migration(const char *host_port, Error **errp)
@@ -191,6 +172,7 @@ void tcp_start_incoming_migration(const char *host_port, Error **errp)
     if (!err) {
         socket_start_incoming_migration(saddr, &err);
     }
+    qapi_free_SocketAddress(saddr);
     error_propagate(errp, err);
 }
 
@@ -198,4 +180,5 @@ void unix_start_incoming_migration(const char *path, Error **errp)
 {
     SocketAddress *saddr = unix_build_address(path);
     socket_start_incoming_migration(saddr, errp);
+    qapi_free_SocketAddress(saddr);
 }

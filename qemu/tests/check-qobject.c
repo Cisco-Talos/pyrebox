@@ -6,9 +6,14 @@
  * This work is licensed under the terms of the GNU LGPL, version 2.1 or later.
  * See the COPYING.LIB file in the top-level directory.
  */
-#include "qemu/osdep.h"
 
-#include "qapi/qmp/types.h"
+#include "qemu/osdep.h"
+#include "qapi/qmp/qbool.h"
+#include "qapi/qmp/qdict.h"
+#include "qapi/qmp/qlist.h"
+#include "qapi/qmp/qnull.h"
+#include "qapi/qmp/qnum.h"
+#include "qapi/qmp/qstring.h"
 #include "qemu-common.h"
 
 #include <math.h>
@@ -59,6 +64,8 @@ static void do_test_equality(bool expected, int _, ...)
             g_assert(qobject_is_equal(args[i], args[j]) == expected);
         }
     }
+
+    g_free(args);
 }
 
 #define check_equal(...) \
@@ -268,7 +275,7 @@ static void qobject_is_equal_dict_test(void)
                   dict_different_null_key, dict_longer, dict_shorter,
                   dict_nested);
 
-    dict_crumpled = qobject_to_qdict(qdict_crumple(dict_1, &local_err));
+    dict_crumpled = qobject_to(QDict, qdict_crumple(dict_1, &local_err));
     g_assert(!local_err);
     check_equal(dict_crumpled, dict_nested);
 

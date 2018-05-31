@@ -69,9 +69,10 @@
 
 #if defined(TARGET_I386) || defined(TARGET_ARM) || defined(TARGET_SH4) \
     || defined(TARGET_M68K) || defined(TARGET_CRIS) \
-    || defined(TARGET_UNICORE32) || defined(TARGET_S390X) \
+    || defined(TARGET_S390X) \
     || defined(TARGET_OPENRISC) || defined(TARGET_TILEGX) \
-    || defined(TARGET_NIOS2)
+    || defined(TARGET_NIOS2) || defined(TARGET_RISCV) \
+    || defined(TARGET_XTENSA)
 
 #define TARGET_IOC_SIZEBITS	14
 #define TARGET_IOC_DIRBITS	2
@@ -303,9 +304,9 @@ struct target_cmsghdr {
                                __target_cmsg_nxthdr(mhdr, cmsg, cmsg_start)
 #define TARGET_CMSG_ALIGN(len) (((len) + sizeof (abi_long) - 1) \
                                & (size_t) ~(sizeof (abi_long) - 1))
-#define TARGET_CMSG_SPACE(len) (TARGET_CMSG_ALIGN (len) \
-                               + TARGET_CMSG_ALIGN (sizeof (struct target_cmsghdr)))
-#define TARGET_CMSG_LEN(len)   (TARGET_CMSG_ALIGN (sizeof (struct target_cmsghdr)) + (len))
+#define TARGET_CMSG_SPACE(len) (sizeof(struct target_cmsghdr) + \
+                                TARGET_CMSG_ALIGN(len))
+#define TARGET_CMSG_LEN(len) (sizeof(struct target_cmsghdr) + (len))
 
 static __inline__ struct target_cmsghdr *
 __target_cmsg_nxthdr(struct target_msghdr *__mhdr,
@@ -351,19 +352,6 @@ struct  target_rusage {
 typedef struct {
         int     val[2];
 } kernel_fsid_t;
-
-struct kernel_statfs {
-	int f_type;
-	int f_bsize;
-	int f_blocks;
-	int f_bfree;
-	int f_bavail;
-	int f_files;
-	int f_ffree;
-        kernel_fsid_t f_fsid;
-	int f_namelen;
-	int f_spare[6];
-};
 
 struct target_dirent {
         abi_long        d_ino;
@@ -433,9 +421,10 @@ int do_sigaction(int sig, const struct target_sigaction *act,
 #if defined(TARGET_I386) || defined(TARGET_ARM) || defined(TARGET_SPARC) \
     || defined(TARGET_PPC) || defined(TARGET_MIPS) || defined(TARGET_SH4) \
     || defined(TARGET_M68K) || defined(TARGET_ALPHA) || defined(TARGET_CRIS) \
-    || defined(TARGET_MICROBLAZE) || defined(TARGET_UNICORE32) \
+    || defined(TARGET_MICROBLAZE) \
     || defined(TARGET_S390X) || defined(TARGET_OPENRISC) \
-    || defined(TARGET_TILEGX) || defined(TARGET_HPPA) || defined(TARGET_NIOS2)
+    || defined(TARGET_TILEGX) || defined(TARGET_HPPA) || defined(TARGET_NIOS2) \
+    || defined(TARGET_RISCV) || defined(TARGET_XTENSA)
 
 #if defined(TARGET_SPARC)
 #define TARGET_SA_NOCLDSTOP    8u
@@ -446,6 +435,7 @@ int do_sigaction(int sig, const struct target_sigaction *act,
 #define TARGET_SA_NODEFER      0x20u
 #define TARGET_SA_RESETHAND    4u
 #define TARGET_ARCH_HAS_SA_RESTORER 1
+#define TARGET_ARCH_HAS_KA_RESTORER 1
 #elif defined(TARGET_MIPS)
 #define TARGET_SA_NOCLDSTOP	0x00000001
 #define TARGET_SA_NOCLDWAIT	0x00010000
@@ -753,6 +743,9 @@ struct target_sigaction {
         abi_ulong sa_restorer;
 #endif
         target_sigset_t sa_mask;
+#ifdef TARGET_ARCH_HAS_KA_RESTORER
+        abi_ulong ka_restorer;
+#endif
 };
 #endif
 
@@ -1391,6 +1384,18 @@ struct target_winsize {
 #define TARGET_MAP_NONBLOCK	0x20000		/* do not block on IO */
 #define TARGET_MAP_STACK        0x40000         /* ignored */
 #define TARGET_MAP_HUGETLB      0x80000         /* create a huge page mapping */
+#elif defined(TARGET_XTENSA)
+#define TARGET_MAP_FIXED	0x10		/* Interpret addr exactly */
+#define TARGET_MAP_ANONYMOUS	0x0800		/* don't use a file */
+#define TARGET_MAP_GROWSDOWN	0x1000		/* stack-like segment */
+#define TARGET_MAP_DENYWRITE	0x2000		/* ETXTBSY */
+#define TARGET_MAP_EXECUTABLE	0x4000		/* mark it as an executable */
+#define TARGET_MAP_LOCKED	0x8000		/* pages are locked */
+#define TARGET_MAP_NORESERVE	0x0400		/* don't check for reservations */
+#define TARGET_MAP_POPULATE	0x10000		/* populate (prefault) pagetables */
+#define TARGET_MAP_NONBLOCK	0x20000		/* do not block on IO */
+#define TARGET_MAP_STACK	0x40000
+#define TARGET_MAP_HUGETLB  0x80000         /* create a huge page mapping */
 #else
 #define TARGET_MAP_FIXED	0x10		/* Interpret addr exactly */
 #define TARGET_MAP_ANONYMOUS	0x20		/* don't use a file */
@@ -1408,7 +1413,7 @@ struct target_winsize {
 
 #if (defined(TARGET_I386) && defined(TARGET_ABI32)) \
     || (defined(TARGET_ARM) && defined(TARGET_ABI32)) \
-    || defined(TARGET_CRIS) || defined(TARGET_UNICORE32)
+    || defined(TARGET_CRIS)
 struct target_stat {
 	unsigned short st_dev;
 	unsigned short __pad1;
@@ -2092,8 +2097,53 @@ struct target_stat {
     abi_ulong  target_st_ctime_nsec;
     unsigned int __unused[2];
 };
+#elif defined(TARGET_XTENSA)
+struct target_stat {
+    abi_ulong       st_dev;
+    abi_ulong       st_ino;
+    unsigned int    st_mode;
+    unsigned int    st_nlink;
+    unsigned int    st_uid;
+    unsigned int    st_gid;
+    abi_ulong       st_rdev;
+    abi_long        st_size;
+    abi_ulong       st_blksize;
+    abi_ulong       st_blocks;
+    abi_ulong       target_st_atime;
+    abi_ulong       target_st_atime_nsec;
+    abi_ulong       target_st_mtime;
+    abi_ulong       target_st_mtime_nsec;
+    abi_ulong       target_st_ctime;
+    abi_ulong       target_st_ctime_nsec;
+    abi_ulong       __unused4;
+    abi_ulong       __unused5;
+};
+
+#define TARGET_HAS_STRUCT_STAT64
+struct target_stat64  {
+    uint64_t st_dev;            /* Device */
+    uint64_t st_ino;            /* File serial number */
+    unsigned int  st_mode;      /* File mode. */
+    unsigned int  st_nlink;     /* Link count. */
+    unsigned int  st_uid;       /* User ID of the file's owner. */
+    unsigned int  st_gid;       /* Group ID of the file's group. */
+    uint64_t st_rdev;           /* Device number, if device. */
+    int64_t st_size;            /* Size of file, in bytes. */
+    abi_ulong st_blksize;       /* Optimal block size for I/O. */
+    abi_ulong __unused2;
+    uint64_t st_blocks;         /* Number 512-byte blocks allocated. */
+    abi_ulong target_st_atime;  /* Time of last access. */
+    abi_ulong target_st_atime_nsec;
+    abi_ulong target_st_mtime;  /* Time of last modification. */
+    abi_ulong target_st_mtime_nsec;
+    abi_ulong target_st_ctime;  /* Time of last status change. */
+    abi_ulong target_st_ctime_nsec;
+    abi_ulong __unused4;
+    abi_ulong __unused5;
+};
+
 #elif defined(TARGET_OPENRISC) || defined(TARGET_TILEGX) || \
-      defined(TARGET_NIOS2)
+      defined(TARGET_NIOS2) || defined(TARGET_RISCV)
 
 /* These are the asm-generic versions of the stat and stat64 structures */
 
@@ -2120,6 +2170,7 @@ struct target_stat {
     unsigned int __unused5;
 };
 
+#if !defined(TARGET_RISCV64)
 #define TARGET_HAS_STRUCT_STAT64
 struct target_stat64 {
     uint64_t st_dev;
@@ -2143,6 +2194,7 @@ struct target_stat64 {
     unsigned int __unused4;
     unsigned int __unused5;
 };
+#endif
 
 #elif defined(TARGET_HPPA)
 
@@ -2223,7 +2275,8 @@ struct target_statfs {
 	/* Linux specials */
 	target_fsid_t		f_fsid;
 	int32_t			f_namelen;
-	int32_t			f_spare[6];
+	int32_t			f_flags;
+	int32_t			f_spare[5];
 };
 #else
 struct target_statfs {
@@ -2239,7 +2292,8 @@ struct target_statfs {
 	/* Linux specials */
 	target_fsid_t		f_fsid;
 	abi_long		f_namelen;
-	abi_long		f_spare[6];
+	abi_long		f_flags;
+	abi_long		f_spare[5];
 };
 #endif
 
@@ -2255,11 +2309,12 @@ struct target_statfs64 {
 	uint64_t	f_bavail;
 	target_fsid_t	f_fsid;
 	uint32_t	f_namelen;
-	uint32_t	f_spare[6];
+	uint32_t	f_flags;
+	uint32_t	f_spare[5];
 };
 #elif (defined(TARGET_PPC64) || defined(TARGET_X86_64) || \
-       defined(TARGET_SPARC64) || defined(TARGET_AARCH64)) && \
-       !defined(TARGET_ABI32)
+       defined(TARGET_SPARC64) || defined(TARGET_AARCH64) || \
+       defined(TARGET_RISCV)) && !defined(TARGET_ABI32)
 struct target_statfs {
 	abi_long f_type;
 	abi_long f_bsize;
@@ -2271,7 +2326,8 @@ struct target_statfs {
 	target_fsid_t f_fsid;
 	abi_long f_namelen;
 	abi_long f_frsize;
-	abi_long f_spare[5];
+	abi_long f_flags;
+	abi_long f_spare[4];
 };
 
 struct target_statfs64 {
@@ -2285,7 +2341,8 @@ struct target_statfs64 {
 	target_fsid_t f_fsid;
 	abi_long f_namelen;
 	abi_long f_frsize;
-	abi_long f_spare[5];
+	abi_long f_flags;
+	abi_long f_spare[4];
 };
 #elif defined(TARGET_S390X)
 struct target_statfs {
@@ -2299,7 +2356,9 @@ struct target_statfs {
     kernel_fsid_t f_fsid;
     int32_t  f_namelen;
     int32_t  f_frsize;
-    int32_t  f_spare[5];
+    int32_t  f_flags;
+    int32_t  f_spare[4];
+
 };
 
 struct target_statfs64 {
@@ -2313,7 +2372,8 @@ struct target_statfs64 {
     kernel_fsid_t f_fsid;
     int32_t  f_namelen;
     int32_t  f_frsize;
-    int32_t  f_spare[5];
+    int32_t  f_flags;
+    int32_t  f_spare[4];
 };
 #else
 struct target_statfs {
@@ -2327,7 +2387,8 @@ struct target_statfs {
 	target_fsid_t f_fsid;
 	uint32_t f_namelen;
 	uint32_t f_frsize;
-	uint32_t f_spare[5];
+	uint32_t f_flags;
+	uint32_t f_spare[4];
 };
 
 struct target_statfs64 {
@@ -2341,7 +2402,8 @@ struct target_statfs64 {
 	target_fsid_t f_fsid;
         uint32_t f_namelen;
 	uint32_t f_frsize;
-	uint32_t f_spare[5];
+	uint32_t f_flags;
+	uint32_t f_spare[4];
 };
 #endif
 
@@ -2503,6 +2565,7 @@ struct target_statfs64 {
 #define TARGET_O_CLOEXEC      0x400000
 #define TARGET___O_SYNC       0x800000
 #define TARGET_O_PATH        0x1000000
+#define TARGET___O_TMPFILE   0x2000000
 #endif
 
 /* <asm-generic/fcntl.h> values follow.  */
@@ -2590,7 +2653,8 @@ struct target_flock64 {
     short  l_whence;
 #if defined(TARGET_PPC) || defined(TARGET_X86_64) || defined(TARGET_MIPS) \
     || defined(TARGET_SPARC) || defined(TARGET_HPPA) \
-    || defined(TARGET_MICROBLAZE) || defined(TARGET_TILEGX)
+    || defined(TARGET_MICROBLAZE) || defined(TARGET_TILEGX) \
+    || defined(TARGET_XTENSA)
     int __pad;
 #endif
     abi_llong l_start;

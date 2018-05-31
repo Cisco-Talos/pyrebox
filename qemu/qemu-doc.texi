@@ -140,6 +140,7 @@ accelerator is required to use more than one host CPU for emulation.
 * direct_linux_boot::  Direct Linux Boot
 * pcsys_usb::          USB emulation
 * vnc_security::       VNC security
+* network_tls::        TLS setup for network services
 * gdb_usage::          GDB usage
 * pcsys_os_specific::  Target OS specific information
 @end menu
@@ -242,6 +243,222 @@ Linux should boot and give you a prompt.
 targets do not need a disk image.
 
 @include qemu-options.texi
+
+@c man end
+
+@subsection Device URL Syntax
+@c TODO merge this with section Disk Images
+
+@c man begin NOTES
+
+In addition to using normal file images for the emulated storage devices,
+QEMU can also use networked resources such as iSCSI devices. These are
+specified using a special URL syntax.
+
+@table @option
+@item iSCSI
+iSCSI support allows QEMU to access iSCSI resources directly and use as
+images for the guest storage. Both disk and cdrom images are supported.
+
+Syntax for specifying iSCSI LUNs is
+``iscsi://<target-ip>[:<port>]/<target-iqn>/<lun>''
+
+By default qemu will use the iSCSI initiator-name
+'iqn.2008-11.org.linux-kvm[:<name>]' but this can also be set from the command
+line or a configuration file.
+
+Since version Qemu 2.4 it is possible to specify a iSCSI request timeout to detect
+stalled requests and force a reestablishment of the session. The timeout
+is specified in seconds. The default is 0 which means no timeout. Libiscsi
+1.15.0 or greater is required for this feature.
+
+Example (without authentication):
+@example
+qemu-system-i386 -iscsi initiator-name=iqn.2001-04.com.example:my-initiator \
+                 -cdrom iscsi://192.0.2.1/iqn.2001-04.com.example/2 \
+                 -drive file=iscsi://192.0.2.1/iqn.2001-04.com.example/1
+@end example
+
+Example (CHAP username/password via URL):
+@example
+qemu-system-i386 -drive file=iscsi://user%password@@192.0.2.1/iqn.2001-04.com.example/1
+@end example
+
+Example (CHAP username/password via environment variables):
+@example
+LIBISCSI_CHAP_USERNAME="user" \
+LIBISCSI_CHAP_PASSWORD="password" \
+qemu-system-i386 -drive file=iscsi://192.0.2.1/iqn.2001-04.com.example/1
+@end example
+
+@item NBD
+QEMU supports NBD (Network Block Devices) both using TCP protocol as well
+as Unix Domain Sockets.
+
+Syntax for specifying a NBD device using TCP
+``nbd:<server-ip>:<port>[:exportname=<export>]''
+
+Syntax for specifying a NBD device using Unix Domain Sockets
+``nbd:unix:<domain-socket>[:exportname=<export>]''
+
+Example for TCP
+@example
+qemu-system-i386 --drive file=nbd:192.0.2.1:30000
+@end example
+
+Example for Unix Domain Sockets
+@example
+qemu-system-i386 --drive file=nbd:unix:/tmp/nbd-socket
+@end example
+
+@item SSH
+QEMU supports SSH (Secure Shell) access to remote disks.
+
+Examples:
+@example
+qemu-system-i386 -drive file=ssh://user@@host/path/to/disk.img
+qemu-system-i386 -drive file.driver=ssh,file.user=user,file.host=host,file.port=22,file.path=/path/to/disk.img
+@end example
+
+Currently authentication must be done using ssh-agent.  Other
+authentication methods may be supported in future.
+
+@item Sheepdog
+Sheepdog is a distributed storage system for QEMU.
+QEMU supports using either local sheepdog devices or remote networked
+devices.
+
+Syntax for specifying a sheepdog device
+@example
+sheepdog[+tcp|+unix]://[host:port]/vdiname[?socket=path][#snapid|#tag]
+@end example
+
+Example
+@example
+qemu-system-i386 --drive file=sheepdog://192.0.2.1:30000/MyVirtualMachine
+@end example
+
+See also @url{https://sheepdog.github.io/sheepdog/}.
+
+@item GlusterFS
+GlusterFS is a user space distributed file system.
+QEMU supports the use of GlusterFS volumes for hosting VM disk images using
+TCP, Unix Domain Sockets and RDMA transport protocols.
+
+Syntax for specifying a VM disk image on GlusterFS volume is
+@example
+
+URI:
+gluster[+type]://[host[:port]]/volume/path[?socket=...][,debug=N][,logfile=...]
+
+JSON:
+'json:@{"driver":"qcow2","file":@{"driver":"gluster","volume":"testvol","path":"a.img","debug":N,"logfile":"...",
+@                                 "server":[@{"type":"tcp","host":"...","port":"..."@},
+@                                           @{"type":"unix","socket":"..."@}]@}@}'
+@end example
+
+
+Example
+@example
+URI:
+qemu-system-x86_64 --drive file=gluster://192.0.2.1/testvol/a.img,
+@                               file.debug=9,file.logfile=/var/log/qemu-gluster.log
+
+JSON:
+qemu-system-x86_64 'json:@{"driver":"qcow2",
+@                          "file":@{"driver":"gluster",
+@                                   "volume":"testvol","path":"a.img",
+@                                   "debug":9,"logfile":"/var/log/qemu-gluster.log",
+@                                   "server":[@{"type":"tcp","host":"1.2.3.4","port":24007@},
+@                                             @{"type":"unix","socket":"/var/run/glusterd.socket"@}]@}@}'
+qemu-system-x86_64 -drive driver=qcow2,file.driver=gluster,file.volume=testvol,file.path=/path/a.img,
+@                                      file.debug=9,file.logfile=/var/log/qemu-gluster.log,
+@                                      file.server.0.type=tcp,file.server.0.host=1.2.3.4,file.server.0.port=24007,
+@                                      file.server.1.type=unix,file.server.1.socket=/var/run/glusterd.socket
+@end example
+
+See also @url{http://www.gluster.org}.
+
+@item HTTP/HTTPS/FTP/FTPS
+QEMU supports read-only access to files accessed over http(s) and ftp(s).
+
+Syntax using a single filename:
+@example
+<protocol>://[<username>[:<password>]@@]<host>/<path>
+@end example
+
+where:
+@table @option
+@item protocol
+'http', 'https', 'ftp', or 'ftps'.
+
+@item username
+Optional username for authentication to the remote server.
+
+@item password
+Optional password for authentication to the remote server.
+
+@item host
+Address of the remote server.
+
+@item path
+Path on the remote server, including any query string.
+@end table
+
+The following options are also supported:
+@table @option
+@item url
+The full URL when passing options to the driver explicitly.
+
+@item readahead
+The amount of data to read ahead with each range request to the remote server.
+This value may optionally have the suffix 'T', 'G', 'M', 'K', 'k' or 'b'. If it
+does not have a suffix, it will be assumed to be in bytes. The value must be a
+multiple of 512 bytes. It defaults to 256k.
+
+@item sslverify
+Whether to verify the remote server's certificate when connecting over SSL. It
+can have the value 'on' or 'off'. It defaults to 'on'.
+
+@item cookie
+Send this cookie (it can also be a list of cookies separated by ';') with
+each outgoing request.  Only supported when using protocols such as HTTP
+which support cookies, otherwise ignored.
+
+@item timeout
+Set the timeout in seconds of the CURL connection. This timeout is the time
+that CURL waits for a response from the remote server to get the size of the
+image to be downloaded. If not set, the default timeout of 5 seconds is used.
+@end table
+
+Note that when passing options to qemu explicitly, @option{driver} is the value
+of <protocol>.
+
+Example: boot from a remote Fedora 20 live ISO image
+@example
+qemu-system-x86_64 --drive media=cdrom,file=http://dl.fedoraproject.org/pub/fedora/linux/releases/20/Live/x86_64/Fedora-Live-Desktop-x86_64-20-1.iso,readonly
+
+qemu-system-x86_64 --drive media=cdrom,file.driver=http,file.url=http://dl.fedoraproject.org/pub/fedora/linux/releases/20/Live/x86_64/Fedora-Live-Desktop-x86_64-20-1.iso,readonly
+@end example
+
+Example: boot from a remote Fedora 20 cloud image using a local overlay for
+writes, copy-on-read, and a readahead of 64k
+@example
+qemu-img create -f qcow2 -o backing_file='json:@{"file.driver":"http",, "file.url":"https://dl.fedoraproject.org/pub/fedora/linux/releases/20/Images/x86_64/Fedora-x86_64-20-20131211.1-sda.qcow2",, "file.readahead":"64k"@}' /tmp/Fedora-x86_64-20-20131211.1-sda.qcow2
+
+qemu-system-x86_64 -drive file=/tmp/Fedora-x86_64-20-20131211.1-sda.qcow2,copy-on-read=on
+@end example
+
+Example: boot from an image stored on a VMware vSphere server with a self-signed
+certificate using a local overlay for writes, a readahead of 64k and a timeout
+of 10 seconds.
+@example
+qemu-img create -f qcow2 -o backing_file='json:@{"file.driver":"https",, "file.url":"https://user:password@@vsphere.example.com/folder/test/test-flat.vmdk?dcPath=Datacenter&dsName=datastore1",, "file.sslverify":"off",, "file.readahead":"64k",, "file.timeout":10@}' /tmp/test.qcow2
+
+qemu-system-x86_64 -drive file=/tmp/test.qcow2
+@end example
+
+@end table
 
 @c man end
 
@@ -405,6 +622,7 @@ encrypted disk images.
 * disk_images_iscsi::         iSCSI LUNs
 * disk_images_gluster::       GlusterFS disk images
 * disk_images_ssh::           Secure Shell (ssh) disk images
+* disk_images_nvme::          NVMe userspace driver
 * disk_image_locking::        Disk image file locking
 @end menu
 
@@ -824,7 +1042,6 @@ considerations depending on the deployment scenarios.
 * vnc_sec_certificate_pw::
 * vnc_sec_sasl::
 * vnc_sec_certificate_sasl::
-* vnc_generate_cert::
 * vnc_setup_sasl::
 @end menu
 @node vnc_sec_none
@@ -944,129 +1161,16 @@ with the aforementioned TLS + x509 options:
 qemu-system-i386 [...OPTIONS...] -vnc :1,tls,x509,sasl -monitor stdio
 @end example
 
-
-@node vnc_generate_cert
-@subsection Generating certificates for VNC
-
-The GNU TLS packages provides a command called @code{certtool} which can
-be used to generate certificates and keys in PEM format. At a minimum it
-is necessary to setup a certificate authority, and issue certificates to
-each server. If using certificates for authentication, then each client
-will also need to be issued a certificate. The recommendation is for the
-server to keep its certificates in either @code{/etc/pki/qemu} or for
-unprivileged users in @code{$HOME/.pki/qemu}.
-
-@menu
-* vnc_generate_ca::
-* vnc_generate_server::
-* vnc_generate_client::
-@end menu
-@node vnc_generate_ca
-@subsubsection Setup the Certificate Authority
-
-This step only needs to be performed once per organization / organizational
-unit. First the CA needs a private key. This key must be kept VERY secret
-and secure. If this key is compromised the entire trust chain of the certificates
-issued with it is lost.
-
-@example
-# certtool --generate-privkey > ca-key.pem
-@end example
-
-A CA needs to have a public certificate. For simplicity it can be a self-signed
-certificate, or one issue by a commercial certificate issuing authority. To
-generate a self-signed certificate requires one core piece of information, the
-name of the organization.
-
-@example
-# cat > ca.info <<EOF
-cn = Name of your organization
-ca
-cert_signing_key
-EOF
-# certtool --generate-self-signed \
-           --load-privkey ca-key.pem
-           --template ca.info \
-           --outfile ca-cert.pem
-@end example
-
-The @code{ca-cert.pem} file should be copied to all servers and clients wishing to utilize
-TLS support in the VNC server. The @code{ca-key.pem} must not be disclosed/copied at all.
-
-@node vnc_generate_server
-@subsubsection Issuing server certificates
-
-Each server (or host) needs to be issued with a key and certificate. When connecting
-the certificate is sent to the client which validates it against the CA certificate.
-The core piece of information for a server certificate is the hostname. This should
-be the fully qualified hostname that the client will connect with, since the client
-will typically also verify the hostname in the certificate. On the host holding the
-secure CA private key:
-
-@example
-# cat > server.info <<EOF
-organization = Name  of your organization
-cn = server.foo.example.com
-tls_www_server
-encryption_key
-signing_key
-EOF
-# certtool --generate-privkey > server-key.pem
-# certtool --generate-certificate \
-           --load-ca-certificate ca-cert.pem \
-           --load-ca-privkey ca-key.pem \
-           --load-privkey server-key.pem \
-           --template server.info \
-           --outfile server-cert.pem
-@end example
-
-The @code{server-key.pem} and @code{server-cert.pem} files should now be securely copied
-to the server for which they were generated. The @code{server-key.pem} is security
-sensitive and should be kept protected with file mode 0600 to prevent disclosure.
-
-@node vnc_generate_client
-@subsubsection Issuing client certificates
-
-If the QEMU VNC server is to use the @code{x509verify} option to validate client
-certificates as its authentication mechanism, each client also needs to be issued
-a certificate. The client certificate contains enough metadata to uniquely identify
-the client, typically organization, state, city, building, etc. On the host holding
-the secure CA private key:
-
-@example
-# cat > client.info <<EOF
-country = GB
-state = London
-locality = London
-organization = Name of your organization
-cn = client.foo.example.com
-tls_www_client
-encryption_key
-signing_key
-EOF
-# certtool --generate-privkey > client-key.pem
-# certtool --generate-certificate \
-           --load-ca-certificate ca-cert.pem \
-           --load-ca-privkey ca-key.pem \
-           --load-privkey client-key.pem \
-           --template client.info \
-           --outfile client-cert.pem
-@end example
-
-The @code{client-key.pem} and @code{client-cert.pem} files should now be securely
-copied to the client for which they were generated.
-
-
 @node vnc_setup_sasl
 
 @subsection Configuring SASL mechanisms
 
 The following documentation assumes use of the Cyrus SASL implementation on a
-Linux host, but the principals should apply to any other SASL impl. When SASL
-is enabled, the mechanism configuration will be loaded from system default
-SASL service config /etc/sasl2/qemu.conf. If running QEMU as an
-unprivileged user, an environment variable SASL_CONF_PATH can be used
-to make it search alternate locations for the service config.
+Linux host, but the principles should apply to any other SASL implementation
+or host. When SASL is enabled, the mechanism configuration will be loaded from
+system default SASL service config /etc/sasl2/qemu.conf. If running QEMU as an
+unprivileged user, an environment variable SASL_CONF_PATH can be used to make
+it search alternate locations for the service config file.
 
 If the TLS option is enabled for VNC, then it will provide session encryption,
 otherwise the SASL mechanism will have to provide encryption. In the latter
@@ -1101,12 +1205,305 @@ mech_list: scram-sha-1
 sasldb_path: /etc/qemu/passwd.db
 @end example
 
-The saslpasswd2 program can be used to populate the passwd.db file with
-accounts.
+The @code{saslpasswd2} program can be used to populate the @code{passwd.db}
+file with accounts.
 
 Other SASL configurations will be left as an exercise for the reader. Note that
-all mechanisms except GSSAPI, should be combined with use of TLS to ensure a
+all mechanisms, except GSSAPI, should be combined with use of TLS to ensure a
 secure data channel.
+
+
+@node network_tls
+@section TLS setup for network services
+
+Almost all network services in QEMU have the ability to use TLS for
+session data encryption, along with x509 certificates for simple
+client authentication. What follows is a description of how to
+generate certificates suitable for usage with QEMU, and applies to
+the VNC server, character devices with the TCP backend, NBD server
+and client, and migration server and client.
+
+At a high level, QEMU requires certificates and private keys to be
+provided in PEM format. Aside from the core fields, the certificates
+should include various extension data sets, including v3 basic
+constraints data, key purpose, key usage and subject alt name.
+
+The GnuTLS package includes a command called @code{certtool} which can
+be used to easily generate certificates and keys in the required format
+with expected data present. Alternatively a certificate management
+service may be used.
+
+At a minimum it is necessary to setup a certificate authority, and
+issue certificates to each server. If using x509 certificates for
+authentication, then each client will also need to be issued a
+certificate.
+
+Assuming that the QEMU network services will only ever be exposed to
+clients on a private intranet, there is no need to use a commercial
+certificate authority to create certificates. A self-signed CA is
+sufficient, and in fact likely to be more secure since it removes
+the ability of malicious 3rd parties to trick the CA into mis-issuing
+certs for impersonating your services. The only likely exception
+where a commercial CA might be desirable is if enabling the VNC
+websockets server and exposing it directly to remote browser clients.
+In such a case it might be useful to use a commercial CA to avoid
+needing to install custom CA certs in the web browsers.
+
+The recommendation is for the server to keep its certificates in either
+@code{/etc/pki/qemu} or for unprivileged users in @code{$HOME/.pki/qemu}.
+
+@menu
+* tls_generate_ca::
+* tls_generate_server::
+* tls_generate_client::
+* tls_creds_setup::
+@end menu
+@node tls_generate_ca
+@subsection Setup the Certificate Authority
+
+This step only needs to be performed once per organization / organizational
+unit. First the CA needs a private key. This key must be kept VERY secret
+and secure. If this key is compromised the entire trust chain of the certificates
+issued with it is lost.
+
+@example
+# certtool --generate-privkey > ca-key.pem
+@end example
+
+To generate a self-signed certificate requires one core piece of information,
+the name of the organization. A template file @code{ca.info} should be
+populated with the desired data to avoid having to deal with interactive
+prompts from certtool:
+@example
+# cat > ca.info <<EOF
+cn = Name of your organization
+ca
+cert_signing_key
+EOF
+# certtool --generate-self-signed \
+           --load-privkey ca-key.pem
+           --template ca.info \
+           --outfile ca-cert.pem
+@end example
+
+The @code{ca} keyword in the template sets the v3 basic constraints extension
+to indicate this certificate is for a CA, while @code{cert_signing_key} sets
+the key usage extension to indicate this will be used for signing other keys.
+The generated @code{ca-cert.pem} file should be copied to all servers and
+clients wishing to utilize TLS support in the VNC server. The @code{ca-key.pem}
+must not be disclosed/copied anywhere except the host responsible for issuing
+certificates.
+
+@node tls_generate_server
+@subsection Issuing server certificates
+
+Each server (or host) needs to be issued with a key and certificate. When connecting
+the certificate is sent to the client which validates it against the CA certificate.
+The core pieces of information for a server certificate are the hostnames and/or IP
+addresses that will be used by clients when connecting. The hostname / IP address
+that the client specifies when connecting will be validated against the hostname(s)
+and IP address(es) recorded in the server certificate, and if no match is found
+the client will close the connection.
+
+Thus it is recommended that the server certificate include both the fully qualified
+and unqualified hostnames. If the server will have permanently assigned IP address(es),
+and clients are likely to use them when connecting, they may also be included in the
+certificate. Both IPv4 and IPv6 addresses are supported. Historically certificates
+only included 1 hostname in the @code{CN} field, however, usage of this field for
+validation is now deprecated. Instead modern TLS clients will validate against the
+Subject Alt Name extension data, which allows for multiple entries. In the future
+usage of the @code{CN} field may be discontinued entirely, so providing SAN
+extension data is strongly recommended.
+
+On the host holding the CA, create template files containing the information
+for each server, and use it to issue server certificates.
+
+@example
+# cat > server-hostNNN.info <<EOF
+organization = Name  of your organization
+cn = hostNNN.foo.example.com
+dns_name = hostNNN
+dns_name = hostNNN.foo.example.com
+ip_address = 10.0.1.87
+ip_address = 192.8.0.92
+ip_address = 2620:0:cafe::87
+ip_address = 2001:24::92
+tls_www_server
+encryption_key
+signing_key
+EOF
+# certtool --generate-privkey > server-hostNNN-key.pem
+# certtool --generate-certificate \
+           --load-ca-certificate ca-cert.pem \
+           --load-ca-privkey ca-key.pem \
+           --load-privkey server-hostNNN-key.pem \
+           --template server-hostNNN.info \
+           --outfile server-hostNNN-cert.pem
+@end example
+
+The @code{dns_name} and @code{ip_address} fields in the template are setting
+the subject alt name extension data. The @code{tls_www_server} keyword is the
+key purpose extension to indicate this certificate is intended for usage in
+a web server. Although QEMU network services are not in fact HTTP servers
+(except for VNC websockets), setting this key purpose is still recommended.
+The @code{encryption_key} and @code{signing_key} keyword is the key usage
+extension to indicate this certificate is intended for usage in the data
+session.
+
+The @code{server-hostNNN-key.pem} and @code{server-hostNNN-cert.pem} files
+should now be securely copied to the server for which they were generated,
+and renamed to @code{server-key.pem} and @code{server-cert.pem} when added
+to the @code{/etc/pki/qemu} directory on the target host. The @code{server-key.pem}
+file is security sensitive and should be kept protected with file mode 0600
+to prevent disclosure.
+
+@node tls_generate_client
+@subsection Issuing client certificates
+
+The QEMU x509 TLS credential setup defaults to enabling client verification
+using certificates, providing a simple authentication mechanism. If this
+default is used, each client also needs to be issued a certificate. The client
+certificate contains enough metadata to uniquely identify the client with the
+scope of the certificate authority. The client certificate would typically
+include fields for organization, state, city, building, etc.
+
+Once again on the host holding the CA, create template files containing the
+information for each client, and use it to issue client certificates.
+
+
+@example
+# cat > client-hostNNN.info <<EOF
+country = GB
+state = London
+locality = City Of London
+organization = Name of your organization
+cn = hostNNN.foo.example.com
+tls_www_client
+encryption_key
+signing_key
+EOF
+# certtool --generate-privkey > client-hostNNN-key.pem
+# certtool --generate-certificate \
+           --load-ca-certificate ca-cert.pem \
+           --load-ca-privkey ca-key.pem \
+           --load-privkey client-hostNNN-key.pem \
+           --template client-hostNNN.info \
+           --outfile client-hostNNN-cert.pem
+@end example
+
+The subject alt name extension data is not required for clients, so the
+the @code{dns_name} and @code{ip_address} fields are not included.
+The @code{tls_www_client} keyword is the key purpose extension to indicate
+this certificate is intended for usage in a web client. Although QEMU
+network clients are not in fact HTTP clients, setting this key purpose is
+still recommended. The @code{encryption_key} and @code{signing_key} keyword
+is the key usage extension to indicate this certificate is intended for
+usage in the data session.
+
+The @code{client-hostNNN-key.pem} and @code{client-hostNNN-cert.pem} files
+should now be securely copied to the client for which they were generated,
+and renamed to @code{client-key.pem} and @code{client-cert.pem} when added
+to the @code{/etc/pki/qemu} directory on the target host. The @code{client-key.pem}
+file is security sensitive and should be kept protected with file mode 0600
+to prevent disclosure.
+
+If a single host is going to be using TLS in both a client and server
+role, it is possible to create a single certificate to cover both roles.
+This would be quite common for the migration and NBD services, where a
+QEMU process will be started by accepting a TLS protected incoming migration,
+and later itself be migrated out to another host. To generate a single
+certificate, simply include the template data from both the client and server
+instructions in one.
+
+@example
+# cat > both-hostNNN.info <<EOF
+country = GB
+state = London
+locality = City Of London
+organization = Name of your organization
+cn = hostNNN.foo.example.com
+dns_name = hostNNN
+dns_name = hostNNN.foo.example.com
+ip_address = 10.0.1.87
+ip_address = 192.8.0.92
+ip_address = 2620:0:cafe::87
+ip_address = 2001:24::92
+tls_www_server
+tls_www_client
+encryption_key
+signing_key
+EOF
+# certtool --generate-privkey > both-hostNNN-key.pem
+# certtool --generate-certificate \
+           --load-ca-certificate ca-cert.pem \
+           --load-ca-privkey ca-key.pem \
+           --load-privkey both-hostNNN-key.pem \
+           --template both-hostNNN.info \
+           --outfile both-hostNNN-cert.pem
+@end example
+
+When copying the PEM files to the target host, save them twice,
+once as @code{server-cert.pem} and @code{server-key.pem}, and
+again as @code{client-cert.pem} and @code{client-key.pem}.
+
+@node tls_creds_setup
+@subsection TLS x509 credential configuration
+
+QEMU has a standard mechanism for loading x509 credentials that will be
+used for network services and clients. It requires specifying the
+@code{tls-creds-x509} class name to the @code{--object} command line
+argument for the system emulators.  Each set of credentials loaded should
+be given a unique string identifier via the @code{id} parameter. A single
+set of TLS credentials can be used for multiple network backends, so VNC,
+migration, NBD, character devices can all share the same credentials. Note,
+however, that credentials for use in a client endpoint must be loaded
+separately from those used in a server endpoint.
+
+When specifying the object, the @code{dir} parameters specifies which
+directory contains the credential files. This directory is expected to
+contain files with the names mentioned previously, @code{ca-cert.pem},
+@code{server-key.pem}, @code{server-cert.pem}, @code{client-key.pem}
+and @code{client-cert.pem} as appropriate. It is also possible to
+include a set of pre-generated Diffie-Hellman (DH) parameters in a file
+@code{dh-params.pem}, which can be created using the
+@code{certtool --generate-dh-params} command. If omitted, QEMU will
+dynamically generate DH parameters when loading the credentials.
+
+The @code{endpoint} parameter indicates whether the credentials will
+be used for a network client or server, and determines which PEM
+files are loaded.
+
+The @code{verify} parameter determines whether x509 certificate
+validation should be performed. This defaults to enabled, meaning
+clients will always validate the server hostname against the
+certificate subject alt name fields and/or CN field. It also
+means that servers will request that clients provide a certificate
+and validate them. Verification should never be turned off for
+client endpoints, however, it may be turned off for server endpoints
+if an alternative mechanism is used to authenticate clients. For
+example, the VNC server can use SASL to authenticate clients
+instead.
+
+To load server credentials with client certificate validation
+enabled
+
+@example
+$QEMU -object tls-creds-x509,id=tls0,dir=/etc/pki/qemu,endpoint=server
+@end example
+
+while to load client credentials use
+
+@example
+$QEMU -object tls-creds-x509,id=tls0,dir=/etc/pki/qemu,endpoint=client
+@end example
+
+Network services which support TLS will all have a @code{tls-creds}
+parameter which expects the ID of the TLS credentials object. For
+example with VNC:
+
+@example
+$QEMU -vnc 0.0.0.0:0,tls-creds=tls0
+@end example
 
 @node gdb_usage
 @section GDB usage
@@ -2371,20 +2768,23 @@ they were first deprecated in the 2.10.0 release.
 What follows is a list of all features currently marked as
 deprecated.
 
+@section Build options
+
+@subsection GTK 2.x
+
+Previously QEMU has supported building against both GTK 2.x
+and 3.x series APIs. Support for the GTK 2.x builds will be
+discontinued, so maintainers should switch to using GTK 3.x,
+which is the default.
+
+@subsection SDL 1.2
+
+Previously QEMU has supported building against both SDL 1.2
+and 2.0 series APIs. Support for the SDL 1.2 builds will be
+discontinued, so maintainers should switch to using SDL 2.0,
+which is the default.
+
 @section System emulator command line arguments
-
-@subsection -drive boot=on|off (since 1.3.0)
-
-The ``boot=on|off'' option to the ``-drive'' argument is
-ignored. Applications should use the ``bootindex=N'' parameter
-to set an absolute ordering between devices instead.
-
-@subsection -tdf (since 1.3.0)
-
-The ``-tdf'' argument is ignored. The behaviour implemented
-by this argument is now the default when using the KVM PIT,
-but can be requested explicitly using
-``-global kvm-pit.lost_tick_policy=slew''.
 
 @subsection -no-kvm-pit-reinjection (since 1.3.0)
 
@@ -2396,24 +2796,10 @@ synonym for setting ``-global kvm-pit.lost_tick_policy=discard''.
 The ``-no-kvm-irqchip'' argument is now a synonym for
 setting ``-machine kernel_irqchip=off''.
 
-@subsection -no-kvm-pit (since 1.3.0)
-
-The ``-no-kvm-pit'' argument is ignored. It is no longer
-possible to disable the KVM PIT directly.
-
 @subsection -no-kvm (since 1.3.0)
 
 The ``-no-kvm'' argument is now a synonym for setting
 ``-machine accel=tcg''.
-
-@subsection -mon default=on (since 2.4.0)
-
-The ``default'' option to the ``-mon'' argument is
-now ignored. When multiple monitors were enabled, it
-indicated which monitor would receive log messages
-from the various subsystems. This feature is no longer
-required as messages are now only sent to the monitor
-in response to explicitly monitor commands.
 
 @subsection -vnc tls (since 2.5.0)
 
@@ -2437,57 +2823,61 @@ combined with ``-vnc tls-creds=tls0'
 
 @subsection -tftp (since 2.6.0)
 
-The ``-tftp /some/dir'' argument is now a synonym for setting
-the ``-netdev user,tftp=/some/dir' argument. The new syntax
-allows different settings to be provided per NIC.
+The ``-tftp /some/dir'' argument is replaced by either
+``-netdev user,id=x,tftp=/some/dir '' (for pluggable NICs, accompanied
+with ``-device ...,netdev=x''), or ``-nic user,tftp=/some/dir''
+(for embedded NICs). The new syntax allows different settings to be
+provided per NIC.
 
 @subsection -bootp (since 2.6.0)
 
-The ``-bootp /some/file'' argument is now a synonym for setting
-the ``-netdev user,bootp=/some/file' argument. The new syntax
-allows different settings to be provided per NIC.
+The ``-bootp /some/file'' argument is replaced by either
+``-netdev user,id=x,bootp=/some/file '' (for pluggable NICs, accompanied
+with ``-device ...,netdev=x''), or ``-nic user,bootp=/some/file''
+(for embedded NICs). The new syntax allows different settings to be
+provided per NIC.
 
 @subsection -redir (since 2.6.0)
 
-The ``-redir ARGS'' argument is now a synonym for setting
-the ``-netdev user,hostfwd=ARGS'' argument instead. The new
-syntax allows different settings to be provided per NIC.
+The ``-redir [tcp|udp]:hostport:[guestaddr]:guestport'' argument is
+replaced by either
+``-netdev user,id=x,hostfwd=[tcp|udp]:[hostaddr]:hostport-[guestaddr]:guestport''
+(for pluggable NICs, accompanied with ``-device ...,netdev=x'') or
+``-nic user,hostfwd=[tcp|udp]:[hostaddr]:hostport-[guestaddr]:guestport''
+(for embedded NICs). The new syntax allows different settings to be
+provided per NIC.
 
 @subsection -smb (since 2.6.0)
 
-The ``-smb /some/dir'' argument is now a synonym for setting
-the ``-netdev user,smb=/some/dir'' argument instead. The new
-syntax allows different settings to be provided per NIC.
-
-@subsection -net channel (since 2.6.0)
-
-The ``--net channel,ARGS'' argument is now a synonym for setting
-the ``-netdev user,guestfwd=ARGS'' argument instead.
+The ``-smb /some/dir'' argument is replaced by either
+``-netdev user,id=x,smb=/some/dir '' (for pluggable NICs, accompanied
+with ``-device ...,netdev=x''), or ``-nic user,smb=/some/dir''
+(for embedded NICs). The new syntax allows different settings to be
+provided per NIC.
 
 @subsection -net vlan (since 2.9.0)
 
-The ``-net vlan=NN'' argument is partially replaced with the
-new ``-netdev'' argument. The remaining use cases will no
-longer be directly supported in QEMU.
+The ``-net vlan=NN'' argument was mostly used to attach separate
+network backends to different virtual NICs.  This is the default
+behavior for ``-netdev'' and ``-nic''.  You can connect multiple
+``-netdev'' and ``-nic'' devices to the same network using the
+"hubport" network backend, created with ``-netdev hubport,hubid=NN,...''
+and ``-nic hubport,hubid=NN''.
 
-@subsection -drive if=scsi (since 2.9.0)
+@subsection -drive cyls=...,heads=...,secs=...,trans=... (since 2.10.0)
 
-The ``-drive if=scsi'' argument is replaced by the the
-``-device BUS-TYPE'' argument combined with ``-drive if=none''.
+The drive geometry arguments are replaced by the the geometry arguments
+that can be specified with the ``-device'' parameter.
 
-@subsection -net dump (since 2.10.0)
+@subsection -drive serial=... (since 2.10.0)
 
-The ``--net dump'' argument is now replaced with the
-``-object filter-dump'' argument which works in combination
-with the modern ``-netdev`` backends instead.
+The drive serial argument is replaced by the the serial argument
+that can be specified with the ``-device'' parameter.
 
-@subsection -hdachs (since 2.10.0)
+@subsection -drive addr=... (since 2.10.0)
 
-The ``-hdachs'' argument is now a synonym for setting
-the ``cyls'', ``heads'', ``secs'', and ``trans'' properties
-on the ``ide-hd'' device using the ``-device'' argument.
-The new syntax allows different settings to be provided
-per disk.
+The drive addr argument is replaced by the the addr argument
+that can be specified with the ``-device'' parameter.
 
 @subsection -usbdevice (since 2.10.0)
 
@@ -2501,6 +2891,46 @@ enabled via the ``-machine usb=on'' argument.
 
 The ``-nodefconfig`` argument is a synonym for ``-no-user-config``.
 
+@subsection -balloon (since 2.12.0)
+
+The @option{--balloon virtio} argument has been superseded by
+@option{--device virtio-balloon}.
+
+@subsection -machine s390-squash-mcss=on|off (since 2.12.0)
+
+The ``s390-squash-mcss=on`` property has been obsoleted by allowing the
+cssid to be chosen freely. Instead of squashing subchannels into the
+default channel subsystem image for guests that do not support multiple
+channel subsystems, all devices can be put into the default channel
+subsystem image.
+
+@subsection -fsdev handle (since 2.12.0)
+
+The ``handle'' fsdev backend does not support symlinks and causes the 9p
+filesystem in the guest to fail a fair amount of tests from the PJD POSIX
+filesystem test suite. Also it requires the CAP_DAC_READ_SEARCH capability,
+which is not the recommended way to run QEMU. This backend should not be
+used and it will be removed with no replacement.
+
+@subsection -no-frame (since 2.12.0)
+
+The @code{--no-frame} argument works with SDL 1.2 only. The other user
+interfaces never implemented this in the first place. So this will be
+removed together with SDL 1.2 support.
+
+@subsection -rtc-td-hack (since 2.12.0)
+
+The @code{-rtc-td-hack} option has been replaced by
+@code{-rtc driftfix=slew}.
+
+@subsection -localtime (since 2.12.0)
+
+The @code{-localtime} option has been replaced by @code{-rtc base=localtime}.
+
+@subsection -startdate (since 2.12.0)
+
+The @code{-startdate} option has been replaced by @code{-rtc base=@var{date}}.
+
 @section qemu-img command line arguments
 
 @subsection convert -s (since 2.0.0)
@@ -2508,23 +2938,16 @@ The ``-nodefconfig`` argument is a synonym for ``-no-user-config``.
 The ``convert -s snapshot_id_or_name'' argument is obsoleted
 by the ``convert -l snapshot_param'' argument instead.
 
-@section System emulator human monitor commands
+@section QEMU Machine Protocol (QMP) commands
 
-@subsection host_net_add (since 2.10.0)
+@subsection block-dirty-bitmap-add "autoload" parameter (since 2.12.0)
 
-The ``host_net_add'' command is replaced by the ``netdev_add'' command.
+"autoload" parameter is now ignored. All bitmaps are automatically loaded
+from qcow2 images.
 
-@subsection host_net_remove (since 2.10.0)
+@subsection query-cpus (since 2.12.0)
 
-The ``host_net_remove'' command is replaced by the ``netdev_del'' command.
-
-@subsection usb_add (since 2.10.0)
-
-The ``usb_add'' command is replaced by the ``device_add'' command.
-
-@subsection usb_del (since 2.10.0)
-
-The ``usb_del'' command is replaced by the ``device_del'' command.
+The ``query-cpus'' command is replaced by the ``query-cpus-fast'' command.
 
 @section System emulator devices
 
@@ -2533,10 +2956,11 @@ The ``usb_del'' command is replaced by the ``device_del'' command.
 The ``ivshmem'' device type is replaced by either the ``ivshmem-plain''
 or ``ivshmem-doorbell`` device types.
 
-@subsection spapr-pci-vfio-host-bridge (since 2.6.0)
+@subsection Page size support < 4k for embedded PowerPC CPUs (since 2.12.0)
 
-The ``spapr-pci-vfio-host-bridge'' device type is replaced by
-the ``spapr-pci-host-bridge'' device type.
+qemu-system-ppcemb will be removed. qemu-system-ppc (or qemu-system-ppc64)
+should be used instead. That means that embedded 4xx PowerPC CPUs will not
+support page sizes < 4096 any longer.
 
 @section System emulator machines
 
@@ -2544,6 +2968,13 @@ the ``spapr-pci-host-bridge'' device type.
 
 The ``xlnx-ep108'' machine has been replaced by the ``xlnx-zcu102'' machine.
 The ``xlnx-zcu102'' machine has the same features and capabilites in QEMU.
+
+@section Block device options
+
+@subsection "backing": "" (since 2.12.0)
+
+In order to prevent QEMU from automatically opening an image's backing
+chain, use ``"backing": null'' instead.
 
 @node License
 @appendix License

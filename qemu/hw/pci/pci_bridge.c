@@ -183,7 +183,7 @@ static void pci_bridge_init_vga_aliases(PCIBridge *br, PCIBus *parent,
 static PCIBridgeWindows *pci_bridge_region_init(PCIBridge *br)
 {
     PCIDevice *pd = PCI_DEVICE(br);
-    PCIBus *parent = pd->bus;
+    PCIBus *parent = pci_get_bus(pd);
     PCIBridgeWindows *w = g_new(PCIBridgeWindows, 1);
     uint16_t cmd = pci_get_word(pd->config + PCI_COMMAND);
 
@@ -214,7 +214,7 @@ static PCIBridgeWindows *pci_bridge_region_init(PCIBridge *br)
 static void pci_bridge_region_del(PCIBridge *br, PCIBridgeWindows *w)
 {
     PCIDevice *pd = PCI_DEVICE(br);
-    PCIBus *parent = pd->bus;
+    PCIBus *parent = pci_get_bus(pd);
 
     memory_region_del_subregion(parent->address_space_io, &w->alias_io);
     memory_region_del_subregion(parent->address_space_mem, &w->alias_mem);
@@ -339,7 +339,7 @@ void pci_bridge_reset(DeviceState *qdev)
 /* default qdev initialization function for PCI-to-PCI bridge */
 void pci_bridge_initfn(PCIDevice *dev, const char *typename)
 {
-    PCIBus *parent = dev->bus;
+    PCIBus *parent = pci_get_bus(dev);
     PCIBridge *br = PCI_BRIDGE(dev);
     PCIBus *sec_bus = &br->sec_bus;
 
@@ -412,22 +412,36 @@ void pci_bridge_map_irq(PCIBridge *br, const char* bus_name,
 
 int pci_bridge_qemu_reserve_cap_init(PCIDevice *dev, int cap_offset,
                                      uint32_t bus_reserve, uint64_t io_reserve,
-                                     uint32_t mem_non_pref_reserve,
-                                     uint32_t mem_pref_32_reserve,
+                                     uint64_t mem_non_pref_reserve,
+                                     uint64_t mem_pref_32_reserve,
                                      uint64_t mem_pref_64_reserve,
                                      Error **errp)
 {
-    if (mem_pref_32_reserve != (uint32_t)-1 &&
+    if (mem_pref_32_reserve != (uint64_t)-1 &&
         mem_pref_64_reserve != (uint64_t)-1) {
         error_setg(errp,
                    "PCI resource reserve cap: PREF32 and PREF64 conflict");
         return -EINVAL;
     }
 
+    if (mem_non_pref_reserve != (uint64_t)-1 &&
+        mem_non_pref_reserve >= (1ULL << 32)) {
+        error_setg(errp,
+                   "PCI resource reserve cap: mem-reserve must be less than 4G");
+        return -EINVAL;
+    }
+
+    if (mem_pref_32_reserve != (uint64_t)-1 &&
+        mem_pref_32_reserve >= (1ULL << 32)) {
+        error_setg(errp,
+                   "PCI resource reserve cap: pref32-reserve  must be less than 4G");
+        return -EINVAL;
+    }
+
     if (bus_reserve == (uint32_t)-1 &&
         io_reserve == (uint64_t)-1 &&
-        mem_non_pref_reserve == (uint32_t)-1 &&
-        mem_pref_32_reserve == (uint32_t)-1 &&
+        mem_non_pref_reserve == (uint64_t)-1 &&
+        mem_pref_32_reserve == (uint64_t)-1 &&
         mem_pref_64_reserve == (uint64_t)-1) {
         return 0;
     }

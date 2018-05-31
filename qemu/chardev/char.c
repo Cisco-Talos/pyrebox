@@ -21,6 +21,7 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
  * THE SOFTWARE.
  */
+
 #include "qemu/osdep.h"
 #include "qemu/cutils.h"
 #include "monitor/monitor.h"
@@ -28,10 +29,12 @@
 #include "qemu/config-file.h"
 #include "qemu/error-report.h"
 #include "chardev/char.h"
-#include "qmp-commands.h"
-#include "qapi-visit.h"
+#include "qapi/error.h"
+#include "qapi/qapi-commands-char.h"
+#include "qapi/qmp/qerror.h"
 #include "sysemu/replay.h"
 #include "qemu/help_option.h"
+#include "qemu/option.h"
 
 #include "chardev/char-mux.h"
 
@@ -43,10 +46,19 @@ static Object *get_chardevs_root(void)
     return container_get(object_get_root(), "/chardevs");
 }
 
-void qemu_chr_be_event(Chardev *s, int event)
+static void chr_be_event(Chardev *s, int event)
 {
     CharBackend *be = s->be;
 
+    if (!be || !be->chr_event) {
+        return;
+    }
+
+    be->chr_event(be->opaque, event);
+}
+
+void qemu_chr_be_event(Chardev *s, int event)
+{
     /* Keep track if the char device is open */
     switch (event) {
         case CHR_EVENT_OPENED:
@@ -57,11 +69,7 @@ void qemu_chr_be_event(Chardev *s, int event)
             break;
     }
 
-    if (!be || !be->chr_event) {
-        return;
-    }
-
-    be->chr_event(be->opaque, event);
+    CHARDEV_GET_CLASS(s)->chr_be_event(s, event);
 }
 
 /* Not reporting errors from writing to logfile, as logs are
@@ -244,6 +252,7 @@ static void char_class_init(ObjectClass *oc, void *data)
     ChardevClass *cc = CHARDEV_CLASS(oc);
 
     cc->chr_write = null_chr_write;
+    cc->chr_be_event = chr_be_event;
 }
 
 static void char_finalize(Object *obj)
@@ -272,40 +281,31 @@ static const TypeInfo char_type_info = {
     .class_init = char_class_init,
 };
 
-/**
- * Called after processing of default and command-line-specified
- * chardevs to deliver CHR_EVENT_OPENED events to any FEs attached
- * to a mux chardev. This is done here to ensure that
- * output/prompts/banners are only displayed for the FE that has
- * focus when initial command-line processing/machine init is
- * completed.
- *
- * After this point, any new FE attached to any new or existing
- * mux will receive CHR_EVENT_OPENED notifications for the BE
- * immediately.
- */
-static int open_muxes(Object *child, void *opaque)
+static int chardev_machine_done_notify_one(Object *child, void *opaque)
 {
-    if (CHARDEV_IS_MUX(child)) {
-        /* send OPENED to all already-attached FEs */
-        mux_chr_send_all_event(CHARDEV(child), CHR_EVENT_OPENED);
-        /* mark mux as OPENED so any new FEs will immediately receive
-         * OPENED event
-         */
-        qemu_chr_be_event(CHARDEV(child), CHR_EVENT_OPENED);
+    Chardev *chr = (Chardev *)child;
+    ChardevClass *class = CHARDEV_GET_CLASS(chr);
+
+    if (class->chr_machine_done) {
+        return class->chr_machine_done(chr);
     }
 
     return 0;
 }
 
-static void muxes_realize_done(Notifier *notifier, void *unused)
+static void chardev_machine_done_hook(Notifier *notifier, void *unused)
 {
-    muxes_realized = true;
-    object_child_foreach(get_chardevs_root(), open_muxes, NULL);
+    int ret = object_child_foreach(get_chardevs_root(),
+                                   chardev_machine_done_notify_one, NULL);
+
+    if (ret) {
+        error_report("Failed to call chardev machine_done hooks");
+        exit(1);
+    }
 }
 
-static Notifier muxes_realize_notify = {
-    .notify = muxes_realize_done,
+static Notifier chardev_machine_done_notify = {
+    .notify = chardev_machine_done_hook,
 };
 
 static bool qemu_chr_is_busy(Chardev *s)
@@ -799,6 +799,9 @@ QemuOptsList qemu_chardev_opts = {
             .name = "port",
             .type = QEMU_OPT_STRING,
         },{
+            .name = "fd",
+            .type = QEMU_OPT_STRING,
+        },{
             .name = "localaddr",
             .type = QEMU_OPT_STRING,
         },{
@@ -1078,6 +1081,24 @@ void qmp_chardev_send_break(const char *id, Error **errp)
     qemu_chr_be_event(chr, CHR_EVENT_BREAK);
 }
 
+/*
+ * Add a timeout callback for the chardev (in milliseconds), return
+ * the GSource object created. Please use this to add timeout hook for
+ * chardev instead of g_timeout_add() and g_timeout_add_seconds(), to
+ * make sure the gcontext that the task bound to is correct.
+ */
+GSource *qemu_chr_timeout_add_ms(Chardev *chr, guint ms,
+                                 GSourceFunc func, void *private)
+{
+    GSource *source = g_timeout_source_new(ms);
+
+    assert(func);
+    g_source_set_callback(source, func, private, NULL);
+    g_source_attach(source, chr->gcontext);
+
+    return source;
+}
+
 void qemu_chr_cleanup(void)
 {
     object_unparent(get_chardevs_root());
@@ -1091,7 +1112,7 @@ static void register_types(void)
      * as part of realize functions like serial_isa_realizefn when -nographic
      * is specified
      */
-    qemu_add_machine_init_done_notifier(&muxes_realize_notify);
+    qemu_add_machine_init_done_notifier(&chardev_machine_done_notify);
 }
 
 type_init(register_types);

@@ -36,7 +36,8 @@
 
 #define MAX_IS_ALLOCATED_SEARCH (65536 * BDRV_SECTOR_SIZE)
 
-#define MAX_INFLIGHT_IO 512
+#define MAX_IO_BUFFERS 512
+#define MAX_PARALLEL_IO 16
 
 //#define DEBUG_BLK_MIGRATION
 
@@ -331,11 +332,10 @@ static int mig_save_device_bulk(QEMUFile *f, BlkMigDevState *bmds)
      */
     qemu_mutex_lock_iothread();
     aio_context_acquire(blk_get_aio_context(bmds->blk));
-    blk->aiocb = blk_aio_preadv(bb, cur_sector * BDRV_SECTOR_SIZE, &blk->qiov,
-                                0, blk_mig_read_cb, blk);
-
     bdrv_reset_dirty_bitmap(bmds->dirty_bitmap, cur_sector * BDRV_SECTOR_SIZE,
                             nr_sectors * BDRV_SECTOR_SIZE);
+    blk->aiocb = blk_aio_preadv(bb, cur_sector * BDRV_SECTOR_SIZE, &blk->qiov,
+                                0, blk_mig_read_cb, blk);
     aio_context_release(blk_get_aio_context(bmds->blk));
     qemu_mutex_unlock_iothread();
 
@@ -631,7 +631,7 @@ static int flush_blks(QEMUFile *f)
     int ret = 0;
 
     DPRINTF("%s Enter submitted %d read_done %d transferred %d\n",
-            __FUNCTION__, block_mig_state.submitted, block_mig_state.read_done,
+            __func__, block_mig_state.submitted, block_mig_state.read_done,
             block_mig_state.transferred);
 
     blk_mig_lock();
@@ -658,7 +658,7 @@ static int flush_blks(QEMUFile *f)
     }
     blk_mig_unlock();
 
-    DPRINTF("%s Exit submitted %d read_done %d transferred %d\n", __FUNCTION__,
+    DPRINTF("%s Exit submitted %d read_done %d transferred %d\n", __func__,
             block_mig_state.submitted, block_mig_state.read_done,
             block_mig_state.transferred);
     return ret;
@@ -773,12 +773,11 @@ static int block_save_iterate(QEMUFile *f, void *opaque)
 
     /* control the rate of transfer */
     blk_mig_lock();
-    while ((block_mig_state.submitted +
-            block_mig_state.read_done) * BLOCK_SIZE <
+    while (block_mig_state.read_done * BLOCK_SIZE <
            qemu_file_get_rate_limit(f) &&
-           (block_mig_state.submitted +
-            block_mig_state.read_done) <
-           MAX_INFLIGHT_IO) {
+           block_mig_state.submitted < MAX_PARALLEL_IO &&
+           (block_mig_state.submitted + block_mig_state.read_done) <
+           MAX_IO_BUFFERS) {
         blk_mig_unlock();
         if (block_mig_state.bulk_completed == 0) {
             /* first finish the bulk phase */
@@ -866,8 +865,9 @@ static int block_save_complete(QEMUFile *f, void *opaque)
 }
 
 static void block_save_pending(QEMUFile *f, void *opaque, uint64_t max_size,
-                               uint64_t *non_postcopiable_pending,
-                               uint64_t *postcopiable_pending)
+                               uint64_t *res_precopy_only,
+                               uint64_t *res_compatible,
+                               uint64_t *res_postcopy_only)
 {
     /* Estimate pending number of bytes to send */
     uint64_t pending;
@@ -888,7 +888,7 @@ static void block_save_pending(QEMUFile *f, void *opaque, uint64_t max_size,
 
     DPRINTF("Enter save live pending  %" PRIu64 "\n", pending);
     /* We don't do postcopy */
-    *non_postcopiable_pending += pending;
+    *res_precopy_only += pending;
 }
 
 static int block_load(QEMUFile *f, void *opaque, int version_id)
@@ -897,7 +897,7 @@ static int block_load(QEMUFile *f, void *opaque, int version_id)
     int len, flags;
     char device_name[256];
     int64_t addr;
-    BlockBackend *blk, *blk_prev = NULL;;
+    BlockBackend *blk, *blk_prev = NULL;
     Error *local_err = NULL;
     uint8_t *buf;
     int64_t total_sectors = 0;

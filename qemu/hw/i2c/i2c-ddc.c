@@ -30,7 +30,7 @@
     if (DEBUG_I2CDDC) {                                                        \
         qemu_log("i2c-ddc: " fmt , ## __VA_ARGS__);                            \
     }                                                                          \
-} while (0);
+} while (0)
 
 /* Structure defining a monitor's characteristics in a
  * readable format: this should be passed to build_edid_blob()
@@ -259,12 +259,12 @@ static int i2c_ddc_tx(I2CSlave *i2c, uint8_t data)
         s->reg = data;
         s->firstbyte = false;
         DPRINTF("[EDID] Written new pointer: %u\n", data);
-        return 1;
+        return 0;
     }
 
     /* Ignore all writes */
     s->reg++;
-    return 1;
+    return 0;
 }
 
 static void i2c_ddc_init(Object *obj)

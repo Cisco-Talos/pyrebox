@@ -24,7 +24,7 @@
 #include "qemu/osdep.h"
 #include "qemu/error-report.h"
 #include "qapi/error.h"
-#include "qapi-visit.h"
+#include "qapi/qmp/qerror.h"
 #include "sysemu/replay.h"
 
 #include "chardev/char-fe.h"
@@ -198,19 +198,21 @@ bool qemu_chr_fe_init(CharBackend *b, Chardev *s, Error **errp)
 {
     int tag = 0;
 
-    if (CHARDEV_IS_MUX(s)) {
-        MuxChardev *d = MUX_CHARDEV(s);
+    if (s) {
+        if (CHARDEV_IS_MUX(s)) {
+            MuxChardev *d = MUX_CHARDEV(s);
 
-        if (d->mux_cnt >= MAX_MUX) {
+            if (d->mux_cnt >= MAX_MUX) {
+                goto unavailable;
+            }
+
+            d->backends[d->mux_cnt] = b;
+            tag = d->mux_cnt++;
+        } else if (s->be) {
             goto unavailable;
+        } else {
+            s->be = b;
         }
-
-        d->backends[d->mux_cnt] = b;
-        tag = d->mux_cnt++;
-    } else if (s->be) {
-        goto unavailable;
-    } else {
-        s->be = b;
     }
 
     b->fe_open = false;
@@ -356,7 +358,7 @@ guint qemu_chr_fe_add_watch(CharBackend *be, GIOCondition cond,
     }
 
     g_source_set_callback(src, (GSourceFunc)func, user_data, NULL);
-    tag = g_source_attach(src, NULL);
+    tag = g_source_attach(src, s->gcontext);
     g_source_unref(src);
 
     return tag;

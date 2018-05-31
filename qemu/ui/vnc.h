@@ -28,6 +28,7 @@
 #define QEMU_VNC_H
 
 #include "qemu-common.h"
+#include "qapi/qapi-types-ui.h"
 #include "qemu/queue.h"
 #include "qemu/thread.h"
 #include "ui/console.h"
@@ -37,12 +38,12 @@
 #include "qemu/buffer.h"
 #include "io/channel-socket.h"
 #include "io/channel-tls.h"
+#include "io/net-listener.h"
 #include <zlib.h>
 
 #include "keymaps.h"
 #include "vnc-palette.h"
 #include "vnc-enc-zrle.h"
-#include "qapi-types.h"
 
 // #define _VNC_DEBUG 1
 
@@ -146,12 +147,8 @@ struct VncDisplay
     int num_exclusive;
     int connections_limit;
     VncSharePolicy share_policy;
-    size_t nlsock;
-    QIOChannelSocket **lsock;
-    guint *lsock_tag;
-    size_t nlwebsock;
-    QIOChannelSocket **lwebsock;
-    guint *lwebsock_tag;
+    QIONetListener *listener;
+    QIONetListener *wslistener;
     DisplaySurface *ds;
     DisplayChangeListener dcl;
     kbd_layout_t *kbd_layout;

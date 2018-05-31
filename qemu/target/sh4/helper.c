@@ -34,7 +34,7 @@ void superh_cpu_do_interrupt(CPUState *cs)
     cs->exception_index = -1;
 }
 
-int superh_cpu_handle_mmu_fault(CPUState *cs, vaddr address, int rw,
+int superh_cpu_handle_mmu_fault(CPUState *cs, vaddr address, int size, int rw,
                                 int mmu_idx)
 {
     SuperHCPU *cpu = SUPERH_CPU(cs);
@@ -171,6 +171,7 @@ void superh_cpu_do_interrupt(CPUState *cs)
     env->spc = env->pc;
     env->sgr = env->gregs[15];
     env->sr |= (1u << SR_BL) | (1u << SR_MD) | (1u << SR_RB);
+    env->lock_addr = -1;
 
     if (env->flags & DELAY_SLOT_MASK) {
         /* Branch instruction should be executed again before delay slot. */
@@ -457,7 +458,7 @@ static int get_physical_address(CPUSH4State * env, target_ulong * physical,
     return get_mmu_address(env, physical, prot, address, rw, access_type);
 }
 
-int superh_cpu_handle_mmu_fault(CPUState *cs, vaddr address, int rw,
+int superh_cpu_handle_mmu_fault(CPUState *cs, vaddr address, int size, int rw,
                                 int mmu_idx)
 {
     SuperHCPU *cpu = SUPERH_CPU(cs);

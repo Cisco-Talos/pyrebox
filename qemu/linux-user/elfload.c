@@ -354,7 +354,6 @@ enum {
 
 /* The commpage only exists for 32 bit kernels */
 
-#define TARGET_HAS_VALIDATE_GUEST_SPACE
 /* Return 1 if the proposed guest space is suitable for the guest.
  * Return 0 if the proposed guest space isn't suitable, but another
  * address space should be tried.
@@ -363,8 +362,8 @@ enum {
  * The guest code may leave a page mapped and populate it if the
  * address is suitable.
  */
-static int validate_guest_space(unsigned long guest_base,
-                                unsigned long guest_size)
+static int init_guest_commpage(unsigned long guest_base,
+                               unsigned long guest_size)
 {
     unsigned long real_start, test_page_addr;
 
@@ -375,6 +374,11 @@ static int validate_guest_space(unsigned long guest_base,
 
     /* If the commpage lies within the already allocated guest space,
      * then there is no way we can allocate it.
+     *
+     * You may be thinking that that this check is redundant because
+     * we already validated the guest size against MAX_RESERVED_VA;
+     * but if qemu_host_page_mask is unusually large, then
+     * test_page_addr may be lower.
      */
     if (test_page_addr >= guest_base
         && test_page_addr < (guest_base + guest_size)) {
@@ -512,6 +516,21 @@ enum {
     ARM_HWCAP_A64_SHA1          = 1 << 5,
     ARM_HWCAP_A64_SHA2          = 1 << 6,
     ARM_HWCAP_A64_CRC32         = 1 << 7,
+    ARM_HWCAP_A64_ATOMICS       = 1 << 8,
+    ARM_HWCAP_A64_FPHP          = 1 << 9,
+    ARM_HWCAP_A64_ASIMDHP       = 1 << 10,
+    ARM_HWCAP_A64_CPUID         = 1 << 11,
+    ARM_HWCAP_A64_ASIMDRDM      = 1 << 12,
+    ARM_HWCAP_A64_JSCVT         = 1 << 13,
+    ARM_HWCAP_A64_FCMA          = 1 << 14,
+    ARM_HWCAP_A64_LRCPC         = 1 << 15,
+    ARM_HWCAP_A64_DCPOP         = 1 << 16,
+    ARM_HWCAP_A64_SHA3          = 1 << 17,
+    ARM_HWCAP_A64_SM3           = 1 << 18,
+    ARM_HWCAP_A64_SM4           = 1 << 19,
+    ARM_HWCAP_A64_ASIMDDP       = 1 << 20,
+    ARM_HWCAP_A64_SHA512        = 1 << 21,
+    ARM_HWCAP_A64_SVE           = 1 << 22,
 };
 
 #define ELF_HWCAP get_elf_hwcap()
@@ -532,6 +551,14 @@ static uint32_t get_elf_hwcap(void)
     GET_FEATURE(ARM_FEATURE_V8_SHA1, ARM_HWCAP_A64_SHA1);
     GET_FEATURE(ARM_FEATURE_V8_SHA256, ARM_HWCAP_A64_SHA2);
     GET_FEATURE(ARM_FEATURE_CRC, ARM_HWCAP_A64_CRC32);
+    GET_FEATURE(ARM_FEATURE_V8_SHA3, ARM_HWCAP_A64_SHA3);
+    GET_FEATURE(ARM_FEATURE_V8_SM3, ARM_HWCAP_A64_SM3);
+    GET_FEATURE(ARM_FEATURE_V8_SM4, ARM_HWCAP_A64_SM4);
+    GET_FEATURE(ARM_FEATURE_V8_SHA512, ARM_HWCAP_A64_SHA512);
+    GET_FEATURE(ARM_FEATURE_V8_FP16,
+                ARM_HWCAP_A64_FPHP | ARM_HWCAP_A64_ASIMDHP);
+    GET_FEATURE(ARM_FEATURE_V8_RDM, ARM_HWCAP_A64_ASIMDRDM);
+    GET_FEATURE(ARM_FEATURE_V8_FCMA, ARM_HWCAP_A64_FCMA);
 #undef GET_FEATURE
 
     return hwcaps;
@@ -539,78 +566,6 @@ static uint32_t get_elf_hwcap(void)
 
 #endif /* not TARGET_AARCH64 */
 #endif /* TARGET_ARM */
-
-#ifdef TARGET_UNICORE32
-
-#define ELF_START_MMAP          0x80000000
-
-#define ELF_CLASS               ELFCLASS32
-#define ELF_DATA                ELFDATA2LSB
-#define ELF_ARCH                EM_UNICORE32
-
-static inline void init_thread(struct target_pt_regs *regs,
-        struct image_info *infop)
-{
-    abi_long stack = infop->start_stack;
-    memset(regs, 0, sizeof(*regs));
-    regs->UC32_REG_asr = 0x10;
-    regs->UC32_REG_pc = infop->entry & 0xfffffffe;
-    regs->UC32_REG_sp = infop->start_stack;
-    /* FIXME - what to for failure of get_user()? */
-    get_user_ual(regs->UC32_REG_02, stack + 8); /* envp */
-    get_user_ual(regs->UC32_REG_01, stack + 4); /* envp */
-    /* XXX: it seems that r0 is zeroed after ! */
-    regs->UC32_REG_00 = 0;
-}
-
-#define ELF_NREG    34
-typedef target_elf_greg_t  target_elf_gregset_t[ELF_NREG];
-
-static void elf_core_copy_regs(target_elf_gregset_t *regs, const CPUUniCore32State *env)
-{
-    (*regs)[0] = env->regs[0];
-    (*regs)[1] = env->regs[1];
-    (*regs)[2] = env->regs[2];
-    (*regs)[3] = env->regs[3];
-    (*regs)[4] = env->regs[4];
-    (*regs)[5] = env->regs[5];
-    (*regs)[6] = env->regs[6];
-    (*regs)[7] = env->regs[7];
-    (*regs)[8] = env->regs[8];
-    (*regs)[9] = env->regs[9];
-    (*regs)[10] = env->regs[10];
-    (*regs)[11] = env->regs[11];
-    (*regs)[12] = env->regs[12];
-    (*regs)[13] = env->regs[13];
-    (*regs)[14] = env->regs[14];
-    (*regs)[15] = env->regs[15];
-    (*regs)[16] = env->regs[16];
-    (*regs)[17] = env->regs[17];
-    (*regs)[18] = env->regs[18];
-    (*regs)[19] = env->regs[19];
-    (*regs)[20] = env->regs[20];
-    (*regs)[21] = env->regs[21];
-    (*regs)[22] = env->regs[22];
-    (*regs)[23] = env->regs[23];
-    (*regs)[24] = env->regs[24];
-    (*regs)[25] = env->regs[25];
-    (*regs)[26] = env->regs[26];
-    (*regs)[27] = env->regs[27];
-    (*regs)[28] = env->regs[28];
-    (*regs)[29] = env->regs[29];
-    (*regs)[30] = env->regs[30];
-    (*regs)[31] = env->regs[31];
-
-    (*regs)[32] = cpu_asr_read((CPUUniCore32State *)env);
-    (*regs)[33] = env->regs[0]; /* XXX */
-}
-
-#define USE_ELF_CORE_DUMP
-#define ELF_EXEC_PAGESIZE               4096
-
-#define ELF_HWCAP                       (UC32_HWCAP_CMOV | UC32_HWCAP_UCF64)
-
-#endif
 
 #ifdef TARGET_SPARC
 #ifdef TARGET_SPARC64
@@ -926,6 +881,30 @@ static void elf_core_copy_regs(target_elf_gregset_t *regs, const CPUMIPSState *e
 
 #define USE_ELF_CORE_DUMP
 #define ELF_EXEC_PAGESIZE        4096
+
+/* See arch/mips/include/uapi/asm/hwcap.h.  */
+enum {
+    HWCAP_MIPS_R6           = (1 << 0),
+    HWCAP_MIPS_MSA          = (1 << 1),
+};
+
+#define ELF_HWCAP get_elf_hwcap()
+
+static uint32_t get_elf_hwcap(void)
+{
+    MIPSCPU *cpu = MIPS_CPU(thread_cpu);
+    uint32_t hwcaps = 0;
+
+#define GET_FEATURE(flag, hwcap) \
+    do { if (cpu->env.insn_flags & (flag)) { hwcaps |= hwcap; } } while (0)
+
+    GET_FEATURE(ISA_MIPS32R6 | ISA_MIPS64R6, HWCAP_MIPS_R6);
+    GET_FEATURE(ASE_MSA, HWCAP_MIPS_MSA);
+
+#undef GET_FEATURE
+
+    return hwcaps;
+}
 
 #endif /* TARGET_MIPS */
 
@@ -1272,6 +1251,28 @@ static inline void init_thread(struct target_pt_regs *regs,
 
 #endif /* TARGET_TILEGX */
 
+#ifdef TARGET_RISCV
+
+#define ELF_START_MMAP 0x80000000
+#define ELF_ARCH  EM_RISCV
+
+#ifdef TARGET_RISCV32
+#define ELF_CLASS ELFCLASS32
+#else
+#define ELF_CLASS ELFCLASS64
+#endif
+
+static inline void init_thread(struct target_pt_regs *regs,
+                               struct image_info *infop)
+{
+    regs->sepc = infop->entry;
+    regs->sp = infop->start_stack;
+}
+
+#define ELF_EXEC_PAGESIZE 4096
+
+#endif /* TARGET_RISCV */
+
 #ifdef TARGET_HPPA
 
 #define ELF_START_MMAP  0x80000000
@@ -1295,6 +1296,64 @@ static inline void init_thread(struct target_pt_regs *regs,
 }
 
 #endif /* TARGET_HPPA */
+
+#ifdef TARGET_XTENSA
+
+#define ELF_START_MMAP 0x20000000
+
+#define ELF_CLASS       ELFCLASS32
+#define ELF_ARCH        EM_XTENSA
+
+static inline void init_thread(struct target_pt_regs *regs,
+                               struct image_info *infop)
+{
+    regs->windowbase = 0;
+    regs->windowstart = 1;
+    regs->areg[1] = infop->start_stack;
+    regs->pc = infop->entry;
+}
+
+/* See linux kernel: arch/xtensa/include/asm/elf.h.  */
+#define ELF_NREG 128
+typedef target_elf_greg_t target_elf_gregset_t[ELF_NREG];
+
+enum {
+    TARGET_REG_PC,
+    TARGET_REG_PS,
+    TARGET_REG_LBEG,
+    TARGET_REG_LEND,
+    TARGET_REG_LCOUNT,
+    TARGET_REG_SAR,
+    TARGET_REG_WINDOWSTART,
+    TARGET_REG_WINDOWBASE,
+    TARGET_REG_THREADPTR,
+    TARGET_REG_AR0 = 64,
+};
+
+static void elf_core_copy_regs(target_elf_gregset_t *regs,
+                               const CPUXtensaState *env)
+{
+    unsigned i;
+
+    (*regs)[TARGET_REG_PC] = tswapreg(env->pc);
+    (*regs)[TARGET_REG_PS] = tswapreg(env->sregs[PS] & ~PS_EXCM);
+    (*regs)[TARGET_REG_LBEG] = tswapreg(env->sregs[LBEG]);
+    (*regs)[TARGET_REG_LEND] = tswapreg(env->sregs[LEND]);
+    (*regs)[TARGET_REG_LCOUNT] = tswapreg(env->sregs[LCOUNT]);
+    (*regs)[TARGET_REG_SAR] = tswapreg(env->sregs[SAR]);
+    (*regs)[TARGET_REG_WINDOWSTART] = tswapreg(env->sregs[WINDOW_START]);
+    (*regs)[TARGET_REG_WINDOWBASE] = tswapreg(env->sregs[WINDOW_BASE]);
+    (*regs)[TARGET_REG_THREADPTR] = tswapreg(env->uregs[THREADPTR]);
+    xtensa_sync_phys_from_window((CPUXtensaState *)env);
+    for (i = 0; i < env->config->nareg; ++i) {
+        (*regs)[TARGET_REG_AR0 + i] = tswapreg(env->phys_regs[i]);
+    }
+}
+
+#define USE_ELF_CORE_DUMP
+#define ELF_EXEC_PAGESIZE       4096
+
+#endif /* TARGET_XTENSA */
 
 #ifndef ELF_PLATFORM
 #define ELF_PLATFORM (NULL)
@@ -1354,7 +1413,7 @@ struct exec
                                  ~(abi_ulong)(TARGET_ELF_EXEC_PAGESIZE-1))
 #define TARGET_ELF_PAGEOFFSET(_v) ((_v) & (TARGET_ELF_EXEC_PAGESIZE-1))
 
-#define DLINFO_ITEMS 14
+#define DLINFO_ITEMS 15
 
 static inline void memcpy_fromfs(void * to, const void * from, unsigned long n)
 {
@@ -1786,6 +1845,7 @@ static abi_ulong create_elf_tables(abi_ulong p, int argc, int envc,
     NEW_AUX_ENT(AT_HWCAP, (abi_ulong) ELF_HWCAP);
     NEW_AUX_ENT(AT_CLKTCK, (abi_ulong) sysconf(_SC_CLK_TCK));
     NEW_AUX_ENT(AT_RANDOM, (abi_ulong) u_rand_bytes);
+    NEW_AUX_ENT(AT_SECURE, (abi_ulong) qemu_getauxval(AT_SECURE));
 
 #ifdef ELF_HWCAP2
     NEW_AUX_ENT(AT_HWCAP2, (abi_ulong) ELF_HWCAP2);
@@ -1823,21 +1883,12 @@ static abi_ulong create_elf_tables(abi_ulong p, int argc, int envc,
     return sp;
 }
 
-#ifndef TARGET_HAS_VALIDATE_GUEST_SPACE
-/* If the guest doesn't have a validation function just agree */
-static int validate_guest_space(unsigned long guest_base,
-                                unsigned long guest_size)
-{
-    return 1;
-}
-#endif
-
 unsigned long init_guest_space(unsigned long host_start,
                                unsigned long host_size,
                                unsigned long guest_start,
                                bool fixed)
 {
-    unsigned long current_start, real_start;
+    unsigned long current_start, aligned_start;
     int flags;
 
     assert(host_start || host_size);
@@ -1845,11 +1896,12 @@ unsigned long init_guest_space(unsigned long host_start,
     /* If just a starting address is given, then just verify that
      * address.  */
     if (host_start && !host_size) {
-        if (validate_guest_space(host_start, host_size) == 1) {
-            return host_start;
-        } else {
+#if defined(TARGET_ARM) && !defined(TARGET_AARCH64)
+        if (init_guest_commpage(host_start, host_size) != 1) {
             return (unsigned long)-1;
         }
+#endif
+        return host_start;
     }
 
     /* Setup the initial flags and start address.  */
@@ -1861,8 +1913,58 @@ unsigned long init_guest_space(unsigned long host_start,
 
     /* Otherwise, a non-zero size region of memory needs to be mapped
      * and validated.  */
+
+#if defined(TARGET_ARM) && !defined(TARGET_AARCH64)
+    /* On 32-bit ARM, we need to map not just the usable memory, but
+     * also the commpage.  Try to find a suitable place by allocating
+     * a big chunk for all of it.  If host_start, then the naive
+     * strategy probably does good enough.
+     */
+    if (!host_start) {
+        unsigned long guest_full_size, host_full_size, real_start;
+
+        guest_full_size =
+            (0xffff0f00 & qemu_host_page_mask) + qemu_host_page_size;
+        host_full_size = guest_full_size - guest_start;
+        real_start = (unsigned long)
+            mmap(NULL, host_full_size, PROT_NONE, flags, -1, 0);
+        if (real_start == (unsigned long)-1) {
+            if (host_size < host_full_size - qemu_host_page_size) {
+                /* We failed to map a continous segment, but we're
+                 * allowed to have a gap between the usable memory and
+                 * the commpage where other things can be mapped.
+                 * This sparseness gives us more flexibility to find
+                 * an address range.
+                 */
+                goto naive;
+            }
+            return (unsigned long)-1;
+        }
+        munmap((void *)real_start, host_full_size);
+        if (real_start & ~qemu_host_page_mask) {
+            /* The same thing again, but with an extra qemu_host_page_size
+             * so that we can shift around alignment.
+             */
+            unsigned long real_size = host_full_size + qemu_host_page_size;
+            real_start = (unsigned long)
+                mmap(NULL, real_size, PROT_NONE, flags, -1, 0);
+            if (real_start == (unsigned long)-1) {
+                if (host_size < host_full_size - qemu_host_page_size) {
+                    goto naive;
+                }
+                return (unsigned long)-1;
+            }
+            munmap((void *)real_start, real_size);
+            real_start = HOST_PAGE_ALIGN(real_start);
+        }
+        current_start = real_start;
+    }
+ naive:
+#endif
+
     while (1) {
-        unsigned long real_size = host_size;
+        unsigned long real_start, real_size, aligned_size;
+        aligned_size = real_size = host_size;
 
         /* Do not use mmap_find_vma here because that is limited to the
          * guest address space.  We are going to make the
@@ -1874,30 +1976,63 @@ unsigned long init_guest_space(unsigned long host_start,
             return (unsigned long)-1;
         }
 
+        /* Check to see if the address is valid.  */
+        if (host_start && real_start != current_start) {
+            goto try_again;
+        }
+
         /* Ensure the address is properly aligned.  */
         if (real_start & ~qemu_host_page_mask) {
+            /* Ideally, we adjust like
+             *
+             *    pages: [  ][  ][  ][  ][  ]
+             *      old:   [   real   ]
+             *             [ aligned  ]
+             *      new:   [     real     ]
+             *               [ aligned  ]
+             *
+             * But if there is something else mapped right after it,
+             * then obviously it won't have room to grow, and the
+             * kernel will put the new larger real someplace else with
+             * unknown alignment (if we made it to here, then
+             * fixed=false).  Which is why we grow real by a full page
+             * size, instead of by part of one; so that even if we get
+             * moved, we can still guarantee alignment.  But this does
+             * mean that there is a padding of < 1 page both before
+             * and after the aligned range; the "after" could could
+             * cause problems for ARM emulation where it could butt in
+             * to where we need to put the commpage.
+             */
             munmap((void *)real_start, host_size);
-            real_size = host_size + qemu_host_page_size;
+            real_size = aligned_size + qemu_host_page_size;
             real_start = (unsigned long)
                 mmap((void *)real_start, real_size, PROT_NONE, flags, -1, 0);
             if (real_start == (unsigned long)-1) {
                 return (unsigned long)-1;
             }
-            real_start = HOST_PAGE_ALIGN(real_start);
+            aligned_start = HOST_PAGE_ALIGN(real_start);
+        } else {
+            aligned_start = real_start;
         }
 
-        /* Check to see if the address is valid.  */
-        if (!host_start || real_start == current_start) {
-            int valid = validate_guest_space(real_start - guest_start,
-                                             real_size);
-            if (valid == 1) {
-                break;
-            } else if (valid == -1) {
-                return (unsigned long)-1;
-            }
-            /* valid == 0, so try again. */
+#if defined(TARGET_ARM) && !defined(TARGET_AARCH64)
+        /* On 32-bit ARM, we need to also be able to map the commpage.  */
+        int valid = init_guest_commpage(aligned_start - guest_start,
+                                        aligned_size + guest_start);
+        if (valid == -1) {
+            munmap((void *)real_start, real_size);
+            return (unsigned long)-1;
+        } else if (valid == 0) {
+            goto try_again;
         }
+#endif
 
+        /* If nothing has said `return -1` or `goto try_again` yet,
+         * then the address we have is good.
+         */
+        break;
+
+    try_again:
         /* That address didn't work.  Unmap and try a different one.
          * The address the host picked because is typically right at
          * the top of the host address space and leaves the guest with
@@ -1906,8 +2041,12 @@ unsigned long init_guest_space(unsigned long host_start,
          * happen often.  Probably means we got unlucky and host
          * address space randomization put a shared library somewhere
          * inconvenient.
+         *
+         * This is probably a good strategy if host_start, but is
+         * probably a bad strategy if not, which means we got here
+         * because of trouble with ARM commpage setup.
          */
-        munmap((void *)real_start, host_size);
+        munmap((void *)real_start, real_size);
         current_start += qemu_host_page_size;
         if (host_start == current_start) {
             /* Theoretically possible if host doesn't have any suitably
@@ -1919,7 +2058,7 @@ unsigned long init_guest_space(unsigned long host_start,
 
     qemu_log_mask(CPU_LOG_PAGE, "Reserved 0x%lx bytes of guest address space\n", host_size);
 
-    return real_start;
+    return aligned_start;
 }
 
 static void probe_guest_base(const char *image_name,
@@ -2374,6 +2513,41 @@ give_up:
     g_free(s);
     g_free(strings);
     g_free(syms);
+}
+
+uint32_t get_elf_eflags(int fd)
+{
+    struct elfhdr ehdr;
+    off_t offset;
+    int ret;
+
+    /* Read ELF header */
+    offset = lseek(fd, 0, SEEK_SET);
+    if (offset == (off_t) -1) {
+        return 0;
+    }
+    ret = read(fd, &ehdr, sizeof(ehdr));
+    if (ret < sizeof(ehdr)) {
+        return 0;
+    }
+    offset = lseek(fd, offset, SEEK_SET);
+    if (offset == (off_t) -1) {
+        return 0;
+    }
+
+    /* Check ELF signature */
+    if (!elf_check_ident(&ehdr)) {
+        return 0;
+    }
+
+    /* check header */
+    bswap_ehdr(&ehdr);
+    if (!elf_check_ehdr(&ehdr)) {
+        return 0;
+    }
+
+    /* return architecture id */
+    return ehdr.e_flags;
 }
 
 int load_elf_binary(struct linux_binprm *bprm, struct image_info *info)

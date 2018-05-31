@@ -1,8 +1,7 @@
 #ifndef QEMU_CHAR_H
 #define QEMU_CHAR_H
 
-#include "qemu-common.h"
-#include "qemu/option.h"
+#include "qapi/qapi-types-char.h"
 #include "qemu/main-loop.h"
 #include "qemu/bitmap.h"
 #include "qom/object.h"
@@ -248,12 +247,18 @@ typedef struct ChardevClass {
     void (*chr_accept_input)(Chardev *chr);
     void (*chr_set_echo)(Chardev *chr, bool echo);
     void (*chr_set_fe_open)(Chardev *chr, int fe_open);
+    void (*chr_be_event)(Chardev *s, int event);
+    /* Return 0 if succeeded, 1 if failed */
+    int (*chr_machine_done)(Chardev *chr);
 } ChardevClass;
 
 Chardev *qemu_chardev_new(const char *id, const char *typename,
                           ChardevBackend *backend, Error **errp);
 
 extern int term_escape_char;
+
+GSource *qemu_chr_timeout_add_ms(Chardev *chr, guint ms,
+                                 GSourceFunc func, void *private);
 
 /* console.c */
 void qemu_chr_parse_vc(QemuOpts *opts, ChardevBackend *backend, Error **errp);

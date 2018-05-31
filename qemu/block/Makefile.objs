@@ -9,8 +9,9 @@ block-obj-y += block-backend.o snapshot.o qapi.o
 block-obj-$(CONFIG_WIN32) += file-win32.o win32-aio.o
 block-obj-$(CONFIG_POSIX) += file-posix.o
 block-obj-$(CONFIG_LINUX_AIO) += linux-aio.o
-block-obj-y += null.o mirror.o commit.o io.o
+block-obj-y += null.o mirror.o commit.o io.o create.o
 block-obj-y += throttle-groups.o
+block-obj-$(CONFIG_LINUX) += nvme.o
 
 block-obj-y += nbd.o nbd-client.o sheepdog.o
 block-obj-$(CONFIG_LIBISCSI) += iscsi.o
@@ -47,3 +48,5 @@ block-obj-$(if $(CONFIG_BZIP2),m,n) += dmg-bz2.o
 dmg-bz2.o-libs     := $(BZIP2_LIBS)
 qcow.o-libs        := -lz
 linux-aio.o-libs   := -laio
+parallels.o-cflags := $(LIBXML2_CFLAGS)
+parallels.o-libs   := $(LIBXML2_LIBS)

@@ -823,7 +823,7 @@ static int alsa_init_out(HWVoiceOut *hw, struct audsettings *as,
     audio_pcm_init_info (&hw->info, &obt_as);
     hw->samples = obt.samples;
 
-    alsa->pcm_buf = audio_calloc (AUDIO_FUNC, obt.samples, 1 << hw->info.shift);
+    alsa->pcm_buf = audio_calloc(__func__, obt.samples, 1 << hw->info.shift);
     if (!alsa->pcm_buf) {
         dolog ("Could not allocate DAC buffer (%d samples, each %d bytes)\n",
                hw->samples, 1 << hw->info.shift);
@@ -934,7 +934,7 @@ static int alsa_init_in(HWVoiceIn *hw, struct audsettings *as, void *drv_opaque)
     audio_pcm_init_info (&hw->info, &obt_as);
     hw->samples = obt.samples;
 
-    alsa->pcm_buf = audio_calloc (AUDIO_FUNC, hw->samples, 1 << hw->info.shift);
+    alsa->pcm_buf = audio_calloc(__func__, hw->samples, 1 << hw->info.shift);
     if (!alsa->pcm_buf) {
         dolog ("Could not allocate ADC buffer (%d samples, each %d bytes)\n",
                hw->samples, 1 << hw->info.shift);
@@ -1213,7 +1213,7 @@ static struct audio_pcm_ops alsa_pcm_ops = {
     .ctl_in   = alsa_ctl_in,
 };
 
-struct audio_driver alsa_audio_driver = {
+static struct audio_driver alsa_audio_driver = {
     .name           = "alsa",
     .descr          = "ALSA http://www.alsa-project.org",
     .options        = alsa_options,
@@ -1226,3 +1226,9 @@ struct audio_driver alsa_audio_driver = {
     .voice_size_out = sizeof (ALSAVoiceOut),
     .voice_size_in  = sizeof (ALSAVoiceIn)
 };
+
+static void register_audio_alsa(void)
+{
+    audio_driver_register(&alsa_audio_driver);
+}
+type_init(register_audio_alsa);

@@ -9,13 +9,13 @@
  * This work is licensed under the terms of the GNU GPL, version 2 or later.
  * See the COPYING file in the top-level directory.
  */
+
 #include "qemu/osdep.h"
 #include "sysemu/hostmem.h"
 #include "hw/boards.h"
 #include "qapi/error.h"
+#include "qapi/qapi-builtin-visit.h"
 #include "qapi/visitor.h"
-#include "qapi-types.h"
-#include "qapi-visit.h"
 #include "qemu/config-file.h"
 #include "qom/object_interfaces.h"
 
@@ -369,6 +369,24 @@ static void set_id(Object *o, const char *str, Error **errp)
     backend->id = g_strdup(str);
 }
 
+static bool host_memory_backend_get_share(Object *o, Error **errp)
+{
+    HostMemoryBackend *backend = MEMORY_BACKEND(o);
+
+    return backend->share;
+}
+
+static void host_memory_backend_set_share(Object *o, bool value, Error **errp)
+{
+    HostMemoryBackend *backend = MEMORY_BACKEND(o);
+
+    if (host_memory_backend_mr_inited(backend)) {
+        error_setg(errp, "cannot change property value");
+        return;
+    }
+    backend->share = value;
+}
+
 static void
 host_memory_backend_class_init(ObjectClass *oc, void *data)
 {
@@ -399,6 +417,9 @@ host_memory_backend_class_init(ObjectClass *oc, void *data)
         host_memory_backend_get_policy,
         host_memory_backend_set_policy, &error_abort);
     object_class_property_add_str(oc, "id", get_id, set_id, &error_abort);
+    object_class_property_add_bool(oc, "share",
+        host_memory_backend_get_share, host_memory_backend_set_share,
+        &error_abort);
 }
 
 static void host_memory_backend_finalize(Object *o)

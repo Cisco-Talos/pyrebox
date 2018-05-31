@@ -12,19 +12,23 @@
  *
  * This work is licensed under the terms of the GNU GPL, version 2 or later.
  * See the COPYING file in the top-level directory.
- *
  */
+
 #include "qemu/osdep.h"
-#include "libqtest.h"
 
 #include <sys/socket.h>
 #include <sys/wait.h>
 #include <sys/un.h>
 
+#include "libqtest.h"
+#include "qemu/cutils.h"
 #include "qapi/error.h"
 #include "qapi/qmp/json-parser.h"
 #include "qapi/qmp/json-streamer.h"
+#include "qapi/qmp/qdict.h"
 #include "qapi/qmp/qjson.h"
+#include "qapi/qmp/qlist.h"
+#include "qapi/qmp/qstring.h"
 
 #define MAX_IRQ 256
 #define SOCKET_TIMEOUT 50
@@ -162,7 +166,8 @@ static const char *qtest_qemu_binary(void)
     return qemu_bin;
 }
 
-QTestState *qtest_init_without_qmp_handshake(const char *extra_args)
+QTestState *qtest_init_without_qmp_handshake(bool use_oob,
+                                             const char *extra_args)
 {
     QTestState *s;
     int sock, qmpsock, i;
@@ -195,12 +200,13 @@ QTestState *qtest_init_without_qmp_handshake(const char *extra_args)
         command = g_strdup_printf("exec %s "
                                   "-qtest unix:%s,nowait "
                                   "-qtest-log %s "
-                                  "-qmp unix:%s,nowait "
+                                  "-chardev socket,path=%s,nowait,id=char0 "
+                                  "-mon chardev=char0,mode=control%s "
                                   "-machine accel=qtest "
                                   "-display none "
                                   "%s", qemu_binary, socket_path,
                                   getenv("QTEST_LOG") ? "/dev/fd/2" : "/dev/null",
-                                  qmp_socket_path,
+                                  qmp_socket_path, use_oob ? ",x-oob=on" : "",
                                   extra_args ?: "");
         execlp("/bin/sh", "sh", "-c", command, NULL);
         exit(1);
@@ -235,7 +241,7 @@ QTestState *qtest_init_without_qmp_handshake(const char *extra_args)
 
 QTestState *qtest_init(const char *extra_args)
 {
-    QTestState *s = qtest_init_without_qmp_handshake(extra_args);
+    QTestState *s = qtest_init_without_qmp_handshake(false, extra_args);
 
     /* Read the QMP greeting and then do the handshake */
     qtest_qmp_discard_response(s, "");
@@ -360,12 +366,14 @@ redo:
     g_string_free(line, TRUE);
 
     if (strcmp(words[0], "IRQ") == 0) {
-        int irq;
+        long irq;
+        int ret;
 
         g_assert(words[1] != NULL);
         g_assert(words[2] != NULL);
 
-        irq = strtoul(words[2], NULL, 0);
+        ret = qemu_strtol(words[2], NULL, 0, &irq);
+        g_assert(!ret);
         g_assert_cmpint(irq, >=, 0);
         g_assert_cmpint(irq, <, MAX_IRQ);
 
@@ -424,7 +432,7 @@ static void qmp_response(JSONMessageParser *parser, GQueue *tokens)
     }
 
     g_assert(!qmp->response);
-    qmp->response = qobject_to_qdict(obj);
+    qmp->response = qobject_to(QDict, obj);
     g_assert(qmp->response);
 }
 
@@ -727,11 +735,13 @@ void qtest_outl(QTestState *s, uint16_t addr, uint32_t value)
 static uint32_t qtest_in(QTestState *s, const char *cmd, uint16_t addr)
 {
     gchar **args;
-    uint32_t value;
+    int ret;
+    unsigned long value;
 
     qtest_sendf(s, "%s 0x%x\n", cmd, addr);
     args = qtest_rsp(s, 2);
-    value = strtoul(args[1], NULL, 0);
+    ret = qemu_strtoul(args[1], NULL, 0, &value);
+    g_assert(!ret && value <= UINT32_MAX);
     g_strfreev(args);
 
     return value;
@@ -782,11 +792,13 @@ void qtest_writeq(QTestState *s, uint64_t addr, uint64_t value)
 static uint64_t qtest_read(QTestState *s, const char *cmd, uint64_t addr)
 {
     gchar **args;
+    int ret;
     uint64_t value;
 
     qtest_sendf(s, "%s 0x%" PRIx64 "\n", cmd, addr);
     args = qtest_rsp(s, 2);
-    value = strtoull(args[1], NULL, 0);
+    ret = qemu_strtou64(args[1], NULL, 0, &value);
+    g_assert(!ret);
     g_strfreev(args);
 
     return value;
@@ -998,11 +1010,11 @@ void qtest_cb_for_every_machine(void (*cb)(const char *machine))
     g_assert(list);
 
     for (p = qlist_first(list); p; p = qlist_next(p)) {
-        minfo = qobject_to_qdict(qlist_entry_obj(p));
+        minfo = qobject_to(QDict, qlist_entry_obj(p));
         g_assert(minfo);
         qobj = qdict_get(minfo, "name");
         g_assert(qobj);
-        qstr = qobject_to_qstring(qobj);
+        qstr = qobject_to(QString, qobj);
         g_assert(qstr);
         mname = qstring_get_str(qstr);
         cb(mname);

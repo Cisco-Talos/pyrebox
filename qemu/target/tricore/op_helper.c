@@ -31,9 +31,7 @@ raise_exception_sync_internal(CPUTriCoreState *env, uint32_t class, int tin,
 {
     CPUState *cs = CPU(tricore_env_get_cpu(env));
     /* in case we come from a helper-call we need to restore the PC */
-    if (pc) {
-        cpu_restore_state(cs, pc);
-    }
+    cpu_restore_state(cs, pc, true);
 
     /* Tin is loaded into d[15] */
     env->gpr_d[15] = tin;
@@ -86,8 +84,8 @@ raise_exception_sync_internal(CPUTriCoreState *env, uint32_t class, int tin,
       ICR.IE and ICR.CCPN are saved */
 
     /* PCXI.PIE = ICR.IE */
-    env->PCXI = ((env->PCXI & ~MASK_PCXI_PIE) +
-                ((env->ICR & MASK_ICR_IE) << 15));
+    env->PCXI = ((env->PCXI & ~MASK_PCXI_PIE_1_3) +
+                ((env->ICR & MASK_ICR_IE_1_3) << 15));
     /* PCXI.PCPN = ICR.CCPN */
     env->PCXI = (env->PCXI & 0xffffff) +
                 ((env->ICR & MASK_ICR_CCPN) << 24);
@@ -2466,8 +2464,8 @@ void helper_call(CPUTriCoreState *env, uint32_t next_pc)
     env->PCXI = (env->PCXI & 0xffffff) +
                 ((env->ICR & MASK_ICR_CCPN) << 24);
     /* PCXI.PIE = ICR.IE; */
-    env->PCXI = ((env->PCXI & ~MASK_PCXI_PIE) +
-                ((env->ICR & MASK_ICR_IE) << 15));
+    env->PCXI = ((env->PCXI & ~MASK_PCXI_PIE_1_3) +
+                ((env->ICR & MASK_ICR_IE_1_3) << 15));
     /* PCXI.UL = 1; */
     env->PCXI |= MASK_PCXI_UL;
 
@@ -2564,8 +2562,8 @@ void helper_bisr(CPUTriCoreState *env, uint32_t const9)
     env->PCXI = (env->PCXI & 0xffffff) +
                  ((env->ICR & MASK_ICR_CCPN) << 24);
     /* PCXI.PIE  = ICR.IE */
-    env->PCXI = ((env->PCXI & ~MASK_PCXI_PIE) +
-                 ((env->ICR & MASK_ICR_IE) << 15));
+    env->PCXI = ((env->PCXI & ~MASK_PCXI_PIE_1_3) +
+                 ((env->ICR & MASK_ICR_IE_1_3) << 15));
     /* PCXI.UL = 0 */
     env->PCXI &= ~(MASK_PCXI_UL);
     /* PCXI[19: 0] = FCX[19: 0] */
@@ -2573,7 +2571,7 @@ void helper_bisr(CPUTriCoreState *env, uint32_t const9)
     /* FXC[19: 0] = new_FCX[19: 0] */
     env->FCX = (env->FCX & 0xfff00000) + (new_FCX & 0xfffff);
     /* ICR.IE = 1 */
-    env->ICR |= MASK_ICR_IE;
+    env->ICR |= MASK_ICR_IE_1_3;
 
     env->ICR |= const9; /* ICR.CCPN = const9[7: 0];*/
 
@@ -2605,7 +2603,8 @@ void helper_rfe(CPUTriCoreState *env)
     }
     env->PC = env->gpr_a[11] & ~0x1;
     /* ICR.IE = PCXI.PIE; */
-    env->ICR = (env->ICR & ~MASK_ICR_IE) + ((env->PCXI & MASK_PCXI_PIE) >> 15);
+    env->ICR = (env->ICR & ~MASK_ICR_IE_1_3)
+            + ((env->PCXI & MASK_PCXI_PIE_1_3) >> 15);
     /* ICR.CCPN = PCXI.PCPN; */
     env->ICR = (env->ICR & ~MASK_ICR_CCPN) +
                ((env->PCXI & MASK_PCXI_PCPN) >> 24);
@@ -2629,8 +2628,8 @@ void helper_rfm(CPUTriCoreState *env)
 {
     env->PC = (env->gpr_a[11] & ~0x1);
     /* ICR.IE = PCXI.PIE; */
-    env->ICR = (env->ICR & ~MASK_ICR_IE) |
-               ((env->PCXI & MASK_PCXI_PIE) >> 15);
+    env->ICR = (env->ICR & ~MASK_ICR_IE_1_3)
+            | ((env->PCXI & MASK_PCXI_PIE_1_3) >> 15);
     /* ICR.CCPN = PCXI.PCPN; */
     env->ICR = (env->ICR & ~MASK_ICR_CCPN) |
                ((env->PCXI & MASK_PCXI_PCPN) >> 24);
@@ -2695,8 +2694,8 @@ void helper_svlcx(CPUTriCoreState *env)
     env->PCXI = (env->PCXI & 0xffffff) +
                 ((env->ICR & MASK_ICR_CCPN) << 24);
     /* PCXI.PIE = ICR.IE; */
-    env->PCXI = ((env->PCXI & ~MASK_PCXI_PIE) +
-                ((env->ICR & MASK_ICR_IE) << 15));
+    env->PCXI = ((env->PCXI & ~MASK_PCXI_PIE_1_3) +
+                ((env->ICR & MASK_ICR_IE_1_3) << 15));
     /* PCXI.UL = 0; */
     env->PCXI &= ~MASK_PCXI_UL;
 
@@ -2738,8 +2737,8 @@ void helper_svucx(CPUTriCoreState *env)
     env->PCXI = (env->PCXI & 0xffffff) +
                 ((env->ICR & MASK_ICR_CCPN) << 24);
     /* PCXI.PIE = ICR.IE; */
-    env->PCXI = ((env->PCXI & ~MASK_PCXI_PIE) +
-                ((env->ICR & MASK_ICR_IE) << 15));
+    env->PCXI = ((env->PCXI & ~MASK_PCXI_PIE_1_3) +
+                ((env->ICR & MASK_ICR_IE_1_3) << 15));
     /* PCXI.UL = 1; */
     env->PCXI |= MASK_PCXI_UL;
 
@@ -2804,17 +2803,12 @@ static inline void QEMU_NORETURN do_raise_exception_err(CPUTriCoreState *env,
     CPUState *cs = CPU(tricore_env_get_cpu(env));
     cs->exception_index = exception;
     env->error_code = error_code;
-
-    if (pc) {
-        /* now we have a real cpu fault */
-        cpu_restore_state(cs, pc);
-    }
-
-    cpu_loop_exit(cs);
+    /* now we have a real cpu fault */
+    cpu_loop_exit_restore(cs, pc);
 }
 
-void tlb_fill(CPUState *cs, target_ulong addr, MMUAccessType access_type,
-              int mmu_idx, uintptr_t retaddr)
+void tlb_fill(CPUState *cs, target_ulong addr, int size,
+              MMUAccessType access_type, int mmu_idx, uintptr_t retaddr)
 {
     int ret;
     ret = cpu_tricore_handle_mmu_fault(cs, addr, access_type, mmu_idx);

@@ -102,7 +102,7 @@ QEMU_HELP_BOTTOM "\n"
 static void version(const char *name)
 {
     printf(
-"%s " QEMU_VERSION QEMU_PKGVERSION "\n"
+"%s " QEMU_FULL_VERSION "\n"
 "Written by Paolo Bonzini.\n"
 "\n"
 QEMU_COPYRIGHT "\n"
@@ -903,12 +903,12 @@ static int drop_privileges(void)
 
 int main(int argc, char **argv)
 {
-    const char *sopt = "hVk:fdT:u:g:vq";
+    const char *sopt = "hVk:f:dT:u:g:vq";
     struct option lopt[] = {
         { "help", no_argument, NULL, 'h' },
         { "version", no_argument, NULL, 'V' },
         { "socket", required_argument, NULL, 'k' },
-        { "pidfile", no_argument, NULL, 'f' },
+        { "pidfile", required_argument, NULL, 'f' },
         { "daemon", no_argument, NULL, 'd' },
         { "trace", required_argument, NULL, 'T' },
         { "user", required_argument, NULL, 'u' },
@@ -924,6 +924,7 @@ int main(int argc, char **argv)
     Error *local_err = NULL;
     char *trace_file = NULL;
     bool daemonize = false;
+    bool pidfile_specified = false;
     unsigned socket_activation;
 
     struct sigaction sa_sigterm;
@@ -952,7 +953,9 @@ int main(int argc, char **argv)
             }
             break;
         case 'f':
-            pidfile = optarg;
+            g_free(pidfile);
+            pidfile = g_strdup(optarg);
+            pidfile_specified = true;
             break;
 #ifdef CONFIG_LIBCAP
         case 'u': {
@@ -1080,20 +1083,22 @@ int main(int argc, char **argv)
                                          accept_client,
                                          NULL, NULL);
 
+    if (daemonize) {
+        if (daemon(0, 0) < 0) {
+            error_report("Failed to daemonize: %s", strerror(errno));
+            exit(EXIT_FAILURE);
+        }
+    }
+
+    if (daemonize || pidfile_specified)
+        write_pidfile();
+
 #ifdef CONFIG_LIBCAP
     if (drop_privileges() < 0) {
         error_report("Failed to drop privileges: %s", strerror(errno));
         exit(EXIT_FAILURE);
     }
 #endif
-
-    if (daemonize) {
-        if (daemon(0, 0) < 0) {
-            error_report("Failed to daemonize: %s", strerror(errno));
-            exit(EXIT_FAILURE);
-        }
-        write_pidfile();
-    }
 
     state = RUNNING;
     do {

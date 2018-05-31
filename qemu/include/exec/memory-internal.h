@@ -1,5 +1,5 @@
 /*
- * Declarations for obsolete exec.c functions
+ * Declarations for functions which are internal to the memory subsystem.
  *
  * Copyright 2011 Red Hat, Inc. and/or its affiliates
  *
@@ -12,15 +12,24 @@
  */
 
 /*
- * This header is for use by exec.c and memory.c ONLY.  Do not include it.
- * The functions declared here will be removed soon.
+ * This header is for use by exec.c, memory.c and accel/tcg/cputlb.c ONLY,
+ * for declarations which are shared between the memory subsystem's
+ * internals and the TCG TLB code. Do not include it from elsewhere.
  */
 
 #ifndef MEMORY_INTERNAL_H
 #define MEMORY_INTERNAL_H
 
 #ifndef CONFIG_USER_ONLY
-typedef struct AddressSpaceDispatch AddressSpaceDispatch;
+static inline AddressSpaceDispatch *flatview_to_dispatch(FlatView *fv)
+{
+    return fv->dispatch;
+}
+
+static inline AddressSpaceDispatch *address_space_to_dispatch(AddressSpace *as)
+{
+    return flatview_to_dispatch(address_space_to_flatview(as));
+}
 
 extern const MemoryRegionOps unassigned_mem_ops;
 
@@ -30,9 +39,6 @@ bool memory_region_access_valid(MemoryRegion *mr, hwaddr addr,
 void flatview_add_to_dispatch(FlatView *fv, MemoryRegionSection *section);
 AddressSpaceDispatch *address_space_dispatch_new(FlatView *fv);
 void address_space_dispatch_compact(AddressSpaceDispatch *d);
-
-AddressSpaceDispatch *address_space_to_dispatch(AddressSpace *as);
-AddressSpaceDispatch *flatview_to_dispatch(FlatView *fv);
 void address_space_dispatch_free(AddressSpaceDispatch *d);
 
 void mtree_print_dispatch(fprintf_function mon, void *f,

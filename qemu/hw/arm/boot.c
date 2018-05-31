@@ -8,6 +8,7 @@
  */
 
 #include "qemu/osdep.h"
+#include "qemu/error-report.h"
 #include "qapi/error.h"
 #include <libfdt.h>
 #include "hw/hw.h"
@@ -21,6 +22,7 @@
 #include "elf.h"
 #include "sysemu/device_tree.h"
 #include "qemu/config-file.h"
+#include "qemu/option.h"
 #include "exec/address-spaces.h"
 
 /* Kernel boot protocol is specified in the kernel docs
@@ -33,6 +35,25 @@
 
 #define ARM64_TEXT_OFFSET_OFFSET    8
 #define ARM64_MAGIC_OFFSET          56
+
+static AddressSpace *arm_boot_address_space(ARMCPU *cpu,
+                                            const struct arm_boot_info *info)
+{
+    /* Return the address space to use for bootloader reads and writes.
+     * We prefer the secure address space if the CPU has it and we're
+     * going to boot the guest into it.
+     */
+    int asidx;
+    CPUState *cs = CPU(cpu);
+
+    if (arm_feature(&cpu->env, ARM_FEATURE_EL3) && info->secure_boot) {
+        asidx = ARMASIdx_S;
+    } else {
+        asidx = ARMASIdx_NS;
+    }
+
+    return cpu_get_address_space(cs, asidx);
+}
 
 typedef enum {
     FIXUP_NONE = 0,     /* do nothing */
@@ -123,7 +144,8 @@ static const ARMInsnFixup smpboot[] = {
 };
 
 static void write_bootloader(const char *name, hwaddr addr,
-                             const ARMInsnFixup *insns, uint32_t *fixupcontext)
+                             const ARMInsnFixup *insns, uint32_t *fixupcontext,
+                             AddressSpace *as)
 {
     /* Fix up the specified bootloader fragment and write it into
      * guest memory using rom_add_blob_fixed(). fixupcontext is
@@ -162,7 +184,7 @@ static void write_bootloader(const char *name, hwaddr addr,
         code[i] = tswap32(insn);
     }
 
-    rom_add_blob_fixed(name, code, len * sizeof(uint32_t), addr);
+    rom_add_blob_fixed_as(name, code, len * sizeof(uint32_t), addr, as);
 
     g_free(code);
 }
@@ -171,6 +193,7 @@ static void default_write_secondary(ARMCPU *cpu,
                                     const struct arm_boot_info *info)
 {
     uint32_t fixupcontext[FIXUP_MAX];
+    AddressSpace *as = arm_boot_address_space(cpu, info);
 
     fixupcontext[FIXUP_GIC_CPU_IF] = info->gic_cpu_if_addr;
     fixupcontext[FIXUP_BOOTREG] = info->smp_bootreg_addr;
@@ -181,13 +204,14 @@ static void default_write_secondary(ARMCPU *cpu,
     }
 
     write_bootloader("smpboot", info->smp_loader_start,
-                     smpboot, fixupcontext);
+                     smpboot, fixupcontext, as);
 }
 
 void arm_write_secure_board_setup_dummy_smc(ARMCPU *cpu,
                                             const struct arm_boot_info *info,
                                             hwaddr mvbar_addr)
 {
+    AddressSpace *as = arm_boot_address_space(cpu, info);
     int n;
     uint32_t mvbar_blob[] = {
         /* mvbar_addr: secure monitor vectors
@@ -225,22 +249,23 @@ void arm_write_secure_board_setup_dummy_smc(ARMCPU *cpu,
     for (n = 0; n < ARRAY_SIZE(mvbar_blob); n++) {
         mvbar_blob[n] = tswap32(mvbar_blob[n]);
     }
-    rom_add_blob_fixed("board-setup-mvbar", mvbar_blob, sizeof(mvbar_blob),
-                       mvbar_addr);
+    rom_add_blob_fixed_as("board-setup-mvbar", mvbar_blob, sizeof(mvbar_blob),
+                          mvbar_addr, as);
 
     for (n = 0; n < ARRAY_SIZE(board_setup_blob); n++) {
         board_setup_blob[n] = tswap32(board_setup_blob[n]);
     }
-    rom_add_blob_fixed("board-setup", board_setup_blob,
-                       sizeof(board_setup_blob), info->board_setup_addr);
+    rom_add_blob_fixed_as("board-setup", board_setup_blob,
+                          sizeof(board_setup_blob), info->board_setup_addr, as);
 }
 
 static void default_reset_secondary(ARMCPU *cpu,
                                     const struct arm_boot_info *info)
 {
+    AddressSpace *as = arm_boot_address_space(cpu, info);
     CPUState *cs = CPU(cpu);
 
-    address_space_stl_notdirty(&address_space_memory, info->smp_bootreg_addr,
+    address_space_stl_notdirty(as, info->smp_bootreg_addr,
                                0, MEMTXATTRS_UNSPECIFIED, NULL);
     cpu_set_pc(cs, info->smp_loader_start);
 }
@@ -251,12 +276,12 @@ static inline bool have_dtb(const struct arm_boot_info *info)
 }
 
 #define WRITE_WORD(p, value) do { \
-    address_space_stl_notdirty(&address_space_memory, p, value, \
+    address_space_stl_notdirty(as, p, value, \
                                MEMTXATTRS_UNSPECIFIED, NULL);  \
     p += 4;                       \
 } while (0)
 
-static void set_kernel_args(const struct arm_boot_info *info)
+static void set_kernel_args(const struct arm_boot_info *info, AddressSpace *as)
 {
     int initrd_size = info->initrd_size;
     hwaddr base = info->loader_start;
@@ -287,8 +312,9 @@ static void set_kernel_args(const struct arm_boot_info *info)
         int cmdline_size;
 
         cmdline_size = strlen(info->kernel_cmdline);
-        cpu_physical_memory_write(p + 8, info->kernel_cmdline,
-                                  cmdline_size + 1);
+        address_space_write(as, p + 8, MEMTXATTRS_UNSPECIFIED,
+                            (const uint8_t *)info->kernel_cmdline,
+                            cmdline_size + 1);
         cmdline_size = (cmdline_size >> 2) + 1;
         WRITE_WORD(p, cmdline_size + 2);
         WRITE_WORD(p, 0x54410009);
@@ -302,7 +328,8 @@ static void set_kernel_args(const struct arm_boot_info *info)
         atag_board_len = (info->atag_board(info, atag_board_buf) + 3) & ~3;
         WRITE_WORD(p, (atag_board_len + 8) >> 2);
         WRITE_WORD(p, 0x414f4d50);
-        cpu_physical_memory_write(p, atag_board_buf, atag_board_len);
+        address_space_write(as, p, MEMTXATTRS_UNSPECIFIED,
+                            atag_board_buf, atag_board_len);
         p += atag_board_len;
     }
     /* ATAG_END */
@@ -310,7 +337,8 @@ static void set_kernel_args(const struct arm_boot_info *info)
     WRITE_WORD(p, 0);
 }
 
-static void set_kernel_args_old(const struct arm_boot_info *info)
+static void set_kernel_args_old(const struct arm_boot_info *info,
+                                AddressSpace *as)
 {
     hwaddr p;
     const char *s;
@@ -378,10 +406,84 @@ static void set_kernel_args_old(const struct arm_boot_info *info)
     }
     s = info->kernel_cmdline;
     if (s) {
-        cpu_physical_memory_write(p, s, strlen(s) + 1);
+        address_space_write(as, p, MEMTXATTRS_UNSPECIFIED,
+                            (const uint8_t *)s, strlen(s) + 1);
     } else {
         WRITE_WORD(p, 0);
     }
+}
+
+static void fdt_add_psci_node(void *fdt)
+{
+    uint32_t cpu_suspend_fn;
+    uint32_t cpu_off_fn;
+    uint32_t cpu_on_fn;
+    uint32_t migrate_fn;
+    ARMCPU *armcpu = ARM_CPU(qemu_get_cpu(0));
+    const char *psci_method;
+    int64_t psci_conduit;
+    int rc;
+
+    psci_conduit = object_property_get_int(OBJECT(armcpu),
+                                           "psci-conduit",
+                                           &error_abort);
+    switch (psci_conduit) {
+    case QEMU_PSCI_CONDUIT_DISABLED:
+        return;
+    case QEMU_PSCI_CONDUIT_HVC:
+        psci_method = "hvc";
+        break;
+    case QEMU_PSCI_CONDUIT_SMC:
+        psci_method = "smc";
+        break;
+    default:
+        g_assert_not_reached();
+    }
+
+    /*
+     * If /psci node is present in provided DTB, assume that no fixup
+     * is necessary and all PSCI configuration should be taken as-is
+     */
+    rc = fdt_path_offset(fdt, "/psci");
+    if (rc >= 0) {
+        return;
+    }
+
+    qemu_fdt_add_subnode(fdt, "/psci");
+    if (armcpu->psci_version == 2) {
+        const char comp[] = "arm,psci-0.2\0arm,psci";
+        qemu_fdt_setprop(fdt, "/psci", "compatible", comp, sizeof(comp));
+
+        cpu_off_fn = QEMU_PSCI_0_2_FN_CPU_OFF;
+        if (arm_feature(&armcpu->env, ARM_FEATURE_AARCH64)) {
+            cpu_suspend_fn = QEMU_PSCI_0_2_FN64_CPU_SUSPEND;
+            cpu_on_fn = QEMU_PSCI_0_2_FN64_CPU_ON;
+            migrate_fn = QEMU_PSCI_0_2_FN64_MIGRATE;
+        } else {
+            cpu_suspend_fn = QEMU_PSCI_0_2_FN_CPU_SUSPEND;
+            cpu_on_fn = QEMU_PSCI_0_2_FN_CPU_ON;
+            migrate_fn = QEMU_PSCI_0_2_FN_MIGRATE;
+        }
+    } else {
+        qemu_fdt_setprop_string(fdt, "/psci", "compatible", "arm,psci");
+
+        cpu_suspend_fn = QEMU_PSCI_0_1_FN_CPU_SUSPEND;
+        cpu_off_fn = QEMU_PSCI_0_1_FN_CPU_OFF;
+        cpu_on_fn = QEMU_PSCI_0_1_FN_CPU_ON;
+        migrate_fn = QEMU_PSCI_0_1_FN_MIGRATE;
+    }
+
+    /* We adopt the PSCI spec's nomenclature, and use 'conduit' to refer
+     * to the instruction that should be used to invoke PSCI functions.
+     * However, the device tree binding uses 'method' instead, so that is
+     * what we should use here.
+     */
+    qemu_fdt_setprop_string(fdt, "/psci", "method", psci_method);
+
+    qemu_fdt_setprop_cell(fdt, "/psci", "cpu_suspend", cpu_suspend_fn);
+    qemu_fdt_setprop_cell(fdt, "/psci", "cpu_off", cpu_off_fn);
+    qemu_fdt_setprop_cell(fdt, "/psci", "cpu_on", cpu_on_fn);
+    qemu_fdt_setprop_cell(fdt, "/psci", "migrate", migrate_fn);
 }
 
 /**
@@ -389,6 +491,7 @@ static void set_kernel_args_old(const struct arm_boot_info *info)
  * @addr:       the address to load the image at
  * @binfo:      struct describing the boot environment
  * @addr_limit: upper limit of the available memory area at @addr
+ * @as:         address space to load image to
  *
  * Load a device tree supplied by the machine or by the user  with the
  * '-dtb' command line option, and put it at offset @addr in target
@@ -405,7 +508,7 @@ static void set_kernel_args_old(const struct arm_boot_info *info)
  * Note: Must not be called unless have_dtb(binfo) is true.
  */
 static int load_dtb(hwaddr addr, const struct arm_boot_info *binfo,
-                    hwaddr addr_limit)
+                    hwaddr addr_limit, AddressSpace *as)
 {
     void *fdt = NULL;
     int size, rc;
@@ -540,6 +643,8 @@ static int load_dtb(hwaddr addr, const struct arm_boot_info *binfo,
         }
     }
 
+    fdt_add_psci_node(fdt);
+
     if (binfo->modify_dtb) {
         binfo->modify_dtb(binfo, fdt);
     }
@@ -549,7 +654,7 @@ static int load_dtb(hwaddr addr, const struct arm_boot_info *binfo,
     /* Put the DTB into the memory map as a ROM image: this will ensure
      * the DTB is copied again upon reset, even if addr points into RAM.
      */
-    rom_add_blob_fixed("dtb", fdt, size, addr);
+    rom_add_blob_fixed_as("dtb", fdt, size, addr, as);
 
     g_free(fdt);
 
@@ -625,6 +730,18 @@ static void do_cpu_reset(void *opaque)
                     } else {
                         env->pstate = PSTATE_MODE_EL1h;
                     }
+                    /* AArch64 kernels never boot in secure mode */
+                    assert(!info->secure_boot);
+                    /* This hook is only supported for AArch32 currently:
+                     * bootloader_aarch64[] will not call the hook, and
+                     * the code above has already dropped us into EL2 or EL1.
+                     */
+                    assert(!info->secure_board_setup);
+                }
+
+                if (arm_feature(env, ARM_FEATURE_EL2)) {
+                    /* If we have EL2 then Linux expects the HVC insn to work */
+                    env->cp15.scr_el3 |= SCR_HCE;
                 }
 
                 /* Set to non-secure if not a secure boot */
@@ -636,13 +753,15 @@ static void do_cpu_reset(void *opaque)
             }
 
             if (cs == first_cpu) {
+                AddressSpace *as = arm_boot_address_space(cpu, info);
+
                 cpu_set_pc(cs, info->loader_start);
 
                 if (!have_dtb(info)) {
                     if (old_param) {
-                        set_kernel_args_old(info);
+                        set_kernel_args_old(info, as);
                     } else {
-                        set_kernel_args(info);
+                        set_kernel_args(info, as);
                     }
                 }
             } else {
@@ -690,7 +809,7 @@ static void load_image_to_fw_cfg(FWCfgState *fw_cfg, uint16_t size_key,
         gsize length;
 
         if (!g_file_get_contents(image_name, &contents, &length, NULL)) {
-            fprintf(stderr, "failed to load \"%s\"\n", image_name);
+            error_report("failed to load \"%s\"", image_name);
             exit(1);
         }
         size = length;
@@ -717,7 +836,7 @@ static int do_arm_linux_init(Object *obj, void *opaque)
 
 static uint64_t arm_load_elf(struct arm_boot_info *info, uint64_t *pentry,
                              uint64_t *lowaddr, uint64_t *highaddr,
-                             int elf_machine)
+                             int elf_machine, AddressSpace *as)
 {
     bool elf_is64;
     union {
@@ -732,6 +851,7 @@ static uint64_t arm_load_elf(struct arm_boot_info *info, uint64_t *pentry,
 
     load_elf_hdr(info->kernel_filename, &elf_header, &elf_is64, &err);
     if (err) {
+        error_free(err);
         return ret;
     }
 
@@ -760,9 +880,9 @@ static uint64_t arm_load_elf(struct arm_boot_info *info, uint64_t *pentry,
         }
     }
 
-    ret = load_elf(info->kernel_filename, NULL, NULL,
-                   pentry, lowaddr, highaddr, big_endian, elf_machine,
-                   1, data_swab);
+    ret = load_elf_as(info->kernel_filename, NULL, NULL,
+                      pentry, lowaddr, highaddr, big_endian, elf_machine,
+                      1, data_swab, as);
     if (ret <= 0) {
         /* The header loaded but the image didn't */
         exit(1);
@@ -772,7 +892,7 @@ static uint64_t arm_load_elf(struct arm_boot_info *info, uint64_t *pentry,
 }
 
 static uint64_t load_aarch64_image(const char *filename, hwaddr mem_base,
-                                   hwaddr *entry)
+                                   hwaddr *entry, AddressSpace *as)
 {
     hwaddr kernel_load_offset = KERNEL64_LOAD_ADDR;
     uint8_t *buffer;
@@ -793,7 +913,8 @@ static uint64_t load_aarch64_image(const char *filename, hwaddr mem_base,
     }
 
     /* check the arm64 magic header value -- very old kernels may not have it */
-    if (memcmp(buffer + ARM64_MAGIC_OFFSET, "ARM\x64", 4) == 0) {
+    if (size > ARM64_MAGIC_OFFSET + 4 &&
+        memcmp(buffer + ARM64_MAGIC_OFFSET, "ARM\x64", 4) == 0) {
         uint64_t hdrvals[2];
 
         /* The arm64 Image header has text_offset and image_size fields at 8 and
@@ -807,7 +928,7 @@ static uint64_t load_aarch64_image(const char *filename, hwaddr mem_base,
     }
 
     *entry = mem_base + kernel_load_offset;
-    rom_add_blob_fixed(filename, buffer, size, *entry);
+    rom_add_blob_fixed_as(filename, buffer, size, *entry, as);
 
     g_free(buffer);
 
@@ -829,6 +950,7 @@ static void arm_load_kernel_notify(Notifier *notifier, void *data)
     ARMCPU *cpu = n->cpu;
     struct arm_boot_info *info =
         container_of(n, struct arm_boot_info, load_kernel_notifier);
+    AddressSpace *as = arm_boot_address_space(cpu, info);
 
     /* The board code is not supposed to set secure_board_setup unless
      * running its code in secure mode is actually possible, and KVM
@@ -846,7 +968,7 @@ static void arm_load_kernel_notify(Notifier *notifier, void *data)
              * the kernel is supposed to be loaded by the bootloader), copy the
              * DTB to the base of RAM for the bootloader to pick up.
              */
-            if (load_dtb(info->loader_start, info, 0) < 0) {
+            if (load_dtb(info->loader_start, info, 0, as) < 0) {
                 exit(1);
             }
         }
@@ -921,7 +1043,7 @@ static void arm_load_kernel_notify(Notifier *notifier, void *data)
 
     /* Assume that raw images are linux kernels, and ELF images are not.  */
     kernel_size = arm_load_elf(info, &elf_entry, &elf_low_addr,
-                               &elf_high_addr, elf_machine);
+                               &elf_high_addr, elf_machine, as);
     if (kernel_size > 0 && have_dtb(info)) {
         /* If there is still some room left at the base of RAM, try and put
          * the DTB there like we do for images loaded with -bios or -pflash.
@@ -934,30 +1056,30 @@ static void arm_load_kernel_notify(Notifier *notifier, void *data)
             if (elf_low_addr < info->loader_start) {
                 elf_low_addr = 0;
             }
-            if (load_dtb(info->loader_start, info, elf_low_addr) < 0) {
+            if (load_dtb(info->loader_start, info, elf_low_addr, as) < 0) {
                 exit(1);
             }
         }
     }
     entry = elf_entry;
     if (kernel_size < 0) {
-        kernel_size = load_uimage(info->kernel_filename, &entry, NULL,
-                                  &is_linux, NULL, NULL);
+        kernel_size = load_uimage_as(info->kernel_filename, &entry, NULL,
+                                     &is_linux, NULL, NULL, as);
     }
     if (arm_feature(&cpu->env, ARM_FEATURE_AARCH64) && kernel_size < 0) {
         kernel_size = load_aarch64_image(info->kernel_filename,
-                                         info->loader_start, &entry);
+                                         info->loader_start, &entry, as);
         is_linux = 1;
     } else if (kernel_size < 0) {
         /* 32-bit ARM */
         entry = info->loader_start + KERNEL_LOAD_ADDR;
-        kernel_size = load_image_targphys(info->kernel_filename, entry,
-                                          info->ram_size - KERNEL_LOAD_ADDR);
+        kernel_size = load_image_targphys_as(info->kernel_filename, entry,
+                                             info->ram_size - KERNEL_LOAD_ADDR,
+                                             as);
         is_linux = 1;
     }
     if (kernel_size < 0) {
-        fprintf(stderr, "qemu: could not load kernel '%s'\n",
-                info->kernel_filename);
+        error_report("could not load kernel '%s'", info->kernel_filename);
         exit(1);
     }
     info->entry = entry;
@@ -965,19 +1087,20 @@ static void arm_load_kernel_notify(Notifier *notifier, void *data)
         uint32_t fixupcontext[FIXUP_MAX];
 
         if (info->initrd_filename) {
-            initrd_size = load_ramdisk(info->initrd_filename,
-                                       info->initrd_start,
-                                       info->ram_size -
-                                       info->initrd_start);
+            initrd_size = load_ramdisk_as(info->initrd_filename,
+                                          info->initrd_start,
+                                          info->ram_size - info->initrd_start,
+                                          as);
             if (initrd_size < 0) {
-                initrd_size = load_image_targphys(info->initrd_filename,
-                                                  info->initrd_start,
-                                                  info->ram_size -
-                                                  info->initrd_start);
+                initrd_size = load_image_targphys_as(info->initrd_filename,
+                                                     info->initrd_start,
+                                                     info->ram_size -
+                                                     info->initrd_start,
+                                                     as);
             }
             if (initrd_size < 0) {
-                fprintf(stderr, "qemu: could not load initrd '%s'\n",
-                        info->initrd_filename);
+                error_report("could not load initrd '%s'",
+                             info->initrd_filename);
                 exit(1);
             }
         } else {
@@ -1014,23 +1137,23 @@ static void arm_load_kernel_notify(Notifier *notifier, void *data)
 
             /* Place the DTB after the initrd in memory with alignment. */
             dtb_start = QEMU_ALIGN_UP(info->initrd_start + initrd_size, align);
-            if (load_dtb(dtb_start, info, 0) < 0) {
+            if (load_dtb(dtb_start, info, 0, as) < 0) {
                 exit(1);
             }
             fixupcontext[FIXUP_ARGPTR] = dtb_start;
         } else {
             fixupcontext[FIXUP_ARGPTR] = info->loader_start + KERNEL_ARGS_ADDR;
             if (info->ram_size >= (1ULL << 32)) {
-                fprintf(stderr, "qemu: RAM size must be less than 4GB to boot"
-                        " Linux kernel using ATAGS (try passing a device tree"
-                        " using -dtb)\n");
+                error_report("RAM size must be less than 4GB to boot"
+                             " Linux kernel using ATAGS (try passing a device tree"
+                             " using -dtb)");
                 exit(1);
             }
         }
         fixupcontext[FIXUP_ENTRYPOINT] = entry;
 
         write_bootloader("bootloader", info->loader_start,
-                         primary_loader, fixupcontext);
+                         primary_loader, fixupcontext, as);
 
         if (info->nb_cpus > 1) {
             info->write_secondary_boot(cpu, info);

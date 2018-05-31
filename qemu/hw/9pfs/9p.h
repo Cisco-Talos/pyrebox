@@ -94,10 +94,10 @@ enum {
     P9_QTFILE = 0x00,
 };
 
-enum p9_proto_version {
+typedef enum P9ProtoVersion {
     V9FS_PROTO_2000U = 0x01,
     V9FS_PROTO_2000L = 0x02,
-};
+} P9ProtoVersion;
 
 #define P9_NOTAG    UINT16_MAX
 #define P9_NOFID    UINT32_MAX
@@ -118,6 +118,7 @@ static inline char *rpath(FsContext *ctx, const char *path)
 
 typedef struct V9fsPDU V9fsPDU;
 typedef struct V9fsState V9fsState;
+typedef struct V9fsTransport V9fsTransport;
 
 typedef struct {
     uint32_t size_le;
@@ -238,10 +239,10 @@ struct V9fsState
     FileOperations *ops;
     FsContext ctx;
     char *tag;
-    enum p9_proto_version proto_version;
+    P9ProtoVersion proto_version;
     int32_t msize;
     V9fsPDU pdus[MAX_REQ];
-    const struct V9fsTransport *transport;
+    const V9fsTransport *transport;
     /*
      * lock ensuring atomic path update
      * on rename.
@@ -342,14 +343,13 @@ void coroutine_fn v9fs_reclaim_fd(V9fsPDU *pdu);
 void v9fs_path_init(V9fsPath *path);
 void v9fs_path_free(V9fsPath *path);
 void v9fs_path_sprintf(V9fsPath *path, const char *fmt, ...);
-void v9fs_path_copy(V9fsPath *lhs, V9fsPath *rhs);
+void v9fs_path_copy(V9fsPath *dst, const V9fsPath *src);
 int v9fs_name_to_path(V9fsState *s, V9fsPath *dirpath,
                       const char *name, V9fsPath *path);
-int v9fs_device_realize_common(V9fsState *s, Error **errp);
+int v9fs_device_realize_common(V9fsState *s, const V9fsTransport *t,
+                               Error **errp);
 void v9fs_device_unrealize_common(V9fsState *s, Error **errp);
 
-ssize_t pdu_marshal(V9fsPDU *pdu, size_t offset, const char *fmt, ...);
-ssize_t pdu_unmarshal(V9fsPDU *pdu, size_t offset, const char *fmt, ...);
 V9fsPDU *pdu_alloc(V9fsState *s);
 void pdu_free(V9fsPDU *pdu);
 void pdu_submit(V9fsPDU *pdu, P9MsgHeader *hdr);
@@ -366,13 +366,5 @@ struct V9fsTransport {
                                          unsigned int *pniov, size_t size);
     void        (*push_and_notify)(V9fsPDU *pdu);
 };
-
-static inline int v9fs_register_transport(V9fsState *s,
-        const struct V9fsTransport *t)
-{
-    assert(!s->transport);
-    s->transport = t;
-    return 0;
-}
 
 #endif

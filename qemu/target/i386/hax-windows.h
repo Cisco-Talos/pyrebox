@@ -20,12 +20,7 @@
 #ifndef TARGET_I386_HAX_WINDOWS_H
 #define TARGET_I386_HAX_WINDOWS_H
 
-#include <windows.h>
-#include <memory.h>
-#include <malloc.h>
 #include <winioctl.h>
-#include <string.h>
-#include <stdio.h>
 #include <windef.h>
 
 #define HAX_INVALID_FD INVALID_HANDLE_VALUE
@@ -61,6 +56,8 @@ static inline int hax_invalid_fd(hax_fd fd)
 #define HAX_VM_IOCTL_SET_RAM       CTL_CODE(HAX_DEVICE_TYPE, 0x904, \
                                             METHOD_BUFFERED, FILE_ANY_ACCESS)
 #define HAX_VM_IOCTL_VCPU_DESTROY  CTL_CODE(HAX_DEVICE_TYPE, 0x905, \
+                                            METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define HAX_VM_IOCTL_ADD_RAMBLOCK  CTL_CODE(HAX_DEVICE_TYPE, 0x913, \
                                             METHOD_BUFFERED, FILE_ANY_ACCESS)
 
 #define HAX_VCPU_IOCTL_RUN      CTL_CODE(HAX_DEVICE_TYPE, 0x906, \

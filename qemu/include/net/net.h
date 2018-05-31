@@ -2,12 +2,9 @@
 #define QEMU_NET_H
 
 #include "qemu/queue.h"
-#include "qemu-common.h"
-#include "qapi/qmp/qdict.h"
-#include "qemu/option.h"
+#include "qapi/qapi-types-net.h"
 #include "net/queue.h"
 #include "migration/vmstate.h"
-#include "qapi-types.h"
 
 #define MAC_FMT "%02X:%02X:%02X:%02X:%02X:%02X"
 #define MAC_ARG(x) ((uint8_t *)(x))[0], ((uint8_t *)(x))[1], \
@@ -156,6 +153,7 @@ ssize_t qemu_send_packet_async(NetClientState *nc, const uint8_t *buf,
                                int size, NetPacketSent *sent_cb);
 void qemu_purge_queued_packets(NetClientState *nc);
 void qemu_flush_queued_packets(NetClientState *nc);
+void qemu_flush_or_purge_queued_packets(NetClientState *nc, bool purge);
 void qemu_format_nic_info_str(NetClientState *nc, uint8_t macaddr[6]);
 bool qemu_has_ufo(NetClientState *nc);
 bool qemu_has_vnet_hdr(NetClientState *nc);
@@ -207,9 +205,8 @@ extern const char *host_net_devices[];
 extern const char *legacy_tftp_prefix;
 extern const char *legacy_bootp_filename;
 
-int net_client_init(QemuOpts *opts, bool is_netdev, Error **errp);
 int net_client_parse(QemuOptsList *opts_list, const char *str);
-int net_init_clients(void);
+int net_init_clients(Error **errp);
 void net_check_clients(void);
 void net_cleanup(void);
 void hmp_host_net_add(Monitor *mon, const QDict *qdict);
@@ -227,8 +224,10 @@ NetClientState *net_hub_port_find(int hub_id);
 
 void qdev_set_nic_properties(DeviceState *dev, NICInfo *nd);
 
-#define POLYNOMIAL 0x04c11db6
-unsigned compute_mcast_idx(const uint8_t *ep);
+#define POLYNOMIAL_BE 0x04c11db6
+#define POLYNOMIAL_LE 0xedb88320
+uint32_t net_crc32(const uint8_t *p, int len);
+uint32_t net_crc32_le(const uint8_t *p, int len);
 
 #define vmstate_offset_macaddr(_state, _field)                       \
     vmstate_offset_array(_state, _field.a, uint8_t,                \

@@ -26,16 +26,7 @@
 #include "hw/ppc/mac.h"
 #include "hw/pci/pci.h"
 #include "hw/pci/pci_host.h"
-
-/* debug UniNorth */
-//#define DEBUG_UNIN
-
-#ifdef DEBUG_UNIN
-#define UNIN_DPRINTF(fmt, ...)                                  \
-    do { printf("UNIN: " fmt , ## __VA_ARGS__); } while (0)
-#else
-#define UNIN_DPRINTF(fmt, ...)
-#endif
+#include "trace.h"
 
 static const int unin_irq_line[] = { 0x1b, 0x1c, 0x1d, 0x1e };
 
@@ -69,8 +60,7 @@ static void pci_unin_set_irq(void *opaque, int irq_num, int level)
 {
     qemu_irq *pic = opaque;
 
-    UNIN_DPRINTF("%s: setting INT %d = %d\n", __func__,
-                 unin_irq_line[irq_num], level);
+    trace_unin_set_irq(unin_irq_line[irq_num], level);
     qemu_set_irq(pic[unin_irq_line[irq_num]], level);
 }
 
@@ -103,9 +93,7 @@ static uint32_t unin_get_config_reg(uint32_t reg, uint32_t addr)
         retval |= func << 8;
     }
 
-
-    UNIN_DPRINTF("Converted config space accessor %08x/%08x -> %08x\n",
-                 reg, addr, retval);
+    trace_unin_get_config_reg(reg, addr, retval);
 
     return retval;
 }
@@ -115,8 +103,7 @@ static void unin_data_write(void *opaque, hwaddr addr,
 {
     UNINState *s = opaque;
     PCIHostState *phb = PCI_HOST_BRIDGE(s);
-    UNIN_DPRINTF("write addr " TARGET_FMT_plx " len %d val %"PRIx64"\n",
-                 addr, len, val);
+    trace_unin_data_write(addr, len, val);
     pci_data_write(phb->bus,
                    unin_get_config_reg(phb->config_reg, addr),
                    val, len);
@@ -132,8 +119,7 @@ static uint64_t unin_data_read(void *opaque, hwaddr addr,
     val = pci_data_read(phb->bus,
                         unin_get_config_reg(phb->config_reg, addr),
                         len);
-    UNIN_DPRINTF("read addr " TARGET_FMT_plx " len %d val %x\n",
-                 addr, len, val);
+    trace_unin_data_read(addr, len, val);
     return val;
 }
 
@@ -233,12 +219,12 @@ PCIBus *pci_pmac_init(qemu_irq *pic,
     memory_region_add_subregion(address_space_mem, 0x80000000ULL,
                                 &d->pci_hole);
 
-    h->bus = pci_register_bus(dev, NULL,
-                              pci_unin_set_irq, pci_unin_map_irq,
-                              pic,
-                              &d->pci_mmio,
-                              address_space_io,
-                              PCI_DEVFN(11, 0), 4, TYPE_PCI_BUS);
+    h->bus = pci_register_root_bus(dev, NULL,
+                                   pci_unin_set_irq, pci_unin_map_irq,
+                                   pic,
+                                   &d->pci_mmio,
+                                   address_space_io,
+                                   PCI_DEVFN(11, 0), 4, TYPE_PCI_BUS);
 
 #if 0
     pci_create_simple(h->bus, PCI_DEVFN(11, 0), "uni-north");
@@ -299,12 +285,12 @@ PCIBus *pci_pmac_u3_init(qemu_irq *pic,
     memory_region_add_subregion(address_space_mem, 0x80000000ULL,
                                 &d->pci_hole);
 
-    h->bus = pci_register_bus(dev, NULL,
-                              pci_unin_set_irq, pci_unin_map_irq,
-                              pic,
-                              &d->pci_mmio,
-                              address_space_io,
-                              PCI_DEVFN(11, 0), 4, TYPE_PCI_BUS);
+    h->bus = pci_register_root_bus(dev, NULL,
+                                   pci_unin_set_irq, pci_unin_map_irq,
+                                   pic,
+                                   &d->pci_mmio,
+                                   address_space_io,
+                                   PCI_DEVFN(11, 0), 4, TYPE_PCI_BUS);
 
     sysbus_mmio_map(s, 0, 0xf0800000);
     sysbus_mmio_map(s, 1, 0xf0c00000);

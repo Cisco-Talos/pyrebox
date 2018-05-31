@@ -38,7 +38,7 @@
  */
 
 #include "qemu/osdep.h"
-
+#include "qemu/error-report.h"
 #include "hw/hw.h"
 #include "hw/pci/pci.h"
 #include "hw/i386/pc.h"
@@ -50,7 +50,7 @@
 //#define DEBUG_BONITO
 
 #ifdef DEBUG_BONITO
-#define DPRINTF(fmt, ...) fprintf(stderr, "%s: " fmt, __FUNCTION__, ##__VA_ARGS__)
+#define DPRINTF(fmt, ...) fprintf(stderr, "%s: " fmt, __func__, ##__VA_ARGS__)
 #else
 #define DPRINTF(fmt, ...)
 #endif
@@ -449,8 +449,8 @@ static uint32_t bonito_sbridge_pciaddr(void *opaque, hwaddr addr)
     regno = (cfgaddr & BONITO_PCICONF_REG_MASK) >> BONITO_PCICONF_REG_OFFSET;
 
     if (idsel == 0) {
-        fprintf(stderr, "error in bonito pci config address " TARGET_FMT_plx
-            ",pcimap_cfg=%x\n", addr, s->regs[BONITO_PCIMAP_CFG]);
+        error_report("error in bonito pci config address " TARGET_FMT_plx
+                     ",pcimap_cfg=%x", addr, s->regs[BONITO_PCIMAP_CFG]);
         exit(1);
     }
     pciaddr = PCI_ADDR(pci_bus_num(phb->bus), devno, funno, regno);
@@ -714,10 +714,10 @@ static int bonito_pcihost_initfn(SysBusDevice *dev)
 {
     PCIHostState *phb = PCI_HOST_BRIDGE(dev);
 
-    phb->bus = pci_register_bus(DEVICE(dev), "pci",
-                                pci_bonito_set_irq, pci_bonito_map_irq, dev,
-                                get_system_memory(), get_system_io(),
-                                0x28, 32, TYPE_PCI_BUS);
+    phb->bus = pci_register_root_bus(DEVICE(dev), "pci",
+                                     pci_bonito_set_irq, pci_bonito_map_irq,
+                                     dev, get_system_memory(), get_system_io(),
+                                     0x28, 32, TYPE_PCI_BUS);
 
     return 0;
 }

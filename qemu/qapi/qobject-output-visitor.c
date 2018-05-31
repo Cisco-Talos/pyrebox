@@ -17,7 +17,12 @@
 #include "qapi/visitor-impl.h"
 #include "qemu/queue.h"
 #include "qemu-common.h"
-#include "qapi/qmp/types.h"
+#include "qapi/qmp/qbool.h"
+#include "qapi/qmp/qdict.h"
+#include "qapi/qmp/qlist.h"
+#include "qapi/qmp/qnull.h"
+#include "qapi/qmp/qnum.h"
+#include "qapi/qmp/qstring.h"
 
 typedef struct QStackEntry {
     QObject *value;
@@ -87,11 +92,11 @@ static void qobject_output_add_obj(QObjectOutputVisitor *qov, const char *name,
         switch (qobject_type(cur)) {
         case QTYPE_QDICT:
             assert(name);
-            qdict_put_obj(qobject_to_qdict(cur), name, value);
+            qdict_put_obj(qobject_to(QDict, cur), name, value);
             break;
         case QTYPE_QLIST:
             assert(!name);
-            qlist_append_obj(qobject_to_qlist(cur), value);
+            qlist_append_obj(qobject_to(QList, cur), value);
             break;
         default:
             g_assert_not_reached();

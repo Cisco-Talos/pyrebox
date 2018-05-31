@@ -77,6 +77,13 @@
 #
 # @filename: the path of a new PPM file to store the image
 #
+# @device: ID of the display device that should be dumped. If this parameter
+#          is missing, the primary display will be used. (Since 2.12)
+#
+# @head: head to use in case the device supports multiple heads. If this
+#        parameter is missing, head #0 will be used. Also note that the head
+#        can only be specified in conjunction with the device ID. (Since 2.12)
+#
 # Returns: Nothing on success
 #
 # Since: 0.14.0
@@ -88,7 +95,8 @@
 # <- { "return": {} }
 #
 ##
-{ 'command': 'screendump', 'data': {'filename': 'str'} }
+{ 'command': 'screendump',
+  'data': {'filename': 'str', '*device': 'str', '*head': 'int'} }
 
 ##
 # == Spice
@@ -748,6 +756,9 @@
 # @ac_bookmarks: since 2.10
 # altgr, altgr_r: dropped in 2.10
 #
+# @muhenkan: since 2.12
+# @katakanahiragana: since 2.12
+#
 # 'sysrq' was mistakenly added to hack around the fact that
 # the ps2 driver was not generating correct scancodes sequences
 # when 'alt+print' was pressed. This flaw is now fixed and the
@@ -775,7 +786,7 @@
             'left', 'up', 'down', 'right', 'insert', 'delete', 'stop', 'again',
             'props', 'undo', 'front', 'copy', 'open', 'paste', 'find', 'cut',
             'lf', 'help', 'meta_l', 'meta_r', 'compose', 'pause',
-            'ro', 'hiragana', 'henkan', 'yen',
+            'ro', 'hiragana', 'henkan', 'yen', 'muhenkan', 'katakanahiragana',
             'kp_comma', 'kp_equals', 'power', 'sleep', 'wake',
             'audionext', 'audioprev', 'audiostop', 'audioplay', 'audiomute',
             'volumeup', 'volumedown', 'mediaselect',
@@ -982,3 +993,67 @@
   'data': { '*device': 'str',
             '*head'  : 'int',
             'events' : [ 'InputEvent' ] } }
+
+
+##
+# @DisplayNoOpts:
+#
+# Empty struct for displays without config options.
+#
+# Since: 2.12
+#
+##
+{ 'struct'  : 'DisplayNoOpts',
+  'data'    : { } }
+
+##
+# @DisplayGTK:
+#
+# GTK display options.
+#
+# @grab-on-hover: Grab keyboard input on mouse hover.
+#
+# Since: 2.12
+#
+##
+{ 'struct'  : 'DisplayGTK',
+  'data'    : { '*grab-on-hover' : 'bool' } }
+
+##
+# @DisplayType:
+#
+# Display (user interface) type.
+#
+# Since: 2.12
+#
+##
+{ 'enum'    : 'DisplayType',
+  'data'    : [ 'default', 'none', 'gtk', 'sdl',
+                'egl-headless', 'curses', 'cocoa' ] }
+
+##
+# @DisplayOptions:
+#
+# Display (user interface) options.
+#
+# @type:          Which DisplayType qemu should use.
+# @full-screen:   Start user interface in fullscreen mode (default: off).
+# @window-close:  Allow to quit qemu with window close button (default: on).
+# @gl:            Enable OpenGL support (default: off).
+#
+# Since: 2.12
+#
+##
+{ 'union'   : 'DisplayOptions',
+  'base'    : { 'type'           : 'DisplayType',
+                '*full-screen'   : 'bool',
+                '*window-close'  : 'bool',
+                '*gl'            : 'bool' },
+  'discriminator' : 'type',
+  'data'    : { 'default'        : 'DisplayNoOpts',
+                'none'           : 'DisplayNoOpts',
+                'gtk'            : 'DisplayGTK',
+                'sdl'            : 'DisplayNoOpts',
+                'egl-headless'   : 'DisplayNoOpts',
+                'curses'         : 'DisplayNoOpts',
+                'cocoa'          : 'DisplayNoOpts' } }

@@ -18,7 +18,7 @@
 	url = git://git.qemu-project.org/openhackware.git
 [submodule "roms/qemu-palcode"]
 	path = roms/qemu-palcode
-	url = git://github.com/rth7680/qemu-palcode.git
+	url = git://git.qemu.org/qemu-palcode.git
 [submodule "roms/sgabios"]
 	path = roms/sgabios
 	url = git://git.qemu-project.org/sgabios.git
@@ -40,3 +40,9 @@
 [submodule "capstone"]
 	path = capstone
 	url = git://git.qemu.org/capstone.git
+[submodule "roms/seabios-hppa"]
+	path = roms/seabios-hppa
+	url = git://github.com/hdeller/seabios-hppa.git
+[submodule "roms/u-boot-sam460ex"]
+	path = roms/u-boot-sam460ex
+	url = git://git.qemu.org/u-boot-sam460ex.git

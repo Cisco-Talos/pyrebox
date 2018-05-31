@@ -11,9 +11,7 @@
 #ifndef QAPI_CLONE_VISITOR_H
 #define QAPI_CLONE_VISITOR_H
 
-#include "qemu/typedefs.h"
 #include "qapi/visitor.h"
-#include "qapi-visit.h"
 
 /*
  * The clone visitor is for direct use only by the QAPI_CLONE() macro;

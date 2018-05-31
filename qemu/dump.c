@@ -22,9 +22,10 @@
 #include "sysemu/sysemu.h"
 #include "sysemu/memory_mapping.h"
 #include "sysemu/cpus.h"
+#include "qapi/error.h"
+#include "qapi/qapi-commands-misc.h"
+#include "qapi/qapi-events-misc.h"
 #include "qapi/qmp/qerror.h"
-#include "qmp-commands.h"
-#include "qapi-event.h"
 #include "qemu/error-report.h"
 #include "hw/misc/vmcoreinfo.h"
 
@@ -106,7 +107,7 @@ static int fd_write_vmcore(const void *buf, size_t size, void *opaque)
 
     written_size = qemu_write_full(s->fd, buf, size);
     if (written_size != size) {
-        return -1;
+        return -errno;
     }
 
     return 0;
@@ -139,7 +140,7 @@ static void write_elf64_header(DumpState *s, Error **errp)
 
     ret = fd_write_vmcore(&elf_header, sizeof(elf_header), s);
     if (ret < 0) {
-        error_setg(errp, "dump: failed to write elf header");
+        error_setg_errno(errp, -ret, "dump: failed to write elf header");
     }
 }
 
@@ -170,7 +171,7 @@ static void write_elf32_header(DumpState *s, Error **errp)
 
     ret = fd_write_vmcore(&elf_header, sizeof(elf_header), s);
     if (ret < 0) {
-        error_setg(errp, "dump: failed to write elf header");
+        error_setg_errno(errp, -ret, "dump: failed to write elf header");
     }
 }
 
@@ -193,7 +194,8 @@ static void write_elf64_load(DumpState *s, MemoryMapping *memory_mapping,
 
     ret = fd_write_vmcore(&phdr, sizeof(Elf64_Phdr), s);
     if (ret < 0) {
-        error_setg(errp, "dump: failed to write program header table");
+        error_setg_errno(errp, -ret,
+                         "dump: failed to write program header table");
     }
 }
 
@@ -216,7 +218,8 @@ static void write_elf32_load(DumpState *s, MemoryMapping *memory_mapping,
 
     ret = fd_write_vmcore(&phdr, sizeof(Elf32_Phdr), s);
     if (ret < 0) {
-        error_setg(errp, "dump: failed to write program header table");
+        error_setg_errno(errp, -ret,
+                         "dump: failed to write program header table");
     }
 }
 
@@ -236,7 +239,8 @@ static void write_elf64_note(DumpState *s, Error **errp)
 
     ret = fd_write_vmcore(&phdr, sizeof(Elf64_Phdr), s);
     if (ret < 0) {
-        error_setg(errp, "dump: failed to write program header table");
+        error_setg_errno(errp, -ret,
+                         "dump: failed to write program header table");
     }
 }
 
@@ -301,7 +305,8 @@ static void write_elf32_note(DumpState *s, Error **errp)
 
     ret = fd_write_vmcore(&phdr, sizeof(Elf32_Phdr), s);
     if (ret < 0) {
-        error_setg(errp, "dump: failed to write program header table");
+        error_setg_errno(errp, -ret,
+                         "dump: failed to write program header table");
     }
 }
 
@@ -354,7 +359,8 @@ static void write_elf_section(DumpState *s, int type, Error **errp)
 
     ret = fd_write_vmcore(&shdr, shdr_size, s);
     if (ret < 0) {
-        error_setg(errp, "dump: failed to write section header table");
+        error_setg_errno(errp, -ret,
+                         "dump: failed to write section header table");
     }
 }
 
@@ -364,7 +370,7 @@ static void write_data(DumpState *s, void *buf, int length, Error **errp)
 
     ret = fd_write_vmcore(buf, length, s);
     if (ret < 0) {
-        error_setg(errp, "dump: failed to save memory");
+        error_setg_errno(errp, -ret, "dump: failed to save memory");
     } else {
         s->written_size += length;
     }
@@ -788,12 +794,7 @@ static bool note_name_equal(DumpState *s,
     get_note_sizes(s, note, &head_size, &name_size, NULL);
     head_size = ROUND_UP(head_size, 4);
 
-    if (name_size != len ||
-        memcmp(note + head_size, "VMCOREINFO", len)) {
-        return false;
-    }
-
-    return true;
+    return name_size == len && memcmp(note + head_size, name, len) == 0;
 }
 
 /* write common header, sub header and elf note to vmcore */
@@ -813,7 +814,7 @@ static void create_header32(DumpState *s, Error **errp)
     size = sizeof(DiskDumpHeader32);
     dh = g_malloc0(size);
 
-    strncpy(dh->signature, KDUMP_SIGNATURE, strlen(KDUMP_SIGNATURE));
+    memcpy(dh->signature, KDUMP_SIGNATURE, SIG_LEN);
     dh->header_version = cpu_to_dump32(s, 6);
     block_size = s->dump_info.page_size;
     dh->block_size = cpu_to_dump32(s, block_size);
@@ -925,7 +926,7 @@ static void create_header64(DumpState *s, Error **errp)
     size = sizeof(DiskDumpHeader64);
     dh = g_malloc0(size);
 
-    strncpy(dh->signature, KDUMP_SIGNATURE, strlen(KDUMP_SIGNATURE));
+    memcpy(dh->signature, KDUMP_SIGNATURE, SIG_LEN);
     dh->header_version = cpu_to_dump32(s, 6);
     block_size = s->dump_info.page_size;
     dh->block_size = cpu_to_dump32(s, block_size);
@@ -1613,10 +1614,18 @@ static void vmcoreinfo_update_phys_base(DumpState *s)
 
     lines = g_strsplit((char *)vmci, "\n", -1);
     for (i = 0; lines[i]; i++) {
-        if (g_str_has_prefix(lines[i], "NUMBER(phys_base)=")) {
-            if (qemu_strtou64(lines[i] + 18, NULL, 16,
+        const char *prefix = NULL;
+
+        if (s->dump_info.d_machine == EM_X86_64) {
+            prefix = "NUMBER(phys_base)=";
+        } else if (s->dump_info.d_machine == EM_AARCH64) {
+            prefix = "NUMBER(PHYS_OFFSET)=";
+        }
+
+        if (prefix && g_str_has_prefix(lines[i], prefix)) {
+            if (qemu_strtou64(lines[i] + strlen(prefix), NULL, 16,
                               &phys_base) < 0) {
-                warn_report("Failed to read NUMBER(phys_base)=");
+                warn_report("Failed to read %s", prefix);
             } else {
                 s->dump_info.phys_base = phys_base;
             }

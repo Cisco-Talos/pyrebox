@@ -75,10 +75,12 @@ typedef enum {
 /* Bool Caps */
 #define SPAPR_CAP_OFF                   0x00
 #define SPAPR_CAP_ON                    0x01
-/* Broken | Workaround | Fixed Caps */
+/* Custom Caps */
 #define SPAPR_CAP_BROKEN                0x00
 #define SPAPR_CAP_WORKAROUND            0x01
 #define SPAPR_CAP_FIXED                 0x02
+#define SPAPR_CAP_FIXED_IBS             0x02
+#define SPAPR_CAP_FIXED_CCD             0x03
 
 typedef struct sPAPRCapabilities sPAPRCapabilities;
 struct sPAPRCapabilities {
@@ -313,6 +315,7 @@ struct sPAPRMachineState {
 #define H_CPU_CHAR_L1D_THREAD_PRIV              PPC_BIT(4)
 #define H_CPU_CHAR_HON_BRANCH_HINTS             PPC_BIT(5)
 #define H_CPU_CHAR_THR_RECONF_TRIG              PPC_BIT(6)
+#define H_CPU_CHAR_CACHE_COUNT_DIS              PPC_BIT(7)
 #define H_CPU_BEHAV_FAVOUR_SECURITY             PPC_BIT(0)
 #define H_CPU_BEHAV_L1D_FLUSH_PR                PPC_BIT(1)
 #define H_CPU_BEHAV_BNDS_CHK_SPEC_BAR           PPC_BIT(2)
@@ -642,6 +645,16 @@ void spapr_load_rtas(sPAPRMachineState *spapr, void *fdt, hwaddr addr);
 
 #define RTAS_EVENT_SCAN_RATE    1
 
+/* This helper should be used to encode interrupt specifiers when the related
+ * "interrupt-controller" node has its "#interrupt-cells" property set to 2 (ie,
+ * VIO devices, RTAS event sources and PHBs).
+ */
+static inline void spapr_dt_xics_irq(uint32_t *intspec, int irq, bool is_lsi)
+{
+    intspec[0] = cpu_to_be32(irq);
+    intspec[1] = is_lsi ? cpu_to_be32(1) : 0;
+}
+
 typedef struct sPAPRTCETable sPAPRTCETable;
 
 #define TYPE_SPAPR_TCE_TABLE "spapr-tce-table"
@@ -756,8 +769,17 @@ void spapr_do_system_reset_on_cpu(CPUState *cs, run_on_cpu_data arg);
 
 #define HTAB_SIZE(spapr)        (1ULL << ((spapr)->htab_shift))
 
-int spapr_vcpu_id(PowerPCCPU *cpu);
+int spapr_get_vcpu_id(PowerPCCPU *cpu);
+void spapr_set_vcpu_id(PowerPCCPU *cpu, int cpu_index, Error **errp);
 PowerPCCPU *spapr_find_cpu(int vcpu_id);
+
+int spapr_irq_alloc(sPAPRMachineState *spapr, int irq_hint, bool lsi,
+                    Error **errp);
+int spapr_irq_alloc_block(sPAPRMachineState *spapr, int num, bool lsi,
+                          bool align, Error **errp);
+void spapr_irq_free(sPAPRMachineState *spapr, int irq, int num);
+qemu_irq spapr_qirq(sPAPRMachineState *spapr, int irq);
+
 
 int spapr_caps_pre_load(void *opaque);
 int spapr_caps_pre_save(void *opaque);

@@ -21,6 +21,7 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
  * THE SOFTWARE.
  */
+
 #include "qemu/osdep.h"
 #include "hw/hw.h"
 #include "sysemu/sysemu.h"
@@ -31,6 +32,7 @@
 #include "hw/sysbus.h"
 #include "trace.h"
 #include "qemu/error-report.h"
+#include "qemu/option.h"
 #include "qemu/config-file.h"
 #include "qemu/cutils.h"
 #include "qapi/error.h"
@@ -784,7 +786,7 @@ void fw_cfg_add_file_callback(FWCfgState *s,  const char *filename,
      * index and "i - 1" is the one being copied from, thus the
      * unusual start and end in the for statement.
      */
-    for (i = count + 1; i > index; i--) {
+    for (i = count; i > index; i--) {
         s->files->f[i] = s->files->f[i - 1];
         s->files->f[i].select = cpu_to_be16(FW_CFG_FILE_FIRST + i);
         s->entries[0][FW_CFG_FILE_FIRST + i] =
@@ -833,7 +835,6 @@ void *fw_cfg_modify_file(FWCfgState *s, const char *filename,
     assert(s->files);
 
     index = be32_to_cpu(s->files->count);
-    assert(index < fw_cfg_file_slots(s));
 
     for (i = 0; i < index; i++) {
         if (strcmp(filename, s->files->f[i].name) == 0) {
@@ -843,6 +844,9 @@ void *fw_cfg_modify_file(FWCfgState *s, const char *filename,
             return ptr;
         }
     }
+
+    assert(index < fw_cfg_file_slots(s));
+
     /* add new one */
     fw_cfg_add_file_callback(s, filename, NULL, NULL, NULL, data, len, true);
     return NULL;

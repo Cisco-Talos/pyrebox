@@ -63,7 +63,7 @@ Comment text starting with '=' is a section title:
 
 Double the '=' for a subsection title:
 
-    # == Subection title
+    # == Subsection title
 
 '|' denotes examples:
 
@@ -554,9 +554,12 @@ following example objects:
 
 === Commands ===
 
+--- General Command Layout ---
+
 Usage: { 'command': STRING, '*data': COMPLEX-TYPE-NAME-OR-DICT,
          '*returns': TYPE-NAME, '*boxed': true,
-         '*gen': false, '*success-response': false }
+         '*gen': false, '*success-response': false,
+         '*allow-oob': true }
 
 Commands are defined by using a dictionary containing several members,
 where three members are most common.  The 'command' member is a
@@ -636,6 +639,49 @@ possible, the command expression should include the optional key
 'success-response' with boolean value false.  So far, only QGA makes
 use of this member.
 
+A command can be declared to support Out-Of-Band (OOB) execution.  By
+default, commands do not support OOB.  To declare a command that
+supports it, the schema includes an extra 'allow-oob' field.  For
+example:
+
+ { 'command': 'migrate_recover',
+   'data': { 'uri': 'str' }, 'allow-oob': true }
+
+To execute a command with out-of-band priority, the client specifies
+the "control" field in the request, with "run-oob" set to
+true. Example:
+
+ => { "execute": "command-support-oob",
+      "arguments": { ... },
+      "control": { "run-oob": true } }
+ <= { "return": { } }
+
+Without it, even the commands that support out-of-band execution will
+still be run in-band.
+
+Under normal QMP command execution, the following apply to each
+command:
+
+- They are executed in order,
+- They run only in main thread of QEMU,
+- They have the BQL taken during execution.
+
+When a command is executed with OOB, the following changes occur:
+
+- They can be completed before a pending in-band command,
+- They run in a dedicated monitor thread,
+- They do not take the BQL during execution.
+
+OOB command handlers must satisfy the following conditions:
+
+- It executes extremely fast,
+- It does not take any lock, or, it can take very small locks if all
+  critical regions also follow the rules for OOB command handler code,
+- It does not invoke system calls that may block,
+- It does not access guest RAM that may block when userfaultfd is
+  enabled for postcopy live migration.
+
+If in doubt, do not implement OOB execution support.
 
 === Events ===
 
@@ -647,7 +693,7 @@ name an event 'MAX', since the generator also produces a C enumeration
 of all event names with a generated _MAX value at the end.  When
 'data' is also specified, additional info will be included in the
 event, with similar semantics to a 'struct' expression.  Finally there
-will be C API generated in qapi-event.h; when called by QEMU code, a
+will be C API generated in qapi-events.h; when called by QEMU code, a
 message with timestamp will be emitted on the wire.
 
 An example event is:
@@ -739,10 +785,12 @@ references by name.
 QAPI schema definitions not reachable that way are omitted.
 
 The SchemaInfo for a command has meta-type "command", and variant
-members "arg-type" and "ret-type".  On the wire, the "arguments"
-member of a client's "execute" command must conform to the object type
-named by "arg-type".  The "return" member that the server passes in a
-success response conforms to the type named by "ret-type".
+members "arg-type", "ret-type" and "allow-oob".  On the wire, the
+"arguments" member of a client's "execute" command must conform to the
+object type named by "arg-type".  The "return" member that the server
+passes in a success response conforms to the type named by
+"ret-type".  When "allow-oob" is set, it means the command supports
+out-of-band execution.
 
 If the command takes no arguments, "arg-type" names an object type
 without members.  Likewise, if the command returns nothing, "ret-type"
@@ -899,12 +947,13 @@ the names of built-in types.  Clients should examine member
 
 == Code generation ==
 
-Schemas are fed into five scripts to generate all the code/files that,
-paired with the core QAPI libraries, comprise everything required to
-take JSON commands read in by a Client JSON Protocol server, unmarshal
-the arguments into the underlying C types, call into the corresponding
-C function, map the response back to a Client JSON Protocol response
-to be returned to the user, and introspect the commands.
+The QAPI code generator qapi-gen.py generates code and documentation
+from the schema.  Together with the core QAPI libraries, this code
+provides everything required to take JSON commands read in by a Client
+JSON Protocol server, unmarshal the arguments into the underlying C
+types, call into the corresponding C function, map the response back
+to a Client JSON Protocol response to be returned to the user, and
+introspect the commands.
 
 As an example, we'll use the following schema, which describes a
 single complex user-defined type, along with command which takes a
@@ -922,18 +971,23 @@ qmp_my_command(); everything else is produced by the generator.
 
     { 'event': 'MY_EVENT' }
 
+We run qapi-gen.py like this:
+
+    $ python scripts/qapi-gen.py --output-dir="qapi-generated" \
+    --prefix="example-" example-schema.json
+
 For a more thorough look at generated code, the testsuite includes
 tests/qapi-schema/qapi-schema-tests.json that covers more examples of
 what the generator will accept, and compiles the resulting C code as
 part of 'make check-unit'.
 
-=== scripts/qapi-types.py ===
+=== Code generated for QAPI types ===
 
-Used to generate the C types defined by a schema, along with
-supporting code. The following files are created:
+The following files are created:
 
 $(prefix)qapi-types.h - C types corresponding to types defined in
-                        the schema you pass in
+                        the schema
+
 $(prefix)qapi-types.c - Cleanup functions for the above C types
 
 The $(prefix) is an optional parameter used as a namespace to keep the
@@ -943,8 +997,6 @@ created code.
 
 Example:
 
-    $ python scripts/qapi-types.py --output-dir="qapi-generated" \
-    --prefix="example-" example-schema.json
     $ cat qapi-generated/example-qapi-types.h
 [Uninteresting stuff omitted...]
 
@@ -1008,28 +1060,26 @@ Example:
         visit_free(v);
     }
 
-=== scripts/qapi-visit.py ===
+=== Code generated for visiting QAPI types ===
 
-Used to generate the visitor functions used to walk through and
-convert between a native QAPI C data structure and some other format
-(such as QObject); the generated functions are named visit_type_FOO()
-and visit_type_FOO_members().
+These are the visitor functions used to walk through and convert
+between a native QAPI C data structure and some other format (such as
+QObject); the generated functions are named visit_type_FOO() and
+visit_type_FOO_members().
 
 The following files are generated:
 
-$(prefix)qapi-visit.c: visitor function for a particular C type, used
+$(prefix)qapi-visit.c: Visitor function for a particular C type, used
                        to automagically convert QObjects into the
                        corresponding C type and vice-versa, as well
                        as for deallocating memory for an existing C
                        type
 
-$(prefix)qapi-visit.h: declarations for previously mentioned visitor
+$(prefix)qapi-visit.h: Declarations for previously mentioned visitor
                        functions
 
 Example:
 
-    $ python scripts/qapi-visit.py --output-dir="qapi-generated"
-    --prefix="example-" example-schema.json
     $ cat qapi-generated/example-qapi-visit.h
 [Uninteresting stuff omitted...]
 
@@ -1137,31 +1187,23 @@ Example:
         error_propagate(errp, err);
     }
 
-=== scripts/qapi-commands.py ===
+=== Code generated for commands ===
 
-Used to generate the marshaling/dispatch functions for the commands
-defined in the schema. The generated code implements
-qmp_marshal_COMMAND() (registered automatically), and declares
-qmp_COMMAND() that the user must implement.  The following files are
-generated:
+These are the marshaling/dispatch functions for the commands defined
+in the schema.  The generated code provides qmp_marshal_COMMAND(), and
+declares qmp_COMMAND() that the user must implement.
 
-$(prefix)qmp-marshal.c: command marshal/dispatch functions for each
-                        QMP command defined in the schema. Functions
-                        generated by qapi-visit.py are used to
-                        convert QObjects received from the wire into
-                        function parameters, and uses the same
-                        visitor functions to convert native C return
-                        values to QObjects from transmission back
-                        over the wire.
+The following files are generated:
 
-$(prefix)qmp-commands.h: Function prototypes for the QMP commands
-                         specified in the schema.
+$(prefix)qapi-commands.c: Command marshal/dispatch functions for each
+                          QMP command defined in the schema
+
+$(prefix)qapi-commands.h: Function prototypes for the QMP commands
+                          specified in the schema
 
 Example:
 
-    $ python scripts/qapi-commands.py --output-dir="qapi-generated"
-    --prefix="example-" example-schema.json
-    $ cat qapi-generated/example-qmp-commands.h
+    $ cat qapi-generated/example-qapi-commands.h
 [Uninteresting stuff omitted...]
 
     #ifndef EXAMPLE_QMP_COMMANDS_H
@@ -1170,14 +1212,13 @@ Example:
     #include "example-qapi-types.h"
     #include "qapi/qmp/qdict.h"
     #include "qapi/qmp/dispatch.h"
-    #include "qapi/error.h"
 
     void example_qmp_init_marshal(QmpCommandList *cmds);
     UserDefOne *qmp_my_command(UserDefOneList *arg1, Error **errp);
     void qmp_marshal_my_command(QDict *args, QObject **ret, Error **errp);
 
     #endif
-    $ cat qapi-generated/example-qmp-marshal.c
+    $ cat qapi-generated/example-qapi-commands.c
 [Uninteresting stuff omitted...]
 
     static void qmp_marshal_output_UserDefOne(UserDefOne *ret_in, QObject **ret_out, Error **errp)
@@ -1243,27 +1284,26 @@ Example:
                              qmp_marshal_my_command, QCO_NO_OPTIONS);
     }
 
-=== scripts/qapi-event.py ===
+=== Code generated for events ===
 
-Used to generate the event-related C code defined by a schema, with
-implementations for qapi_event_send_FOO(). The following files are
-created:
+This is the code related to events defined in the schema, providing
+qapi_event_send_EVENT().
 
-$(prefix)qapi-event.h - Function prototypes for each event type, plus an
+The following files are created:
+
+$(prefix)qapi-events.h - Function prototypes for each event type, plus an
                         enumeration of all event names
-$(prefix)qapi-event.c - Implementation of functions to send an event
+
+$(prefix)qapi-events.c - Implementation of functions to send an event
 
 Example:
 
-    $ python scripts/qapi-event.py --output-dir="qapi-generated"
-    --prefix="example-" example-schema.json
-    $ cat qapi-generated/example-qapi-event.h
+    $ cat qapi-generated/example-qapi-events.h
 [Uninteresting stuff omitted...]
 
     #ifndef EXAMPLE_QAPI_EVENT_H
     #define EXAMPLE_QAPI_EVENT_H
 
-    #include "qapi/error.h"
     #include "qapi/qmp/qdict.h"
     #include "example-qapi-types.h"
 
@@ -1281,7 +1321,7 @@ Example:
     extern const char *const example_QAPIEvent_lookup[];
 
     #endif
-    $ cat qapi-generated/example-qapi-event.c
+    $ cat qapi-generated/example-qapi-events.c
 [Uninteresting stuff omitted...]
 
     void qapi_event_send_my_event(Error **errp)
@@ -1303,42 +1343,51 @@ Example:
         QDECREF(qmp);
     }
 
-    const char *const example_QAPIEvent_lookup[] = {
-        [EXAMPLE_QAPI_EVENT_MY_EVENT] = "MY_EVENT",
-        [EXAMPLE_QAPI_EVENT__MAX] = NULL,
+    const QEnumLookup example_QAPIEvent_lookup = {
+        .array = (const char *const[]) {
+            [EXAMPLE_QAPI_EVENT_MY_EVENT] = "MY_EVENT",
+        },
+        .size = EXAMPLE_QAPI_EVENT__MAX
     };
 
-=== scripts/qapi-introspect.py ===
+=== Code generated for introspection ===
 
-Used to generate the introspection C code for a schema. The following
-files are created:
+The following files are created:
 
-$(prefix)qmp-introspect.c - Defines a string holding a JSON
-                            description of the schema.
-$(prefix)qmp-introspect.h - Declares the above string.
+$(prefix)qapi-introspect.c - Defines a string holding a JSON
+                            description of the schema
+
+$(prefix)qapi-introspect.h - Declares the above string
 
 Example:
 
-    $ python scripts/qapi-introspect.py --output-dir="qapi-generated"
-    --prefix="example-" example-schema.json
-    $ cat qapi-generated/example-qmp-introspect.h
+    $ cat qapi-generated/example-qapi-introspect.h
 [Uninteresting stuff omitted...]
 
     #ifndef EXAMPLE_QMP_INTROSPECT_H
     #define EXAMPLE_QMP_INTROSPECT_H
 
-    extern const char example_qmp_schema_json[];
+    extern const QLitObject qmp_schema_qlit;
 
     #endif
-    $ cat qapi-generated/example-qmp-introspect.c
+    $ cat qapi-generated/example-qapi-introspect.c
 [Uninteresting stuff omitted...]
 
-    const char example_qmp_schema_json[] = "["
-        "{\"arg-type\": \"0\", \"meta-type\": \"event\", \"name\": \"MY_EVENT\"}, "
-        "{\"arg-type\": \"1\", \"meta-type\": \"command\", \"name\": \"my-command\", \"ret-type\": \"2\"}, "
-        "{\"members\": [], \"meta-type\": \"object\", \"name\": \"0\"}, "
-        "{\"members\": [{\"name\": \"arg1\", \"type\": \"[2]\"}], \"meta-type\": \"object\", \"name\": \"1\"}, "
-        "{\"members\": [{\"name\": \"integer\", \"type\": \"int\"}, {\"default\": null, \"name\": \"string\", \"type\": \"str\"}], \"meta-type\": \"object\", \"name\": \"2\"}, "
-        "{\"element-type\": \"2\", \"meta-type\": \"array\", \"name\": \"[2]\"}, "
-        "{\"json-type\": \"int\", \"meta-type\": \"builtin\", \"name\": \"int\"}, "
-        "{\"json-type\": \"string\", \"meta-type\": \"builtin\", \"name\": \"str\"}]";
+    const QLitObject example_qmp_schema_qlit = QLIT_QLIST(((QLitObject[]) {
+        QLIT_QDICT(((QLitDictEntry[]) {
+            { "arg-type", QLIT_QSTR("0") },
+            { "meta-type", QLIT_QSTR("event") },
+            { "name", QLIT_QSTR("Event") },
+            { }
+        })),
+        QLIT_QDICT(((QLitDictEntry[]) {
+            { "members", QLIT_QLIST(((QLitObject[]) {
+                { }
+            })) },
+            { "meta-type", QLIT_QSTR("object") },
+            { "name", QLIT_QSTR("0") },
+            { }
+        })),
+        ...
+        { }
+    }));

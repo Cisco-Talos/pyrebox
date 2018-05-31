@@ -1,8 +1,7 @@
 #ifndef QEMU_ARCH_INIT_H
 #define QEMU_ARCH_INIT_H
 
-#include "qmp-commands.h"
-#include "qemu/option.h"
+#include "qapi/qapi-types-misc.h"
 
 enum {
     QEMU_ARCH_ALL = -1,
@@ -24,6 +23,8 @@ enum {
     QEMU_ARCH_MOXIE = (1 << 15),
     QEMU_ARCH_TRICORE = (1 << 16),
     QEMU_ARCH_NIOS2 = (1 << 17),
+    QEMU_ARCH_HPPA = (1 << 18),
+    QEMU_ARCH_RISCV = (1 << 19),
 };
 
 extern const uint32_t arch_type;

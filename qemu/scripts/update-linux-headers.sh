@@ -38,6 +38,11 @@ cp_portable() {
                                      -e 'linux/if_ether' \
                                      -e 'input-event-codes' \
                                      -e 'sys/' \
+                                     -e 'pvrdma_verbs' \
+                                     -e 'drm.h' \
+                                     -e 'limits' \
+                                     -e 'linux/kernel' \
+                                     -e 'linux/sysinfo' \
                                      > /dev/null
     then
         echo "Unexpected #include in input file $f".
@@ -46,6 +51,7 @@ cp_portable() {
 
     header=$(basename "$f");
     sed -e 's/__u\([0-9][0-9]*\)/uint\1_t/g' \
+        -e 's/u\([0-9][0-9]*\)/uint\1_t/g' \
         -e 's/__s\([0-9][0-9]*\)/int\1_t/g' \
         -e 's/__le\([0-9][0-9]*\)/uint\1_t/g' \
         -e 's/__be\([0-9][0-9]*\)/uint\1_t/g' \
@@ -54,8 +60,15 @@ cp_portable() {
         -e 's/__bitwise//' \
         -e 's/__attribute__((packed))/QEMU_PACKED/' \
         -e 's/__inline__/inline/' \
+        -e 's/__BITS_PER_LONG/HOST_LONG_BITS/' \
+        -e '/\"drm.h\"/d' \
         -e '/sys\/ioctl.h/d' \
         -e 's/SW_MAX/SW_MAX_/' \
+        -e 's/atomic_t/int/' \
+        -e 's/__kernel_long_t/long/' \
+        -e 's/__kernel_ulong_t/unsigned long/' \
+        -e 's/struct ethhdr/struct eth_header/' \
+        -e '/\#define _LINUX_ETHTOOL_H/a \\n\#include "net/eth.h"' \
         "$f" > "$to/$header";
 }
 
@@ -96,6 +109,8 @@ for arch in $ARCHLIST; do
     mkdir -p "$output/include/standard-headers/asm-$arch"
     if [ $arch = s390 ]; then
         cp_portable "$tmpdir/include/asm/virtio-ccw.h" "$output/include/standard-headers/asm-s390/"
+        cp "$tmpdir/include/asm/unistd_32.h" "$output/linux-headers/asm-s390/"
+        cp "$tmpdir/include/asm/unistd_64.h" "$output/linux-headers/asm-s390/"
     fi
     if [ $arch = arm ]; then
         cp "$tmpdir/include/asm/unistd-eabi.h" "$output/linux-headers/asm-arm/"
@@ -115,7 +130,7 @@ done
 rm -rf "$output/linux-headers/linux"
 mkdir -p "$output/linux-headers/linux"
 for header in kvm.h kvm_para.h vfio.h vfio_ccw.h vhost.h \
-              psci.h userfaultfd.h; do
+              psci.h psp-sev.h userfaultfd.h; do
     cp "$tmpdir/include/linux/$header" "$output/linux-headers/linux"
 done
 rm -rf "$output/linux-headers/asm-generic"
@@ -143,8 +158,40 @@ rm -rf "$output/include/standard-headers/linux"
 mkdir -p "$output/include/standard-headers/linux"
 for i in "$tmpdir"/include/linux/*virtio*.h "$tmpdir/include/linux/input.h" \
          "$tmpdir/include/linux/input-event-codes.h" \
-         "$tmpdir/include/linux/pci_regs.h"; do
+         "$tmpdir/include/linux/pci_regs.h" \
+         "$tmpdir/include/linux/ethtool.h" "$tmpdir/include/linux/kernel.h" \
+         "$tmpdir/include/linux/sysinfo.h"; do
     cp_portable "$i" "$output/include/standard-headers/linux"
+done
+mkdir -p "$output/include/standard-headers/drm"
+cp_portable "$tmpdir/include/drm/drm_fourcc.h" \
+            "$output/include/standard-headers/drm"
+
+rm -rf "$output/include/standard-headers/drivers/infiniband/hw/vmw_pvrdma"
+mkdir -p "$output/include/standard-headers/drivers/infiniband/hw/vmw_pvrdma"
+
+# Remove the unused functions from pvrdma_verbs.h avoiding the unnecessary
+# import of several infiniband/networking/other headers
+tmp_pvrdma_verbs="$tmpdir/pvrdma_verbs.h"
+# Parse the entire file instead of single lines to match
+# function declarations expanding over multiple lines
+# and strip the declarations starting with pvrdma prefix.
+sed  -e '1h;2,$H;$!d;g'  -e 's/[^};]*pvrdma[^(| ]*([^)]*);//g' \
+    "$linux/drivers/infiniband/hw/vmw_pvrdma/pvrdma_verbs.h" > \
+    "$tmp_pvrdma_verbs";
+
+for i in "$linux/drivers/infiniband/hw/vmw_pvrdma/pvrdma_ring.h" \
+         "$linux/drivers/infiniband/hw/vmw_pvrdma/pvrdma_dev_api.h" \
+         "$tmp_pvrdma_verbs"; do \
+    cp_portable "$i" \
+         "$output/include/standard-headers/drivers/infiniband/hw/vmw_pvrdma/"
+done
+
+rm -rf "$output/include/standard-headers/rdma/"
+mkdir -p "$output/include/standard-headers/rdma/"
+for i in "$tmpdir/include/rdma/vmw_pvrdma-abi.h"; do
+    cp_portable "$i" \
+         "$output/include/standard-headers/rdma/"
 done
 
 cat <<EOF >$output/include/standard-headers/linux/types.h

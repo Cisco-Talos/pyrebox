@@ -25,7 +25,6 @@
 #include "hw/pci/msi.h"
 #include "hw/pci/pcie.h"
 #include "ioh3420.h"
-#include "qapi/error.h"
 
 #define PCI_DEVICE_ID_IOH_EPORT         0x3420  /* D0:F0 express mode */
 #define PCI_DEVICE_ID_IOH_REV           0x2
@@ -83,6 +82,7 @@ static void ioh3420_interrupts_uninit(PCIDevice *d)
 
 static const VMStateDescription vmstate_ioh3420 = {
     .name = "ioh-3240-express-root-port",
+    .priority = MIG_PRI_PCI_BUS,
     .version_id = 1,
     .minimum_version_id = 1,
     .post_load = pcie_cap_slot_post_load,

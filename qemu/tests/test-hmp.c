@@ -37,10 +37,8 @@ static const char *hmp_cmds[] = {
     "dump-guest-memory /dev/null 0 4096",
     "dump-guest-memory /dev/null",
     "gdbserver",
-    "host_net_add user id=net0",
     "hostfwd_add tcp::43210-:43210",
     "hostfwd_remove tcp::43210-:43210",
-    "host_net_remove 0 net0",
     "i /w 0",
     "log all",
     "log none",
@@ -78,10 +76,13 @@ static void test_commands(void)
     int i;
 
     for (i = 0; hmp_cmds[i] != NULL; i++) {
-        if (verbose) {
-            fprintf(stderr, "\t%s\n", hmp_cmds[i]);
-        }
         response = hmp("%s", hmp_cmds[i]);
+        if (verbose) {
+            fprintf(stderr,
+                    "\texecute HMP command: %s\n"
+                    "\tresult             : %s\n",
+                    hmp_cmds[i], response);
+        }
         g_free(response);
     }
 

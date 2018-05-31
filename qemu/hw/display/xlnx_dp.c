@@ -23,6 +23,7 @@
  */
 
 #include "qemu/osdep.h"
+#include "qapi/error.h"
 #include "qemu/log.h"
 #include "hw/display/xlnx_dp.h"
 
@@ -34,7 +35,7 @@
     if (DEBUG_DP) {                                                            \
         qemu_log("xlnx_dp: " fmt , ## __VA_ARGS__);                            \
     }                                                                          \
-} while (0);
+} while (0)
 
 /*
  * Register offset for DP.

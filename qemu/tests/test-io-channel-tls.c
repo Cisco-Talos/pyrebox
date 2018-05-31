@@ -78,6 +78,7 @@ static QCryptoTLSCreds *test_tls_creds_create(QCryptoTLSCredsEndpoint endpoint,
                      "server" : "client"),
         "dir", certdir,
         "verify-peer", "yes",
+        "priority", "NORMAL",
         /* We skip initial sanity checks here because we
          * want to make sure that problems are being
          * detected at the TLS session validation stage,
@@ -203,10 +204,12 @@ static void test_io_channel_tls(const void *opaque)
     qio_channel_tls_handshake(clientChanTLS,
                               test_tls_handshake_done,
                               &clientHandshake,
+                              NULL,
                               NULL);
     qio_channel_tls_handshake(serverChanTLS,
                               test_tls_handshake_done,
                               &serverHandshake,
+                              NULL,
                               NULL);
 
     /*

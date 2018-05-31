@@ -561,7 +561,7 @@ static int vfio_base_device_init(VFIODevice *vbasedev, Error **errp)
     /* @sysfsdev takes precedence over @host */
     if (vbasedev->sysfsdev) {
         g_free(vbasedev->name);
-        vbasedev->name = g_strdup(basename(vbasedev->sysfsdev));
+        vbasedev->name = g_path_get_basename(vbasedev->sysfsdev);
     } else {
         if (!vbasedev->name || strchr(vbasedev->name, '/')) {
             error_setg(errp, "wrong host device name");
@@ -642,6 +642,8 @@ static void vfio_platform_realize(DeviceState *dev, Error **errp)
     vbasedev->type = VFIO_DEVICE_TYPE_PLATFORM;
     vbasedev->dev = dev;
     vbasedev->ops = &vfio_platform_ops;
+
+    qemu_mutex_init(&vdev->intp_mutex);
 
     trace_vfio_platform_realize(vbasedev->sysfsdev ?
                                 vbasedev->sysfsdev : vbasedev->name,

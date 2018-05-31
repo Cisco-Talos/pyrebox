@@ -2093,6 +2093,11 @@ static DisasASI get_asi(DisasContext *dc, int insn, TCGMemOp memop)
             type = GET_ASI_BFILL;
             break;
         }
+
+        /* MMU_PHYS_IDX is used when the MMU is disabled to passthrough the
+         * permissions check in get_physical_address(..).
+         */
+        mem_idx = (dc->mem_idx == MMU_PHYS_IDX) ? MMU_PHYS_IDX : mem_idx;
     } else {
         gen_exception(dc, TT_PRIV_INSN);
         type = GET_ASI_EXCP;
@@ -5922,7 +5927,7 @@ void sparc_tcg_init(void)
         *rtl[i].ptr = tcg_global_mem_new(cpu_env, rtl[i].off, rtl[i].name);
     }
 
-    TCGV_UNUSED(cpu_regs[0]);
+    cpu_regs[0] = NULL;
     for (i = 1; i < 8; ++i) {
         cpu_regs[i] = tcg_global_mem_new(cpu_env,
                                          offsetof(CPUSPARCState, gregs[i]),

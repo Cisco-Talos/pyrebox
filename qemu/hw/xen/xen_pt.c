@@ -73,7 +73,7 @@ void xen_pt_log(const PCIDevice *d, const char *f, ...)
 
     va_start(ap, f);
     if (d) {
-        fprintf(stderr, "[%02x:%02x.%d] ", pci_bus_num(d->bus),
+        fprintf(stderr, "[%02x:%02x.%d] ", pci_dev_bus_num(d),
                 PCI_SLOT(d->devfn), PCI_FUNC(d->devfn));
     }
     vfprintf(stderr, f, ap);
@@ -602,7 +602,7 @@ static void xen_pt_region_update(XenPCIPassthroughState *s,
     }
 
     args.type = d->io_regions[bar].type;
-    pci_for_each_device(d->bus, pci_bus_num(d->bus),
+    pci_for_each_device(pci_get_bus(d), pci_dev_bus_num(d),
                         xen_pt_check_bar_overlap, &args);
     if (args.rc) {
         XEN_PT_WARN(d, "Region: %d (addr: %#"FMT_PCIBUS
@@ -695,7 +695,7 @@ xen_igd_passthrough_isa_bridge_create(XenPCIPassthroughState *s,
     PCIDevice *d = &s->dev;
 
     gpu_dev_id = dev->device_id;
-    igd_passthrough_isa_bridge_create(d->bus, gpu_dev_id);
+    igd_passthrough_isa_bridge_create(pci_get_bus(d), gpu_dev_id);
 }
 
 /* destroy. */
@@ -711,7 +711,7 @@ static void xen_pt_destroy(PCIDevice *d) {
         intx = xen_pt_pci_intx(s);
         rc = xc_domain_unbind_pt_irq(xen_xc, xen_domid, machine_irq,
                                      PT_IRQ_TYPE_PCI,
-                                     pci_bus_num(d->bus),
+                                     pci_dev_bus_num(d),
                                      PCI_SLOT(s->dev.devfn),
                                      intx,
                                      0 /* isa_irq */);
@@ -867,7 +867,7 @@ static void xen_pt_realize(PCIDevice *d, Error **errp)
         uint8_t e_intx = xen_pt_pci_intx(s);
 
         rc = xc_domain_bind_pt_pci_irq(xen_xc, xen_domid, machine_irq,
-                                       pci_bus_num(d->bus),
+                                       pci_dev_bus_num(d),
                                        PCI_SLOT(d->devfn),
                                        e_intx);
         if (rc < 0) {
@@ -937,6 +937,13 @@ static Property xen_pci_passthrough_properties[] = {
     DEFINE_PROP_END_OF_LIST(),
 };
 
+static void xen_pci_passthrough_instance_init(Object *obj)
+{
+    /* QEMU_PCI_CAP_EXPRESS initialization does not depend on QEMU command
+     * line, therefore, no need to wait to realize like other devices */
+    PCI_DEVICE(obj)->cap_present |= QEMU_PCI_CAP_EXPRESS;
+}
+
 static void xen_pci_passthrough_class_init(ObjectClass *klass, void *data)
 {
     DeviceClass *dc = DEVICE_CLASS(klass);
@@ -964,6 +971,7 @@ static const TypeInfo xen_pci_passthrough_info = {
     .instance_size = sizeof(XenPCIPassthroughState),
     .instance_finalize = xen_pci_passthrough_finalize,
     .class_init = xen_pci_passthrough_class_init,
+    .instance_init = xen_pci_passthrough_instance_init,
     .interfaces = (InterfaceInfo[]) {
         { INTERFACE_CONVENTIONAL_PCI_DEVICE },
         { INTERFACE_PCIE_DEVICE },
