@@ -77,6 +77,7 @@ static QOSState *pci_test_start(void)
         g_printerr("virtio-blk tests are only available on x86 or ppc64\n");
         exit(EXIT_FAILURE);
     }
+    global_qtest = qs->qts;
     unlink(tmp_path);
     g_free(tmp_path);
     return qs;
@@ -193,7 +194,7 @@ static void test_basic(QVirtioDevice *dev, QGuestAllocator *alloc,
 
     qvirtqueue_kick(dev, vq, free_head);
 
-    qvirtio_wait_used_elem(dev, vq, free_head, QVIRTIO_BLK_TIMEOUT_US);
+    qvirtio_wait_used_elem(dev, vq, free_head, NULL, QVIRTIO_BLK_TIMEOUT_US);
     status = readb(req_addr + 528);
     g_assert_cmpint(status, ==, 0);
 
@@ -215,7 +216,7 @@ static void test_basic(QVirtioDevice *dev, QGuestAllocator *alloc,
 
     qvirtqueue_kick(dev, vq, free_head);
 
-    qvirtio_wait_used_elem(dev, vq, free_head, QVIRTIO_BLK_TIMEOUT_US);
+    qvirtio_wait_used_elem(dev, vq, free_head, NULL, QVIRTIO_BLK_TIMEOUT_US);
     status = readb(req_addr + 528);
     g_assert_cmpint(status, ==, 0);
 
@@ -243,7 +244,8 @@ static void test_basic(QVirtioDevice *dev, QGuestAllocator *alloc,
         qvirtqueue_add(vq, req_addr + 528, 1, true, false);
         qvirtqueue_kick(dev, vq, free_head);
 
-        qvirtio_wait_used_elem(dev, vq, free_head, QVIRTIO_BLK_TIMEOUT_US);
+        qvirtio_wait_used_elem(dev, vq, free_head, NULL,
+                               QVIRTIO_BLK_TIMEOUT_US);
         status = readb(req_addr + 528);
         g_assert_cmpint(status, ==, 0);
 
@@ -264,7 +266,8 @@ static void test_basic(QVirtioDevice *dev, QGuestAllocator *alloc,
 
         qvirtqueue_kick(dev, vq, free_head);
 
-        qvirtio_wait_used_elem(dev, vq, free_head, QVIRTIO_BLK_TIMEOUT_US);
+        qvirtio_wait_used_elem(dev, vq, free_head, NULL,
+                               QVIRTIO_BLK_TIMEOUT_US);
         status = readb(req_addr + 528);
         g_assert_cmpint(status, ==, 0);
 
@@ -345,7 +348,7 @@ static void pci_indirect(void)
     free_head = qvirtqueue_add_indirect(&vqpci->vq, indirect);
     qvirtqueue_kick(&dev->vdev, &vqpci->vq, free_head);
 
-    qvirtio_wait_used_elem(&dev->vdev, &vqpci->vq, free_head,
+    qvirtio_wait_used_elem(&dev->vdev, &vqpci->vq, free_head, NULL,
                            QVIRTIO_BLK_TIMEOUT_US);
     status = readb(req_addr + 528);
     g_assert_cmpint(status, ==, 0);
@@ -370,7 +373,7 @@ static void pci_indirect(void)
     free_head = qvirtqueue_add_indirect(&vqpci->vq, indirect);
     qvirtqueue_kick(&dev->vdev, &vqpci->vq, free_head);
 
-    qvirtio_wait_used_elem(&dev->vdev, &vqpci->vq, free_head,
+    qvirtio_wait_used_elem(&dev->vdev, &vqpci->vq, free_head, NULL,
                            QVIRTIO_BLK_TIMEOUT_US);
     status = readb(req_addr + 528);
     g_assert_cmpint(status, ==, 0);
@@ -481,7 +484,7 @@ static void pci_msix(void)
     qvirtqueue_add(&vqpci->vq, req_addr + 528, 1, true, false);
     qvirtqueue_kick(&dev->vdev, &vqpci->vq, free_head);
 
-    qvirtio_wait_used_elem(&dev->vdev, &vqpci->vq, free_head,
+    qvirtio_wait_used_elem(&dev->vdev, &vqpci->vq, free_head, NULL,
                            QVIRTIO_BLK_TIMEOUT_US);
 
     status = readb(req_addr + 528);
@@ -506,7 +509,7 @@ static void pci_msix(void)
     qvirtqueue_kick(&dev->vdev, &vqpci->vq, free_head);
 
 
-    qvirtio_wait_used_elem(&dev->vdev, &vqpci->vq, free_head,
+    qvirtio_wait_used_elem(&dev->vdev, &vqpci->vq, free_head, NULL,
                            QVIRTIO_BLK_TIMEOUT_US);
 
     status = readb(req_addr + 528);
@@ -580,7 +583,7 @@ static void pci_idx(void)
     qvirtqueue_add(&vqpci->vq, req_addr + 528, 1, true, false);
     qvirtqueue_kick(&dev->vdev, &vqpci->vq, free_head);
 
-    qvirtio_wait_used_elem(&dev->vdev, &vqpci->vq, free_head,
+    qvirtio_wait_used_elem(&dev->vdev, &vqpci->vq, free_head, NULL,
                            QVIRTIO_BLK_TIMEOUT_US);
 
     /* Write request */
@@ -627,9 +630,9 @@ static void pci_idx(void)
     qvirtqueue_kick(&dev->vdev, &vqpci->vq, free_head);
 
     /* We get just one notification for both requests */
-    qvirtio_wait_used_elem(&dev->vdev, &vqpci->vq, write_head,
+    qvirtio_wait_used_elem(&dev->vdev, &vqpci->vq, write_head, NULL,
                            QVIRTIO_BLK_TIMEOUT_US);
-    g_assert(qvirtqueue_get_buf(&vqpci->vq, &desc_idx));
+    g_assert(qvirtqueue_get_buf(&vqpci->vq, &desc_idx, NULL));
     g_assert_cmpint(desc_idx, ==, free_head);
 
     status = readb(req_addr + 528);
@@ -671,6 +674,30 @@ static void pci_hotplug(void)
     if (strcmp(arch, "i386") == 0 || strcmp(arch, "x86_64") == 0) {
         qpci_unplug_acpi_device_test("drv1", PCI_SLOT_HP);
     }
+    qtest_shutdown(qs);
+}
+
+/*
+ * Check that setting the vring addr on a non-existent virtqueue does
+ * not crash.
+ */
+static void test_nonexistent_virtqueue(void)
+{
+    QPCIBar bar0;
+    QOSState *qs;
+    QPCIDevice *dev;
+
+    qs = pci_test_start();
+    dev = qpci_device_find(qs->pcibus, QPCI_DEVFN(4, 0));
+    g_assert(dev != NULL);
+
+    qpci_device_enable(dev);
+    bar0 = qpci_iomap(dev, 0, NULL);
+
+    qpci_io_writeb(dev, bar0, VIRTIO_PCI_QUEUE_SEL, 2);
+    qpci_io_writel(dev, bar0, VIRTIO_PCI_QUEUE_PFN, 1);
+
+    g_free(dev);
     qtest_shutdown(qs);
 }
 
@@ -724,6 +751,7 @@ int main(int argc, char **argv)
         qtest_add_func("/virtio/blk/pci/basic", pci_basic);
         qtest_add_func("/virtio/blk/pci/indirect", pci_indirect);
         qtest_add_func("/virtio/blk/pci/config", pci_config);
+        qtest_add_func("/virtio/blk/pci/nxvirtq", test_nonexistent_virtqueue);
         if (strcmp(arch, "i386") == 0 || strcmp(arch, "x86_64") == 0) {
             qtest_add_func("/virtio/blk/pci/msix", pci_msix);
             qtest_add_func("/virtio/blk/pci/idx", pci_idx);

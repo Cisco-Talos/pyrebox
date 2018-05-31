@@ -29,6 +29,7 @@
 #include "cpu.h"
 #include "exec/tb-context.h"
 #include "qemu/bitops.h"
+#include "qemu/queue.h"
 #include "tcg-mo.h"
 #include "tcg-target.h"
 
@@ -40,7 +41,7 @@
 #else
 #define MAX_OPC_PARAM_PER_ARG 1
 #endif
-#define MAX_OPC_PARAM_IARGS 5
+#define MAX_OPC_PARAM_IARGS 6
 #define MAX_OPC_PARAM_OARGS 1
 #define MAX_OPC_PARAM_ARGS (MAX_OPC_PARAM_IARGS + MAX_OPC_PARAM_OARGS)
 
@@ -48,8 +49,6 @@
  * and up to 4 + N parameters on 64-bit archs
  * (N = number of input arguments + output arguments).  */
 #define MAX_OPC_PARAM (4 + (MAX_OPC_PARAM_PER_ARG * MAX_OPC_PARAM_ARGS))
-#define OPC_BUF_SIZE 640
-#define OPC_MAX_SIZE (OPC_BUF_SIZE - MAX_OP_PER_INSTR)
 
 #define CPU_TEMP_BUF_NLONGS 128
 
@@ -171,6 +170,31 @@ typedef uint64_t TCGRegSet;
 # error "Missing unsigned widening multiply"
 #endif
 
+#if !defined(TCG_TARGET_HAS_v64) \
+    && !defined(TCG_TARGET_HAS_v128) \
+    && !defined(TCG_TARGET_HAS_v256)
+#define TCG_TARGET_MAYBE_vec            0
+#define TCG_TARGET_HAS_neg_vec          0
+#define TCG_TARGET_HAS_not_vec          0
+#define TCG_TARGET_HAS_andc_vec         0
+#define TCG_TARGET_HAS_orc_vec          0
+#define TCG_TARGET_HAS_shi_vec          0
+#define TCG_TARGET_HAS_shs_vec          0
+#define TCG_TARGET_HAS_shv_vec          0
+#define TCG_TARGET_HAS_mul_vec          0
+#else
+#define TCG_TARGET_MAYBE_vec            1
+#endif
+#ifndef TCG_TARGET_HAS_v64
+#define TCG_TARGET_HAS_v64              0
+#endif
+#ifndef TCG_TARGET_HAS_v128
+#define TCG_TARGET_HAS_v128             0
+#endif
+#ifndef TCG_TARGET_HAS_v256
+#define TCG_TARGET_HAS_v256             0
+#endif
+
 #ifndef TARGET_INSN_START_EXTRA_WORDS
 # define TARGET_INSN_START_WORDS 1
 #else
@@ -247,6 +271,11 @@ typedef struct TCGPool {
 typedef enum TCGType {
     TCG_TYPE_I32,
     TCG_TYPE_I64,
+
+    TCG_TYPE_V64,
+    TCG_TYPE_V128,
+    TCG_TYPE_V256,
+
     TCG_TYPE_COUNT, /* number of different types */
 
     /* An alias for the size of the host register.  */
@@ -397,6 +426,8 @@ typedef tcg_target_ulong TCGArg;
     * TCGv_i32 : 32 bit integer type
     * TCGv_i64 : 64 bit integer type
     * TCGv_ptr : a host pointer type
+    * TCGv_vec : a host vector type; the exact size is not exposed
+                 to the CPU front-end code.
     * TCGv : an integer type the same size as target_ulong
              (an alias for either TCGv_i32 or TCGv_i64)
    The compiler's type checking will complain if you mix them
@@ -419,6 +450,7 @@ typedef tcg_target_ulong TCGArg;
 typedef struct TCGv_i32_d *TCGv_i32;
 typedef struct TCGv_i64_d *TCGv_i64;
 typedef struct TCGv_ptr_d *TCGv_ptr;
+typedef struct TCGv_vec_d *TCGv_vec;
 typedef TCGv_ptr TCGv_env;
 #if TARGET_LONG_BITS == 32
 #define TCGv TCGv_i32
@@ -427,15 +459,6 @@ typedef TCGv_ptr TCGv_env;
 #else
 #error Unhandled TARGET_LONG_BITS value
 #endif
-
-/* See the comment before tcgv_i32_temp.  */
-#define TCGV_UNUSED_I32(x) (x = (TCGv_i32)NULL)
-#define TCGV_UNUSED_I64(x) (x = (TCGv_i64)NULL)
-#define TCGV_UNUSED_PTR(x) (x = (TCGv_ptr)NULL)
-
-#define TCGV_IS_UNUSED_I32(x) ((x) == (TCGv_i32)NULL)
-#define TCGV_IS_UNUSED_I64(x) ((x) == (TCGv_i64)NULL)
-#define TCGV_IS_UNUSED_PTR(x) ((x) == (TCGv_ptr)NULL)
 
 /* call flags */
 /* Helper does not read globals (either directly or through an exception). It
@@ -496,6 +519,12 @@ static inline TCGCond tcg_swap_cond(TCGCond c)
 static inline TCGCond tcg_unsigned_cond(TCGCond c)
 {
     return c & 2 ? (TCGCond)(c ^ 6) : c;
+}
+
+/* Create a "signed" version of an "unsigned" comparison.  */
+static inline TCGCond tcg_signed_cond(TCGCond c)
+{
+    return c & 4 ? (TCGCond)(c ^ 6) : c;
 }
 
 /* Must a comparison be considered unsigned?  */
@@ -576,28 +605,28 @@ typedef uint16_t TCGLifeData;
 typedef struct TCGOp {
     TCGOpcode opc   : 8;        /*  8 */
 
-    /* The number of out and in parameter for a call.  */
-    unsigned calli  : 4;        /* 12 */
-    unsigned callo  : 2;        /* 14 */
-    unsigned        : 2;        /* 16 */
-
-    /* Index of the prev/next op, or 0 for the end of the list.  */
-    unsigned prev   : 16;       /* 32 */
-    unsigned next   : 16;       /* 48 */
+    /* Parameters for this opcode.  See below.  */
+    unsigned param1 : 4;        /* 12 */
+    unsigned param2 : 4;        /* 16 */
 
     /* Lifetime data of the operands.  */
-    unsigned life   : 16;       /* 64 */
+    unsigned life   : 16;       /* 32 */
+
+    /* Next and previous opcodes.  */
+    QTAILQ_ENTRY(TCGOp) link;
 
     /* Arguments for the opcode.  */
     TCGArg args[MAX_OPC_PARAM];
 } TCGOp;
 
-/* Make sure that we don't expand the structure without noticing.  */
-QEMU_BUILD_BUG_ON(sizeof(TCGOp) != 8 + sizeof(TCGArg) * MAX_OPC_PARAM);
+#define TCGOP_CALLI(X)    (X)->param1
+#define TCGOP_CALLO(X)    (X)->param2
+
+#define TCGOP_VECL(X)     (X)->param1
+#define TCGOP_VECE(X)     (X)->param2
 
 /* Make sure operands fit in the bitfields above.  */
 QEMU_BUILD_BUG_ON(NB_OPS > (1 << 8));
-QEMU_BUILD_BUG_ON(OPC_BUF_SIZE > (1 << 16));
 
 typedef struct TCGProfile {
     int64_t tb_count1;
@@ -651,8 +680,6 @@ struct TCGContext {
     int goto_tb_issue_mask;
 #endif
 
-    int gen_next_op_idx;
-
     /* Code generation.  Note that we specifically do not use tcg_insn_unit
        here, because there's too much arithmetic throughout that relies
        on addition and subtraction working on bytes.  Rely on the GCC
@@ -683,11 +710,11 @@ struct TCGContext {
     TCGTempSet free_temps[TCG_TYPE_COUNT * 2];
     TCGTemp temps[TCG_MAX_TEMPS]; /* globals first, temps after */
 
+    QTAILQ_HEAD(TCGOpHead, TCGOp) ops, free_ops;
+
     /* Tells which temporary holds a given register.
        It does not take into account fixed registers */
     TCGTemp *reg_to_temp[TCG_TARGET_NB_REGS];
-
-    TCGOp gen_op_buf[OPC_BUF_SIZE];
 
     uint16_t gen_insn_end_off[TCG_MAX_INSNS];
     target_ulong gen_insn_data[TCG_MAX_INSNS][TARGET_INSN_START_WORDS];
@@ -735,6 +762,11 @@ static inline TCGTemp *tcgv_ptr_temp(TCGv_ptr v)
     return tcgv_i32_temp((TCGv_i32)v);
 }
 
+static inline TCGTemp *tcgv_vec_temp(TCGv_vec v)
+{
+    return tcgv_i32_temp((TCGv_i32)v);
+}
+
 static inline TCGArg tcgv_i32_arg(TCGv_i32 v)
 {
     return temp_arg(tcgv_i32_temp(v));
@@ -748,6 +780,11 @@ static inline TCGArg tcgv_i64_arg(TCGv_i64 v)
 static inline TCGArg tcgv_ptr_arg(TCGv_ptr v)
 {
     return temp_arg(tcgv_ptr_temp(v));
+}
+
+static inline TCGArg tcgv_vec_arg(TCGv_vec v)
+{
+    return temp_arg(tcgv_vec_temp(v));
 }
 
 static inline TCGv_i32 temp_tcgv_i32(TCGTemp *t)
@@ -766,6 +803,11 @@ static inline TCGv_ptr temp_tcgv_ptr(TCGTemp *t)
     return (TCGv_ptr)temp_tcgv_i32(t);
 }
 
+static inline TCGv_vec temp_tcgv_vec(TCGTemp *t)
+{
+    return (TCGv_vec)temp_tcgv_i32(t);
+}
+
 #if TCG_TARGET_REG_BITS == 32
 static inline TCGv_i32 TCGV_LOW(TCGv_i64 t)
 {
@@ -778,21 +820,31 @@ static inline TCGv_i32 TCGV_HIGH(TCGv_i64 t)
 }
 #endif
 
-static inline void tcg_set_insn_param(int op_idx, int arg, TCGArg v)
+static inline void tcg_set_insn_param(TCGOp *op, int arg, TCGArg v)
 {
-    tcg_ctx->gen_op_buf[op_idx].args[arg] = v;
+    op->args[arg] = v;
 }
 
-/* The number of opcodes emitted so far.  */
-static inline int tcg_op_buf_count(void)
+static inline void tcg_set_insn_start_param(TCGOp *op, int arg, target_ulong v)
 {
-    return tcg_ctx->gen_next_op_idx;
+#if TARGET_LONG_BITS <= TCG_TARGET_REG_BITS
+    tcg_set_insn_param(op, arg, v);
+#else
+    tcg_set_insn_param(op, arg * 2, v);
+    tcg_set_insn_param(op, arg * 2 + 1, v >> 32);
+#endif
+}
+
+/* The last op that was emitted.  */
+static inline TCGOp *tcg_last_op(void)
+{
+    return QTAILQ_LAST(&tcg_ctx->ops, TCGOpHead);
 }
 
 /* Test for whether to terminate the TB for using too many opcodes.  */
 static inline bool tcg_op_buf_full(void)
 {
-    return tcg_op_buf_count() >= OPC_MAX_SIZE;
+    return false;
 }
 
 /* pool based memory allocation */
@@ -841,9 +893,12 @@ TCGTemp *tcg_global_mem_new_internal(TCGType, TCGv_ptr,
 
 TCGv_i32 tcg_temp_new_internal_i32(int temp_local);
 TCGv_i64 tcg_temp_new_internal_i64(int temp_local);
+TCGv_vec tcg_temp_new_vec(TCGType type);
+TCGv_vec tcg_temp_new_vec_matching(TCGv_vec match);
 
 void tcg_temp_free_i32(TCGv_i32 arg);
 void tcg_temp_free_i64(TCGv_i64 arg);
+void tcg_temp_free_vec(TCGv_vec arg);
 
 static inline TCGv_i32 tcg_global_mem_new_i32(TCGv_ptr reg, intptr_t offset,
                                               const char *name)
@@ -925,6 +980,8 @@ enum {
     /* Instruction is optional and not implemented by the host, or insn
        is generic and should not be implemened by the host.  */
     TCG_OPF_NOT_PRESENT  = 0x10,
+    /* Instruction operands are vectors.  */
+    TCG_OPF_VECTOR       = 0x20,
 };
 
 typedef struct TCGOpDef {
@@ -976,6 +1033,7 @@ bool tcg_op_supported(TCGOpcode op);
 
 void tcg_gen_callN(void *func, TCGTemp *ret, int nargs, TCGTemp **args);
 
+TCGOp *tcg_emit_op(TCGOpcode opc);
 void tcg_op_remove(TCGContext *s, TCGOp *op);
 TCGOp *tcg_op_insert_before(TCGContext *s, TCGOp *op, TCGOpcode opc, int narg);
 TCGOp *tcg_op_insert_after(TCGContext *s, TCGOp *op, TCGOpcode opc, int narg);
@@ -989,6 +1047,10 @@ TCGv_i32 tcg_const_i32(int32_t val);
 TCGv_i64 tcg_const_i64(int64_t val);
 TCGv_i32 tcg_const_local_i32(int32_t val);
 TCGv_i64 tcg_const_local_i64(int64_t val);
+TCGv_vec tcg_const_zeros_vec(TCGType);
+TCGv_vec tcg_const_ones_vec(TCGType);
+TCGv_vec tcg_const_zeros_vec_matching(TCGv_vec);
+TCGv_vec tcg_const_ones_vec_matching(TCGv_vec);
 
 TCGLabel *gen_new_label(void);
 
@@ -1158,6 +1220,33 @@ uintptr_t tcg_qemu_tb_exec(CPUArchState *env, uint8_t *tb_ptr);
 #endif
 
 void tcg_register_jit(void *buf, size_t buf_size);
+
+#if TCG_TARGET_MAYBE_vec
+/* Return zero if the tuple (opc, type, vece) is unsupportable;
+   return > 0 if it is directly supportable;
+   return < 0 if we must call tcg_expand_vec_op.  */
+int tcg_can_emit_vec_op(TCGOpcode, TCGType, unsigned);
+#else
+static inline int tcg_can_emit_vec_op(TCGOpcode o, TCGType t, unsigned ve)
+{
+    return 0;
+}
+#endif
+
+/* Expand the tuple (opc, type, vece) on the given arguments.  */
+void tcg_expand_vec_op(TCGOpcode, TCGType, unsigned, TCGArg, ...);
+
+/* Replicate a constant C accoring to the log2 of the element size.  */
+uint64_t dup_const(unsigned vece, uint64_t c);
+
+#define dup_const(VECE, C)                                         \
+    (__builtin_constant_p(VECE)                                    \
+     ? (  (VECE) == MO_8  ? 0x0101010101010101ull * (uint8_t)(C)   \
+        : (VECE) == MO_16 ? 0x0001000100010001ull * (uint16_t)(C)  \
+        : (VECE) == MO_32 ? 0x0000000100000001ull * (uint32_t)(C)  \
+        : dup_const(VECE, C))                                      \
+     : dup_const(VECE, C))
+
 
 /*
  * Memory helpers that will be used by TCG generated code.

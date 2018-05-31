@@ -689,7 +689,7 @@ static void gen_compute_eflags(DisasContext *s)
         return;
     }
 
-    TCGV_UNUSED(zero);
+    zero = NULL;
     dst = cpu_cc_dst;
     src1 = cpu_cc_src;
     src2 = cpu_cc_src2;
@@ -2050,9 +2050,8 @@ static AddressParts gen_lea_modrm_0(CPUX86State *env, DisasContext *s,
 /* Compute the address, with a minimum number of TCG ops.  */
 static TCGv gen_lea_modrm_1(AddressParts a)
 {
-    TCGv ea;
+    TCGv ea = NULL;
 
-    TCGV_UNUSED(ea);
     if (a.index >= 0) {
         if (a.scale == 0) {
             ea = cpu_regs[a.index];
@@ -2067,7 +2066,7 @@ static TCGv gen_lea_modrm_1(AddressParts a)
     } else if (a.base >= 0) {
         ea = cpu_regs[a.base];
     }
-    if (TCGV_IS_UNUSED(ea)) {
+    if (!ea) {
         tcg_gen_movi_tl(cpu_A0, a.disp);
         ea = cpu_A0;
     } else if (a.disp != 0) {
@@ -3803,7 +3802,7 @@ static void gen_sse(CPUX86State *env, DisasContext *s, int b,
                 }
                 ot = mo_64_32(s->dflag);
                 gen_ldst_modrm(env, s, modrm, ot, OR_TMP0, 0);
-                tcg_gen_andc_tl(cpu_T0, cpu_regs[s->vex_v], cpu_T0);
+                tcg_gen_andc_tl(cpu_T0, cpu_T0, cpu_regs[s->vex_v]);
                 gen_op_mov_reg_v(ot, reg, cpu_T0);
                 gen_op_update1_cc();
                 set_cc_op(s, CC_OP_LOGICB + ot);
@@ -3951,7 +3950,7 @@ static void gen_sse(CPUX86State *env, DisasContext *s, int b,
                     gen_ldst_modrm(env, s, modrm, ot, OR_TMP0, 0);
 
                     /* Re-use the carry-out from a previous round.  */
-                    TCGV_UNUSED(carry_in);
+                    carry_in = NULL;
                     carry_out = (b == 0x1f6 ? cpu_cc_dst : cpu_cc_src2);
                     switch (s->cc_op) {
                     case CC_OP_ADCX:
@@ -3979,7 +3978,7 @@ static void gen_sse(CPUX86State *env, DisasContext *s, int b,
                         break;
                     }
                     /* If we can't reuse carry-out, get it out of EFLAGS.  */
-                    if (TCGV_IS_UNUSED(carry_in)) {
+                    if (!carry_in) {
                         if (s->cc_op != CC_OP_ADCX && s->cc_op != CC_OP_ADOX) {
                             gen_compute_eflags(s);
                         }
@@ -4467,10 +4466,7 @@ static target_ulong disas_insn(DisasContext *s, CPUState *cpu)
     target_ulong pc_start = s->base.pc_next;
 
     s->pc_start = s->pc = pc_start;
-    prefixes = 0;
     s->override = -1;
-    rex_w = -1;
-    rex_r = 0;
 #ifdef TARGET_X86_64
     s->rex_x = 0;
     s->rex_b = 0;
@@ -4483,6 +4479,10 @@ static target_ulong disas_insn(DisasContext *s, CPUState *cpu)
         gen_exception(s, EXCP0D_GPF, pc_start - s->cs_base);
         return s->pc;
     }
+
+    prefixes = 0;
+    rex_w = -1;
+    rex_r = 0;
 
  next_byte:
     b = x86_ldub_code(env, s);
@@ -4563,9 +4563,11 @@ static target_ulong disas_insn(DisasContext *s, CPUState *cpu)
 #endif
             rex_r = (~vex2 >> 4) & 8;
             if (b == 0xc5) {
+                /* 2-byte VEX prefix: RVVVVlpp, implied 0f leading opcode byte */
                 vex3 = vex2;
-                b = x86_ldub_code(env, s);
+                b = x86_ldub_code(env, s) | 0x100;
             } else {
+                /* 3-byte VEX prefix: RXBmmmmm wVVVVlpp */
 #ifdef TARGET_X86_64
                 s->rex_x = (~vex2 >> 3) & 8;
                 s->rex_b = (~vex2 >> 2) & 8;
@@ -7672,7 +7674,7 @@ static target_ulong disas_insn(DisasContext *s, CPUState *cpu)
                 tcg_gen_mov_tl(a0, cpu_A0);
             } else {
                 gen_op_mov_v_reg(ot, t0, rm);
-                TCGV_UNUSED(a0);
+                a0 = NULL;
             }
             gen_op_mov_v_reg(ot, t1, reg);
             tcg_gen_andi_tl(cpu_tmp0, t0, 3);

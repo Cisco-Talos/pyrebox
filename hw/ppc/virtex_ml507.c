@@ -29,6 +29,7 @@
 #include "hw/char/serial.h"
 #include "hw/block/flash.h"
 #include "sysemu/sysemu.h"
+#include "sysemu/qtest.h"
 #include "hw/devices.h"
 #include "hw/boards.h"
 #include "sysemu/device_tree.h"
@@ -36,6 +37,7 @@
 #include "elf.h"
 #include "qemu/error-report.h"
 #include "qemu/log.h"
+#include "qemu/option.h"
 #include "exec/address-spaces.h"
 
 #include "hw/ppc/ppc.h"
@@ -210,13 +212,20 @@ static void virtex_init(MachineState *machine)
     int kernel_size;
     int i;
 
+#ifdef TARGET_PPCEMB
+    if (!qtest_enabled()) {
+        warn_report("qemu-system-ppcemb is deprecated, "
+                    "please use qemu-system-ppc instead.");
+    }
+#endif
+
     /* init CPUs */
     cpu = ppc440_init_xilinx(&ram_size, 1, machine->cpu_type, 400000000);
     env = &cpu->env;
 
     if (env->mmu_model != POWERPC_MMU_BOOKE) {
-        fprintf(stderr, "MMU model %i not supported by this machine.\n",
-            env->mmu_model);
+        error_report("MMU model %i not supported by this machine",
+                     env->mmu_model);
         exit(1);
     }
 

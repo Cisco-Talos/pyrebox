@@ -112,8 +112,8 @@ static void tilegx_cpu_do_interrupt(CPUState *cs)
     cs->exception_index = -1;
 }
 
-static int tilegx_cpu_handle_mmu_fault(CPUState *cs, vaddr address, int rw,
-                                       int mmu_idx)
+static int tilegx_cpu_handle_mmu_fault(CPUState *cs, vaddr address, int size,
+                                       int rw, int mmu_idx)
 {
     TileGXCPU *cpu = TILEGX_CPU(cs);
 
@@ -141,8 +141,8 @@ static void tilegx_cpu_class_init(ObjectClass *oc, void *data)
     CPUClass *cc = CPU_CLASS(oc);
     TileGXCPUClass *tcc = TILEGX_CPU_CLASS(oc);
 
-    tcc->parent_realize = dc->realize;
-    dc->realize = tilegx_cpu_realizefn;
+    device_class_set_parent_realize(dc, tilegx_cpu_realizefn,
+                                    &tcc->parent_realize);
 
     tcc->parent_reset = cc->reset;
     cc->reset = tilegx_cpu_reset;

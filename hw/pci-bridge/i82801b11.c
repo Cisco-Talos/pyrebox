@@ -44,8 +44,6 @@
 #include "qemu/osdep.h"
 #include "hw/pci/pci.h"
 #include "hw/i386/ich9.h"
-#include "qapi/error.h"
-
 
 /*****************************************************************************/
 /* ICH9 DMI-to-PCI bridge */
@@ -80,6 +78,7 @@ err_bridge:
 
 static const VMStateDescription i82801b11_bridge_dev_vmstate = {
     .name = "i82801b11_bridge",
+    .priority = MIG_PRI_PCI_BUS,
     .fields = (VMStateField[]) {
         VMSTATE_PCI_DEVICE(parent_obj, PCIBridge),
         VMSTATE_END_OF_LIST()
@@ -98,6 +97,7 @@ static void i82801b11_bridge_class_init(ObjectClass *klass, void *data)
     k->realize = i82801b11_bridge_realize;
     k->config_write = pci_bridge_write_config;
     dc->vmsd = &i82801b11_bridge_dev_vmstate;
+    dc->reset = pci_bridge_reset;
     set_bit(DEVICE_CATEGORY_BRIDGE, dc->categories);
 }
 

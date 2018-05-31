@@ -23,6 +23,7 @@
 #include "exec/helper-proto.h"
 #include "exec/exec-all.h"
 #include "exec/cpu_ldst.h"
+#include "softfloat.h"
 
 /* Undefined offsets may be different on various FPU.
  * On 68040 they return 0.0 (floatx80_zero)
@@ -507,4 +508,148 @@ uint32_t HELPER(fmovemd_ld_postinc)(CPUM68KState *env, uint32_t addr,
                                     uint32_t mask)
 {
     return fmovem_postinc(env, addr, mask, cpu_ld_float64_ra);
+}
+
+static void make_quotient(CPUM68KState *env, floatx80 val)
+{
+    int32_t quotient;
+    int sign;
+
+    if (floatx80_is_any_nan(val)) {
+        return;
+    }
+
+    quotient = floatx80_to_int32(val, &env->fp_status);
+    sign = quotient < 0;
+    if (sign) {
+        quotient = -quotient;
+    }
+
+    quotient = (sign << 7) | (quotient & 0x7f);
+    env->fpsr = (env->fpsr & ~FPSR_QT_MASK) | (quotient << FPSR_QT_SHIFT);
+}
+
+void HELPER(fmod)(CPUM68KState *env, FPReg *res, FPReg *val0, FPReg *val1)
+{
+    res->d = floatx80_mod(val1->d, val0->d, &env->fp_status);
+
+    make_quotient(env, res->d);
+}
+
+void HELPER(frem)(CPUM68KState *env, FPReg *res, FPReg *val0, FPReg *val1)
+{
+    res->d = floatx80_rem(val1->d, val0->d, &env->fp_status);
+
+    make_quotient(env, res->d);
+}
+
+void HELPER(fgetexp)(CPUM68KState *env, FPReg *res, FPReg *val)
+{
+    res->d = floatx80_getexp(val->d, &env->fp_status);
+}
+
+void HELPER(fgetman)(CPUM68KState *env, FPReg *res, FPReg *val)
+{
+    res->d = floatx80_getman(val->d, &env->fp_status);
+}
+
+void HELPER(fscale)(CPUM68KState *env, FPReg *res, FPReg *val0, FPReg *val1)
+{
+    res->d = floatx80_scale(val1->d, val0->d, &env->fp_status);
+}
+
+void HELPER(flognp1)(CPUM68KState *env, FPReg *res, FPReg *val)
+{
+    res->d = floatx80_lognp1(val->d, &env->fp_status);
+}
+
+void HELPER(flogn)(CPUM68KState *env, FPReg *res, FPReg *val)
+{
+    res->d = floatx80_logn(val->d, &env->fp_status);
+}
+
+void HELPER(flog10)(CPUM68KState *env, FPReg *res, FPReg *val)
+{
+    res->d = floatx80_log10(val->d, &env->fp_status);
+}
+
+void HELPER(flog2)(CPUM68KState *env, FPReg *res, FPReg *val)
+{
+    res->d = floatx80_log2(val->d, &env->fp_status);
+}
+
+void HELPER(fetox)(CPUM68KState *env, FPReg *res, FPReg *val)
+{
+    res->d = floatx80_etox(val->d, &env->fp_status);
+}
+
+void HELPER(ftwotox)(CPUM68KState *env, FPReg *res, FPReg *val)
+{
+    res->d = floatx80_twotox(val->d, &env->fp_status);
+}
+
+void HELPER(ftentox)(CPUM68KState *env, FPReg *res, FPReg *val)
+{
+    res->d = floatx80_tentox(val->d, &env->fp_status);
+}
+
+void HELPER(ftan)(CPUM68KState *env, FPReg *res, FPReg *val)
+{
+    res->d = floatx80_tan(val->d, &env->fp_status);
+}
+
+void HELPER(fsin)(CPUM68KState *env, FPReg *res, FPReg *val)
+{
+    res->d = floatx80_sin(val->d, &env->fp_status);
+}
+
+void HELPER(fcos)(CPUM68KState *env, FPReg *res, FPReg *val)
+{
+    res->d = floatx80_cos(val->d, &env->fp_status);
+}
+
+void HELPER(fsincos)(CPUM68KState *env, FPReg *res0, FPReg *res1, FPReg *val)
+{
+    floatx80 a = val->d;
+    /* If res0 and res1 specify the same floating-point data register,
+     * the sine result is stored in the register, and the cosine
+     * result is discarded.
+     */
+    res1->d = floatx80_cos(a, &env->fp_status);
+    res0->d = floatx80_sin(a, &env->fp_status);
+}
+
+void HELPER(fatan)(CPUM68KState *env, FPReg *res, FPReg *val)
+{
+    res->d = floatx80_atan(val->d, &env->fp_status);
+}
+
+void HELPER(fasin)(CPUM68KState *env, FPReg *res, FPReg *val)
+{
+    res->d = floatx80_asin(val->d, &env->fp_status);
+}
+
+void HELPER(facos)(CPUM68KState *env, FPReg *res, FPReg *val)
+{
+    res->d = floatx80_acos(val->d, &env->fp_status);
+}
+
+void HELPER(fatanh)(CPUM68KState *env, FPReg *res, FPReg *val)
+{
+    res->d = floatx80_atanh(val->d, &env->fp_status);
+}
+
+void HELPER(ftanh)(CPUM68KState *env, FPReg *res, FPReg *val)
+{
+    res->d = floatx80_tanh(val->d, &env->fp_status);
+}
+
+void HELPER(fsinh)(CPUM68KState *env, FPReg *res, FPReg *val)
+{
+    res->d = floatx80_sinh(val->d, &env->fp_status);
+}
+
+void HELPER(fcosh)(CPUM68KState *env, FPReg *res, FPReg *val)
+{
+    res->d = floatx80_cosh(val->d, &env->fp_status);
 }

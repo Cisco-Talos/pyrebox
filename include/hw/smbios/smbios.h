@@ -14,7 +14,6 @@
  *
  */
 
-#include "qemu/option.h"
 
 #define SMBIOS_MAX_TYPE 127
 
@@ -193,6 +192,12 @@ struct smbios_type_4 {
     uint8_t thread_count;
     uint16_t processor_characteristics;
     uint16_t processor_family2;
+} QEMU_PACKED;
+
+/* SMBIOS type 11 - OEM strings */
+struct smbios_type_11 {
+    struct smbios_structure_header header;
+    uint8_t count;
 } QEMU_PACKED;
 
 /* SMBIOS type 16 - Physical Memory Array (v2.7) */

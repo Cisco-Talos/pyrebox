@@ -98,7 +98,7 @@
 #define FIMD_WINCON_BUFSTATUS       ((1 << 21) | (1 << 31))
 #define FIMD_WINCON_BUF0_STAT       ((0 << 21) | (0 << 31))
 #define FIMD_WINCON_BUF1_STAT       ((1 << 21) | (0 << 31))
-#define FIMD_WINCON_BUF2_STAT       ((0 << 21) | (1 << 31))
+#define FIMD_WINCON_BUF2_STAT       ((0 << 21) | (1U << 31))
 #define FIMD_WINCON_BUFSELECT       ((1 << 20) | (1 << 30))
 #define FIMD_WINCON_BUF0_SEL        ((0 << 20) | (0 << 30))
 #define FIMD_WINCON_BUF1_SEL        ((1 << 20) | (0 << 30))
@@ -1289,7 +1289,6 @@ static void exynos4210_fimd_update(void *opaque)
             scrn_width = w->virtpage_width;
             /* Total width of virtual screen page in bytes */
             inc_size = scrn_width + w->virtpage_offsize;
-            memory_region_sync_dirty_bitmap(w->mem_section.mr);
             host_fb_addr = w->host_fb_addr;
             fb_line_addr = w->mem_section.offset_within_region;
             snap = memory_region_snapshot_and_clear_dirty(w->mem_section.mr,

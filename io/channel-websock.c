@@ -26,9 +26,6 @@
 #include "trace.h"
 #include "qemu/iov.h"
 
-#include <time.h>
-
-
 /* Max amount to allow in rawinput/encoutput buffers */
 #define QIO_CHANNEL_WEBSOCK_MAX_BUFFER 8192
 
@@ -502,9 +499,12 @@ static int qio_channel_websock_handshake_read(QIOChannelWebsock *ioc,
             error_setg(errp,
                        "End of headers not found in first 4096 bytes");
             return 1;
-        } else {
-            return 0;
+        } else if (ret == 0) {
+            error_setg(errp,
+                       "End of headers not found before connection closed");
+            return -1;
         }
+        return 0;
     }
     *handshake_end = '\0';
 
@@ -586,9 +586,7 @@ static gboolean qio_channel_websock_handshake_io(QIOChannel *ioc,
         return TRUE;
     }
 
-    if (err) {
-        error_propagate(&wioc->io_err, err);
-    }
+    error_propagate(&wioc->io_err, err);
 
     trace_qio_channel_websock_handshake_reply(ioc);
     qio_channel_add_watch(

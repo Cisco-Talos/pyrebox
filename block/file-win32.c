@@ -21,15 +21,18 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
  * THE SOFTWARE.
  */
+
 #include "qemu/osdep.h"
 #include "qapi/error.h"
 #include "qemu/cutils.h"
 #include "block/block_int.h"
 #include "qemu/module.h"
+#include "qemu/option.h"
 #include "block/raw-aio.h"
 #include "trace.h"
 #include "block/thread-pool.h"
 #include "qemu/iov.h"
+#include "qapi/qmp/qdict.h"
 #include "qapi/qmp/qstring.h"
 #include <windows.h>
 #include <winioctl.h>
@@ -550,9 +553,40 @@ static int64_t raw_get_allocated_file_size(BlockDriverState *bs)
     return st.st_size;
 }
 
-static int raw_create(const char *filename, QemuOpts *opts, Error **errp)
+static int raw_co_create(BlockdevCreateOptions *options, Error **errp)
 {
+    BlockdevCreateOptionsFile *file_opts;
     int fd;
+
+    assert(options->driver == BLOCKDEV_DRIVER_FILE);
+    file_opts = &options->u.file;
+
+    if (file_opts->has_preallocation) {
+        error_setg(errp, "Preallocation is not supported on Windows");
+        return -EINVAL;
+    }
+    if (file_opts->has_nocow) {
+        error_setg(errp, "nocow is not supported on Windows");
+        return -EINVAL;
+    }
+
+    fd = qemu_open(file_opts->filename, O_WRONLY | O_CREAT | O_TRUNC | O_BINARY,
+                   0644);
+    if (fd < 0) {
+        error_setg_errno(errp, errno, "Could not create file");
+        return -EIO;
+    }
+    set_sparse(fd);
+    ftruncate(fd, file_opts->size);
+    qemu_close(fd);
+
+    return 0;
+}
+
+static int coroutine_fn raw_co_create_opts(const char *filename, QemuOpts *opts,
+                                           Error **errp)
+{
+    BlockdevCreateOptions options;
     int64_t total_size = 0;
 
     strstart(filename, "file:", &filename);
@@ -561,18 +595,17 @@ static int raw_create(const char *filename, QemuOpts *opts, Error **errp)
     total_size = ROUND_UP(qemu_opt_get_size_del(opts, BLOCK_OPT_SIZE, 0),
                           BDRV_SECTOR_SIZE);
 
-    fd = qemu_open(filename, O_WRONLY | O_CREAT | O_TRUNC | O_BINARY,
-                   0644);
-    if (fd < 0) {
-        error_setg_errno(errp, errno, "Could not create file");
-        return -EIO;
-    }
-    set_sparse(fd);
-    ftruncate(fd, total_size);
-    qemu_close(fd);
-    return 0;
+    options = (BlockdevCreateOptions) {
+        .driver     = BLOCKDEV_DRIVER_FILE,
+        .u.file     = {
+            .filename           = (char *) filename,
+            .size               = total_size,
+            .has_preallocation  = false,
+            .has_nocow          = false,
+        },
+    };
+    return raw_co_create(&options, errp);
 }
-
 
 static QemuOptsList raw_create_opts = {
     .name = "raw-create-opts",
@@ -596,7 +629,7 @@ BlockDriver bdrv_file = {
     .bdrv_file_open     = raw_open,
     .bdrv_refresh_limits = raw_probe_alignment,
     .bdrv_close         = raw_close,
-    .bdrv_create        = raw_create,
+    .bdrv_co_create_opts = raw_co_create_opts,
     .bdrv_has_zero_init = bdrv_has_zero_init_1,
 
     .bdrv_aio_readv     = raw_aio_readv,

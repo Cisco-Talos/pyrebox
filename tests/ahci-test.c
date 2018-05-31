@@ -31,6 +31,7 @@
 #include "libqos/pci-pc.h"
 
 #include "qemu-common.h"
+#include "qapi/qmp/qdict.h"
 #include "qemu/host-utils.h"
 
 #include "hw/pci/pci_ids.h"
@@ -157,10 +158,11 @@ static AHCIQState *ahci_vboot(const char *cli, va_list ap)
 
     s = g_new0(AHCIQState, 1);
     s->parent = qtest_pc_vboot(cli, ap);
+    global_qtest = s->parent->qts;
     alloc_set_flags(s->parent->alloc, ALLOC_LEAK_ASSERT);
 
     /* Verify that we have an AHCI device present. */
-    s->dev = get_ahci_device(&s->fingerprint);
+    s->dev = get_ahci_device(s->parent->qts, &s->fingerprint);
 
     return s;
 }
@@ -1578,9 +1580,9 @@ static void test_atapi_tray(void)
     QDict *rsp;
 
     fd = prepare_iso(iso_size, &tx, &iso);
-    ahci = ahci_boot_and_enable("-drive if=none,id=drive0,file=%s,format=raw "
+    ahci = ahci_boot_and_enable("-blockdev node-name=drive0,driver=file,filename=%s "
                                 "-M q35 "
-                                "-device ide-cd,drive=drive0 ", iso);
+                                "-device ide-cd,id=cd0,drive=drive0 ", iso);
     port = ahci_port_select(ahci);
 
     ahci_atapi_eject(ahci, port);
@@ -1591,13 +1593,13 @@ static void test_atapi_tray(void)
 
     /* Remove media */
     qmp_async("{'execute': 'blockdev-open-tray', "
-               "'arguments': {'device': 'drive0'}}");
+               "'arguments': {'id': 'cd0'}}");
     atapi_wait_tray(true);
     rsp = qmp_receive();
     QDECREF(rsp);
 
-    qmp_discard_response("{'execute': 'x-blockdev-remove-medium', "
-                         "'arguments': {'device': 'drive0'}}");
+    qmp_discard_response("{'execute': 'blockdev-remove-medium', "
+                         "'arguments': {'id': 'cd0'}}");
 
     /* Test the tray without a medium */
     ahci_atapi_load(ahci, port);
@@ -1612,13 +1614,13 @@ static void test_atapi_tray(void)
                                         "'driver': 'raw', "
                                         "'file': { 'driver': 'file', "
                                                   "'filename': %s }}}", iso);
-    qmp_discard_response("{'execute': 'x-blockdev-insert-medium',"
-                          "'arguments': { 'device': 'drive0', "
+    qmp_discard_response("{'execute': 'blockdev-insert-medium',"
+                          "'arguments': { 'id': 'cd0', "
                                          "'node-name': 'node0' }}");
 
     /* Again, the event shows up first */
     qmp_async("{'execute': 'blockdev-close-tray', "
-               "'arguments': {'device': 'drive0'}}");
+               "'arguments': {'id': 'cd0'}}");
     atapi_wait_tray(false);
     rsp = qmp_receive();
     QDECREF(rsp);
@@ -1821,6 +1823,7 @@ static void create_ahci_io_test(enum IOMode type, enum AddrMode addr,
     if ((addr == ADDR_MODE_LBA48) && (offset == OFFSET_HIGH) &&
         (mb_to_sectors(test_image_size_mb) <= 0xFFFFFFF)) {
         g_test_message("%s: skipped; test image too small", name);
+        g_free(opts);
         g_free(name);
         return;
     }

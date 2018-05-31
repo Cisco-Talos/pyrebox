@@ -27,6 +27,7 @@
 #include "hw/virtio/virtio-access.h"
 #include "migration/blocker.h"
 #include "sysemu/dma.h"
+#include "trace.h"
 
 /* enabled until disconnected backend stabilizes */
 #define _VHOST_DEBUG 1
@@ -155,160 +156,6 @@ static void vhost_log_sync_range(struct vhost_dev *dev,
     }
 }
 
-/* Assign/unassign. Keep an unsorted array of non-overlapping
- * memory regions in dev->mem. */
-static void vhost_dev_unassign_memory(struct vhost_dev *dev,
-                                      uint64_t start_addr,
-                                      uint64_t size)
-{
-    int from, to, n = dev->mem->nregions;
-    /* Track overlapping/split regions for sanity checking. */
-    int overlap_start = 0, overlap_end = 0, overlap_middle = 0, split = 0;
-
-    for (from = 0, to = 0; from < n; ++from, ++to) {
-        struct vhost_memory_region *reg = dev->mem->regions + to;
-        uint64_t reglast;
-        uint64_t memlast;
-        uint64_t change;
-
-        /* clone old region */
-        if (to != from) {
-            memcpy(reg, dev->mem->regions + from, sizeof *reg);
-        }
-
-        /* No overlap is simple */
-        if (!ranges_overlap(reg->guest_phys_addr, reg->memory_size,
-                            start_addr, size)) {
-            continue;
-        }
-
-        /* Split only happens if supplied region
-         * is in the middle of an existing one. Thus it can not
-         * overlap with any other existing region. */
-        assert(!split);
-
-        reglast = range_get_last(reg->guest_phys_addr, reg->memory_size);
-        memlast = range_get_last(start_addr, size);
-
-        /* Remove whole region */
-        if (start_addr <= reg->guest_phys_addr && memlast >= reglast) {
-            --dev->mem->nregions;
-            --to;
-            ++overlap_middle;
-            continue;
-        }
-
-        /* Shrink region */
-        if (memlast >= reglast) {
-            reg->memory_size = start_addr - reg->guest_phys_addr;
-            assert(reg->memory_size);
-            assert(!overlap_end);
-            ++overlap_end;
-            continue;
-        }
-
-        /* Shift region */
-        if (start_addr <= reg->guest_phys_addr) {
-            change = memlast + 1 - reg->guest_phys_addr;
-            reg->memory_size -= change;
-            reg->guest_phys_addr += change;
-            reg->userspace_addr += change;
-            assert(reg->memory_size);
-            assert(!overlap_start);
-            ++overlap_start;
-            continue;
-        }
-
-        /* This only happens if supplied region
-         * is in the middle of an existing one. Thus it can not
-         * overlap with any other existing region. */
-        assert(!overlap_start);
-        assert(!overlap_end);
-        assert(!overlap_middle);
-        /* Split region: shrink first part, shift second part. */
-        memcpy(dev->mem->regions + n, reg, sizeof *reg);
-        reg->memory_size = start_addr - reg->guest_phys_addr;
-        assert(reg->memory_size);
-        change = memlast + 1 - reg->guest_phys_addr;
-        reg = dev->mem->regions + n;
-        reg->memory_size -= change;
-        assert(reg->memory_size);
-        reg->guest_phys_addr += change;
-        reg->userspace_addr += change;
-        /* Never add more than 1 region */
-        assert(dev->mem->nregions == n);
-        ++dev->mem->nregions;
-        ++split;
-    }
-}
-
-/* Called after unassign, so no regions overlap the given range. */
-static void vhost_dev_assign_memory(struct vhost_dev *dev,
-                                    uint64_t start_addr,
-                                    uint64_t size,
-                                    uint64_t uaddr)
-{
-    int from, to;
-    struct vhost_memory_region *merged = NULL;
-    for (from = 0, to = 0; from < dev->mem->nregions; ++from, ++to) {
-        struct vhost_memory_region *reg = dev->mem->regions + to;
-        uint64_t prlast, urlast;
-        uint64_t pmlast, umlast;
-        uint64_t s, e, u;
-
-        /* clone old region */
-        if (to != from) {
-            memcpy(reg, dev->mem->regions + from, sizeof *reg);
-        }
-        prlast = range_get_last(reg->guest_phys_addr, reg->memory_size);
-        pmlast = range_get_last(start_addr, size);
-        urlast = range_get_last(reg->userspace_addr, reg->memory_size);
-        umlast = range_get_last(uaddr, size);
-
-        /* check for overlapping regions: should never happen. */
-        assert(prlast < start_addr || pmlast < reg->guest_phys_addr);
-        /* Not an adjacent or overlapping region - do not merge. */
-        if ((prlast + 1 != start_addr || urlast + 1 != uaddr) &&
-            (pmlast + 1 != reg->guest_phys_addr ||
-             umlast + 1 != reg->userspace_addr)) {
-            continue;
-        }
-
-        if (dev->vhost_ops->vhost_backend_can_merge &&
-            !dev->vhost_ops->vhost_backend_can_merge(dev, uaddr, size,
-                                                     reg->userspace_addr,
-                                                     reg->memory_size)) {
-            continue;
-        }
-
-        if (merged) {
-            --to;
-            assert(to >= 0);
-        } else {
-            merged = reg;
-        }
-        u = MIN(uaddr, reg->userspace_addr);
-        s = MIN(start_addr, reg->guest_phys_addr);
-        e = MAX(pmlast, prlast);
-        uaddr = merged->userspace_addr = u;
-        start_addr = merged->guest_phys_addr = s;
-        size = merged->memory_size = e - s + 1;
-        assert(merged->memory_size);
-    }
-
-    if (!merged) {
-        struct vhost_memory_region *reg = dev->mem->regions + to;
-        memset(reg, 0, sizeof *reg);
-        reg->memory_size = size;
-        assert(reg->memory_size);
-        reg->guest_phys_addr = start_addr;
-        reg->userspace_addr = uaddr;
-        ++to;
-    }
-    assert(to <= dev->mem->nregions + 1);
-    dev->mem->nregions = to;
-}
-
 static uint64_t vhost_get_log_size(struct vhost_dev *dev)
 {
     uint64_t log_size = 0;
@@ -329,6 +176,7 @@ static uint64_t vhost_get_log_size(struct vhost_dev *dev)
 
 static struct vhost_log *vhost_log_alloc(uint64_t size, bool share)
 {
+    Error *err = NULL;
     struct vhost_log *log;
     uint64_t logsize = size * sizeof(*(log->log));
     int fd = -1;
@@ -337,7 +185,12 @@ static struct vhost_log *vhost_log_alloc(uint64_t size, bool share)
     if (share) {
         log->log = qemu_memfd_alloc("vhost-log", logsize,
                                     F_SEAL_GROW | F_SEAL_SHRINK | F_SEAL_SEAL,
-                                    &fd);
+                                    &fd, &err);
+        if (err) {
+            error_report_err(err);
+            g_free(log);
+            return NULL;
+        }
         memset(log->log, 0, logsize);
     } else {
         log->log = g_malloc0(logsize);
@@ -449,35 +302,37 @@ static void vhost_memory_unmap(struct vhost_dev *dev, void *buffer,
     }
 }
 
-static int vhost_verify_ring_part_mapping(struct vhost_dev *dev,
-                                          void *part,
-                                          uint64_t part_addr,
-                                          uint64_t part_size,
-                                          uint64_t start_addr,
-                                          uint64_t size)
+static int vhost_verify_ring_part_mapping(void *ring_hva,
+                                          uint64_t ring_gpa,
+                                          uint64_t ring_size,
+                                          void *reg_hva,
+                                          uint64_t reg_gpa,
+                                          uint64_t reg_size)
 {
-    hwaddr l;
-    void *p;
-    int r = 0;
+    uint64_t hva_ring_offset;
+    uint64_t ring_last = range_get_last(ring_gpa, ring_size);
+    uint64_t reg_last = range_get_last(reg_gpa, reg_size);
 
-    if (!ranges_overlap(start_addr, size, part_addr, part_size)) {
+    if (ring_last < reg_gpa || ring_gpa > reg_last) {
         return 0;
     }
-    l = part_size;
-    p = vhost_memory_map(dev, part_addr, &l, 1);
-    if (!p || l != part_size) {
-        r = -ENOMEM;
+    /* check that whole ring's is mapped */
+    if (ring_last > reg_last) {
+        return -ENOMEM;
     }
-    if (p != part) {
-        r = -EBUSY;
+    /* check that ring's MemoryRegion wasn't replaced */
+    hva_ring_offset = ring_gpa - reg_gpa;
+    if (ring_hva != reg_hva + hva_ring_offset) {
+        return -EBUSY;
     }
-    vhost_memory_unmap(dev, p, l, 0, 0);
-    return r;
+
+    return 0;
 }
 
 static int vhost_verify_ring_mappings(struct vhost_dev *dev,
-                                      uint64_t start_addr,
-                                      uint64_t size)
+                                      void *reg_hva,
+                                      uint64_t reg_gpa,
+                                      uint64_t reg_size)
 {
     int i, j;
     int r = 0;
@@ -487,26 +342,37 @@ static int vhost_verify_ring_mappings(struct vhost_dev *dev,
         "used ring"
     };
 
+    if (vhost_dev_has_iommu(dev)) {
+        return 0;
+    }
+
     for (i = 0; i < dev->nvqs; ++i) {
         struct vhost_virtqueue *vq = dev->vqs + i;
 
+        if (vq->desc_phys == 0) {
+            continue;
+        }
+
         j = 0;
-        r = vhost_verify_ring_part_mapping(dev, vq->desc, vq->desc_phys,
-                                           vq->desc_size, start_addr, size);
+        r = vhost_verify_ring_part_mapping(
+                vq->desc, vq->desc_phys, vq->desc_size,
+                reg_hva, reg_gpa, reg_size);
         if (r) {
             break;
         }
 
         j++;
-        r = vhost_verify_ring_part_mapping(dev, vq->avail, vq->avail_phys,
-                                           vq->avail_size, start_addr, size);
+        r = vhost_verify_ring_part_mapping(
+                vq->avail, vq->avail_phys, vq->avail_size,
+                reg_hva, reg_gpa, reg_size);
         if (r) {
             break;
         }
 
         j++;
-        r = vhost_verify_ring_part_mapping(dev, vq->used, vq->used_phys,
-                                           vq->used_size, start_addr, size);
+        r = vhost_verify_ring_part_mapping(
+                vq->used, vq->used_phys, vq->used_size,
+                reg_hva, reg_gpa, reg_size);
         if (r) {
             break;
         }
@@ -520,134 +386,95 @@ static int vhost_verify_ring_mappings(struct vhost_dev *dev,
     return r;
 }
 
-static struct vhost_memory_region *vhost_dev_find_reg(struct vhost_dev *dev,
-						      uint64_t start_addr,
-						      uint64_t size)
-{
-    int i, n = dev->mem->nregions;
-    for (i = 0; i < n; ++i) {
-        struct vhost_memory_region *reg = dev->mem->regions + i;
-        if (ranges_overlap(reg->guest_phys_addr, reg->memory_size,
-                           start_addr, size)) {
-            return reg;
-        }
-    }
-    return NULL;
-}
-
-static bool vhost_dev_cmp_memory(struct vhost_dev *dev,
-                                 uint64_t start_addr,
-                                 uint64_t size,
-                                 uint64_t uaddr)
-{
-    struct vhost_memory_region *reg = vhost_dev_find_reg(dev, start_addr, size);
-    uint64_t reglast;
-    uint64_t memlast;
-
-    if (!reg) {
-        return true;
-    }
-
-    reglast = range_get_last(reg->guest_phys_addr, reg->memory_size);
-    memlast = range_get_last(start_addr, size);
-
-    /* Need to extend region? */
-    if (start_addr < reg->guest_phys_addr || memlast > reglast) {
-        return true;
-    }
-    /* userspace_addr changed? */
-    return uaddr != reg->userspace_addr + start_addr - reg->guest_phys_addr;
-}
-
-static void vhost_set_memory(MemoryListener *listener,
-                             MemoryRegionSection *section,
-                             bool add)
-{
-    struct vhost_dev *dev = container_of(listener, struct vhost_dev,
-                                         memory_listener);
-    hwaddr start_addr = section->offset_within_address_space;
-    ram_addr_t size = int128_get64(section->size);
-    bool log_dirty =
-        memory_region_get_dirty_log_mask(section->mr) & ~(1 << DIRTY_MEMORY_MIGRATION);
-    int s = offsetof(struct vhost_memory, regions) +
-        (dev->mem->nregions + 1) * sizeof dev->mem->regions[0];
-    void *ram;
-
-    dev->mem = g_realloc(dev->mem, s);
-
-    if (log_dirty) {
-        add = false;
-    }
-
-    assert(size);
-
-    /* Optimize no-change case. At least cirrus_vga does this a lot at this time. */
-    ram = memory_region_get_ram_ptr(section->mr) + section->offset_within_region;
-    if (add) {
-        if (!vhost_dev_cmp_memory(dev, start_addr, size, (uintptr_t)ram)) {
-            /* Region exists with same address. Nothing to do. */
-            return;
-        }
-    } else {
-        if (!vhost_dev_find_reg(dev, start_addr, size)) {
-            /* Removing region that we don't access. Nothing to do. */
-            return;
-        }
-    }
-
-    vhost_dev_unassign_memory(dev, start_addr, size);
-    if (add) {
-        /* Add given mapping, merging adjacent regions if any */
-        vhost_dev_assign_memory(dev, start_addr, size, (uintptr_t)ram);
-    } else {
-        /* Remove old mapping for this memory, if any. */
-        vhost_dev_unassign_memory(dev, start_addr, size);
-    }
-    dev->mem_changed_start_addr = MIN(dev->mem_changed_start_addr, start_addr);
-    dev->mem_changed_end_addr = MAX(dev->mem_changed_end_addr, start_addr + size - 1);
-    dev->memory_changed = true;
-    used_memslots = dev->mem->nregions;
-}
-
 static bool vhost_section(MemoryRegionSection *section)
 {
-    return memory_region_is_ram(section->mr) &&
+    bool result;
+    bool log_dirty = memory_region_get_dirty_log_mask(section->mr) &
+                     ~(1 << DIRTY_MEMORY_MIGRATION);
+    result = memory_region_is_ram(section->mr) &&
         !memory_region_is_rom(section->mr);
+
+    /* Vhost doesn't handle any block which is doing dirty-tracking other
+     * than migration; this typically fires on VGA areas.
+     */
+    result &= !log_dirty;
+
+    trace_vhost_section(section->mr->name, result);
+    return result;
 }
 
 static void vhost_begin(MemoryListener *listener)
 {
     struct vhost_dev *dev = container_of(listener, struct vhost_dev,
                                          memory_listener);
-    dev->mem_changed_end_addr = 0;
-    dev->mem_changed_start_addr = -1;
+    dev->tmp_sections = NULL;
+    dev->n_tmp_sections = 0;
 }
 
 static void vhost_commit(MemoryListener *listener)
 {
     struct vhost_dev *dev = container_of(listener, struct vhost_dev,
                                          memory_listener);
-    hwaddr start_addr = 0;
-    ram_addr_t size = 0;
+    MemoryRegionSection *old_sections;
+    int n_old_sections;
     uint64_t log_size;
+    size_t regions_size;
     int r;
+    int i;
+    bool changed = false;
 
-    if (!dev->memory_changed) {
-        return;
+    /* Note we can be called before the device is started, but then
+     * starting the device calls set_mem_table, so we need to have
+     * built the data structures.
+     */
+    old_sections = dev->mem_sections;
+    n_old_sections = dev->n_mem_sections;
+    dev->mem_sections = dev->tmp_sections;
+    dev->n_mem_sections = dev->n_tmp_sections;
+
+    if (dev->n_mem_sections != n_old_sections) {
+        changed = true;
+    } else {
+        /* Same size, lets check the contents */
+        changed = n_old_sections && memcmp(dev->mem_sections, old_sections,
+                         n_old_sections * sizeof(old_sections[0])) != 0;
     }
+
+    trace_vhost_commit(dev->started, changed);
+    if (!changed) {
+        goto out;
+    }
+
+    /* Rebuild the regions list from the new sections list */
+    regions_size = offsetof(struct vhost_memory, regions) +
+                       dev->n_mem_sections * sizeof dev->mem->regions[0];
+    dev->mem = g_realloc(dev->mem, regions_size);
+    dev->mem->nregions = dev->n_mem_sections;
+    used_memslots = dev->mem->nregions;
+    for (i = 0; i < dev->n_mem_sections; i++) {
+        struct vhost_memory_region *cur_vmr = dev->mem->regions + i;
+        struct MemoryRegionSection *mrs = dev->mem_sections + i;
+
+        cur_vmr->guest_phys_addr = mrs->offset_within_address_space;
+        cur_vmr->memory_size     = int128_get64(mrs->size);
+        cur_vmr->userspace_addr  =
+            (uintptr_t)memory_region_get_ram_ptr(mrs->mr) +
+            mrs->offset_within_region;
+        cur_vmr->flags_padding   = 0;
+    }
+
     if (!dev->started) {
-        return;
-    }
-    if (dev->mem_changed_start_addr > dev->mem_changed_end_addr) {
-        return;
+        goto out;
     }
 
-    if (dev->started) {
-        start_addr = dev->mem_changed_start_addr;
-        size = dev->mem_changed_end_addr - dev->mem_changed_start_addr + 1;
-
-        r = vhost_verify_ring_mappings(dev, start_addr, size);
-        assert(r >= 0);
+    for (i = 0; i < dev->mem->nregions; i++) {
+        if (vhost_verify_ring_mappings(dev,
+                       (void *)(uintptr_t)dev->mem->regions[i].userspace_addr,
+                       dev->mem->regions[i].guest_phys_addr,
+                       dev->mem->regions[i].memory_size)) {
+            error_report("Verify ring failure on region %d", i);
+            abort();
+        }
     }
 
     if (!dev->log_enabled) {
@@ -655,8 +482,7 @@ static void vhost_commit(MemoryListener *listener)
         if (r < 0) {
             VHOST_OPS_DEBUG("vhost_set_mem_table failed");
         }
-        dev->memory_changed = false;
-        return;
+        goto out;
     }
     log_size = vhost_get_log_size(dev);
     /* We allocate an extra 4K bytes to log,
@@ -674,49 +500,142 @@ static void vhost_commit(MemoryListener *listener)
     if (dev->log_size > log_size + VHOST_LOG_BUFFER) {
         vhost_dev_log_resize(dev, log_size);
     }
-    dev->memory_changed = false;
+
+out:
+    /* Deref the old list of sections, this must happen _after_ the
+     * vhost_set_mem_table to ensure the client isn't still using the
+     * section we're about to unref.
+     */
+    while (n_old_sections--) {
+        memory_region_unref(old_sections[n_old_sections].mr);
+    }
+    g_free(old_sections);
+    return;
 }
 
-static void vhost_region_add(MemoryListener *listener,
-                             MemoryRegionSection *section)
+/* Adds the section data to the tmp_section structure.
+ * It relies on the listener calling us in memory address order
+ * and for each region (via the _add and _nop methods) to
+ * join neighbours.
+ */
+static void vhost_region_add_section(struct vhost_dev *dev,
+                                     MemoryRegionSection *section)
 {
-    struct vhost_dev *dev = container_of(listener, struct vhost_dev,
-                                         memory_listener);
+    bool need_add = true;
+    uint64_t mrs_size = int128_get64(section->size);
+    uint64_t mrs_gpa = section->offset_within_address_space;
+    uintptr_t mrs_host = (uintptr_t)memory_region_get_ram_ptr(section->mr) +
+                         section->offset_within_region;
+    RAMBlock *mrs_rb = section->mr->ram_block;
+    size_t mrs_page = qemu_ram_pagesize(mrs_rb);
 
-    if (!vhost_section(section)) {
-        return;
+    trace_vhost_region_add_section(section->mr->name, mrs_gpa, mrs_size,
+                                   mrs_host);
+
+    /* Round the section to it's page size */
+    /* First align the start down to a page boundary */
+    uint64_t alignage = mrs_host & (mrs_page - 1);
+    if (alignage) {
+        mrs_host -= alignage;
+        mrs_size += alignage;
+        mrs_gpa  -= alignage;
     }
-
-    ++dev->n_mem_sections;
-    dev->mem_sections = g_renew(MemoryRegionSection, dev->mem_sections,
-                                dev->n_mem_sections);
-    dev->mem_sections[dev->n_mem_sections - 1] = *section;
-    memory_region_ref(section->mr);
-    vhost_set_memory(listener, section, true);
-}
-
-static void vhost_region_del(MemoryListener *listener,
-                             MemoryRegionSection *section)
-{
-    struct vhost_dev *dev = container_of(listener, struct vhost_dev,
-                                         memory_listener);
-    int i;
-
-    if (!vhost_section(section)) {
-        return;
+    /* Now align the size up to a page boundary */
+    alignage = mrs_size & (mrs_page - 1);
+    if (alignage) {
+        mrs_size += mrs_page - alignage;
     }
+    trace_vhost_region_add_section_aligned(section->mr->name, mrs_gpa, mrs_size,
+                                           mrs_host);
 
-    vhost_set_memory(listener, section, false);
-    memory_region_unref(section->mr);
-    for (i = 0; i < dev->n_mem_sections; ++i) {
-        if (dev->mem_sections[i].offset_within_address_space
-            == section->offset_within_address_space) {
-            --dev->n_mem_sections;
-            memmove(&dev->mem_sections[i], &dev->mem_sections[i+1],
-                    (dev->n_mem_sections - i) * sizeof(*dev->mem_sections));
-            break;
+    if (dev->n_tmp_sections) {
+        /* Since we already have at least one section, lets see if
+         * this extends it; since we're scanning in order, we only
+         * have to look at the last one, and the FlatView that calls
+         * us shouldn't have overlaps.
+         */
+        MemoryRegionSection *prev_sec = dev->tmp_sections +
+                                               (dev->n_tmp_sections - 1);
+        uint64_t prev_gpa_start = prev_sec->offset_within_address_space;
+        uint64_t prev_size = int128_get64(prev_sec->size);
+        uint64_t prev_gpa_end   = range_get_last(prev_gpa_start, prev_size);
+        uint64_t prev_host_start =
+                        (uintptr_t)memory_region_get_ram_ptr(prev_sec->mr) +
+                        prev_sec->offset_within_region;
+        uint64_t prev_host_end   = range_get_last(prev_host_start, prev_size);
+
+        if (mrs_gpa <= (prev_gpa_end + 1)) {
+            /* OK, looks like overlapping/intersecting - it's possible that
+             * the rounding to page sizes has made them overlap, but they should
+             * match up in the same RAMBlock if they do.
+             */
+            if (mrs_gpa < prev_gpa_start) {
+                error_report("%s:Section rounded to %"PRIx64
+                             " prior to previous %"PRIx64,
+                             __func__, mrs_gpa, prev_gpa_start);
+                /* A way to cleanly fail here would be better */
+                return;
+            }
+            /* Offset from the start of the previous GPA to this GPA */
+            size_t offset = mrs_gpa - prev_gpa_start;
+
+            if (prev_host_start + offset == mrs_host &&
+                section->mr == prev_sec->mr &&
+                (!dev->vhost_ops->vhost_backend_can_merge ||
+                 dev->vhost_ops->vhost_backend_can_merge(dev,
+                    mrs_host, mrs_size,
+                    prev_host_start, prev_size))) {
+                uint64_t max_end = MAX(prev_host_end, mrs_host + mrs_size);
+                need_add = false;
+                prev_sec->offset_within_address_space =
+                    MIN(prev_gpa_start, mrs_gpa);
+                prev_sec->offset_within_region =
+                    MIN(prev_host_start, mrs_host) -
+                    (uintptr_t)memory_region_get_ram_ptr(prev_sec->mr);
+                prev_sec->size = int128_make64(max_end - MIN(prev_host_start,
+                                               mrs_host));
+                trace_vhost_region_add_section_merge(section->mr->name,
+                                        int128_get64(prev_sec->size),
+                                        prev_sec->offset_within_address_space,
+                                        prev_sec->offset_within_region);
+            } else {
+                /* adjoining regions are fine, but overlapping ones with
+                 * different blocks/offsets shouldn't happen
+                 */
+                if (mrs_gpa != prev_gpa_end + 1) {
+                    error_report("%s: Overlapping but not coherent sections "
+                                 "at %"PRIx64,
+                                 __func__, mrs_gpa);
+                    return;
+                }
+            }
         }
     }
+
+    if (need_add) {
+        ++dev->n_tmp_sections;
+        dev->tmp_sections = g_renew(MemoryRegionSection, dev->tmp_sections,
+                                    dev->n_tmp_sections);
+        dev->tmp_sections[dev->n_tmp_sections - 1] = *section;
+        /* The flatview isn't stable and we don't use it, making it NULL
+         * means we can memcmp the list.
+         */
+        dev->tmp_sections[dev->n_tmp_sections - 1].fv = NULL;
+        memory_region_ref(section->mr);
+    }
+}
+
+/* Used for both add and nop callbacks */
+static void vhost_region_addnop(MemoryListener *listener,
+                                MemoryRegionSection *section)
+{
+    struct vhost_dev *dev = container_of(listener, struct vhost_dev,
+                                         memory_listener);
+
+    if (!vhost_section(section)) {
+        return;
+    }
+    vhost_region_add_section(dev, section);
 }
 
 static void vhost_iommu_unmap_notify(IOMMUNotifier *n, IOMMUTLBEntry *iotlb)
@@ -781,11 +700,6 @@ static void vhost_iommu_region_del(MemoryListener *listener,
             break;
         }
     }
-}
-
-static void vhost_region_nop(MemoryListener *listener,
-                             MemoryRegionSection *section)
-{
 }
 
 static int vhost_virtqueue_set_addr(struct vhost_dev *dev,
@@ -1026,6 +940,11 @@ static int vhost_virtqueue_start(struct vhost_dev *dev,
     };
     struct VirtQueue *vvq = virtio_get_queue(vdev, idx);
 
+    a = virtio_queue_get_desc_addr(vdev, idx);
+    if (a == 0) {
+        /* Queue might not be ready for start */
+        return 0;
+    }
 
     vq->num = state.num = virtio_queue_get_num(vdev, idx);
     r = dev->vhost_ops->vhost_set_vring_num(dev, &state);
@@ -1051,7 +970,7 @@ static int vhost_virtqueue_start(struct vhost_dev *dev,
     }
 
     vq->desc_size = s = l = virtio_queue_get_desc_size(vdev, idx);
-    vq->desc_phys = a = virtio_queue_get_desc_addr(vdev, idx);
+    vq->desc_phys = a;
     vq->desc = vhost_memory_map(dev, a, &l, 0);
     if (!vq->desc || l != s) {
         r = -ENOMEM;
@@ -1134,6 +1053,13 @@ static void vhost_virtqueue_stop(struct vhost_dev *dev,
         .index = vhost_vq_index,
     };
     int r;
+    int a;
+
+    a = virtio_queue_get_desc_addr(vdev, idx);
+    if (a == 0) {
+        /* Don't stop the virtqueue which might have not been started */
+        return;
+    }
 
     r = dev->vhost_ops->vhost_get_vring_base(dev, &state);
     if (r < 0) {
@@ -1251,13 +1177,6 @@ int vhost_dev_init(struct vhost_dev *hdev, void *opaque,
         goto fail;
     }
 
-    if (used_memslots > hdev->vhost_ops->vhost_backend_memslots_limit(hdev)) {
-        error_report("vhost backend memory slots limit is less"
-                " than current number of present memory slots");
-        r = -1;
-        goto fail;
-    }
-
     r = hdev->vhost_ops->vhost_set_owner(hdev);
     if (r < 0) {
         VHOST_OPS_DEBUG("vhost_set_owner failed");
@@ -1292,9 +1211,8 @@ int vhost_dev_init(struct vhost_dev *hdev, void *opaque,
     hdev->memory_listener = (MemoryListener) {
         .begin = vhost_begin,
         .commit = vhost_commit,
-        .region_add = vhost_region_add,
-        .region_del = vhost_region_del,
-        .region_nop = vhost_region_nop,
+        .region_add = vhost_region_addnop,
+        .region_nop = vhost_region_addnop,
         .log_start = vhost_log_start,
         .log_stop = vhost_log_stop,
         .log_sync = vhost_log_sync,
@@ -1314,7 +1232,7 @@ int vhost_dev_init(struct vhost_dev *hdev, void *opaque,
         if (!(hdev->features & (0x1ULL << VHOST_F_LOG_ALL))) {
             error_setg(&hdev->migration_blocker,
                        "Migration disabled: vhost lacks VHOST_F_LOG_ALL feature.");
-        } else if (vhost_dev_log_is_shared(hdev) && !qemu_memfd_check()) {
+        } else if (vhost_dev_log_is_shared(hdev) && !qemu_memfd_alloc_check()) {
             error_setg(&hdev->migration_blocker,
                        "Migration disabled: failed to allocate shared memory");
         }
@@ -1336,9 +1254,20 @@ int vhost_dev_init(struct vhost_dev *hdev, void *opaque,
     hdev->log_size = 0;
     hdev->log_enabled = false;
     hdev->started = false;
-    hdev->memory_changed = false;
     memory_listener_register(&hdev->memory_listener, &address_space_memory);
     QLIST_INSERT_HEAD(&vhost_devices, hdev, entry);
+
+    if (used_memslots > hdev->vhost_ops->vhost_backend_memslots_limit(hdev)) {
+        error_report("vhost backend memory slots limit is less"
+                " than current number of present memory slots");
+        r = -1;
+        if (busyloop_timeout) {
+            goto fail_busyloop;
+        } else {
+            goto fail;
+        }
+    }
+
     return 0;
 
 fail_busyloop:
@@ -1361,10 +1290,6 @@ void vhost_dev_cleanup(struct vhost_dev *hdev)
     if (hdev->mem) {
         /* those are only safe after successful init */
         memory_listener_unregister(&hdev->memory_listener);
-        for (i = 0; i < hdev->n_mem_sections; ++i) {
-            MemoryRegionSection *section = &hdev->mem_sections[i];
-            memory_region_unref(section->mr);
-        }
         QLIST_REMOVE(hdev, entry);
     }
     if (hdev->migration_blocker) {
@@ -1416,6 +1341,7 @@ fail_vq:
             error_report("vhost VQ %d notifier cleanup error: %d", i, -r);
         }
         assert (e >= 0);
+        virtio_bus_cleanup_host_notifier(VIRTIO_BUS(qbus), hdev->vq_index + i);
     }
     virtio_device_release_ioeventfd(vdev);
 fail:
@@ -1439,6 +1365,7 @@ void vhost_dev_disable_notifiers(struct vhost_dev *hdev, VirtIODevice *vdev)
             error_report("vhost VQ %d notifier cleanup failed: %d", i, -r);
         }
         assert (r >= 0);
+        virtio_bus_cleanup_host_notifier(VIRTIO_BUS(qbus), hdev->vq_index + i);
     }
     virtio_device_release_ioeventfd(vdev);
 }
@@ -1503,6 +1430,37 @@ void vhost_ack_features(struct vhost_dev *hdev, const int *feature_bits,
         }
         bit++;
     }
+}
+
+int vhost_dev_get_config(struct vhost_dev *hdev, uint8_t *config,
+                         uint32_t config_len)
+{
+    assert(hdev->vhost_ops);
+
+    if (hdev->vhost_ops->vhost_get_config) {
+        return hdev->vhost_ops->vhost_get_config(hdev, config, config_len);
+    }
+
+    return -1;
+}
+
+int vhost_dev_set_config(struct vhost_dev *hdev, const uint8_t *data,
+                         uint32_t offset, uint32_t size, uint32_t flags)
+{
+    assert(hdev->vhost_ops);
+
+    if (hdev->vhost_ops->vhost_set_config) {
+        return hdev->vhost_ops->vhost_set_config(hdev, data, offset,
+                                                 size, flags);
+    }
+
+    return -1;
+}
+
+void vhost_dev_set_config_notifier(struct vhost_dev *hdev,
+                                   const VhostDevConfigOps *ops)
+{
+    hdev->config_ops = ops;
 }
 
 /* Host notifiers must be enabled at this point. */

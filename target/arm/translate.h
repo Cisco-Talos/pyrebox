@@ -29,6 +29,8 @@ typedef struct DisasContext {
     bool tbi1;         /* TBI1 for EL0/1, not used for EL2/3 */
     bool ns;        /* Use non-secure CPREG bank on access */
     int fp_excp_el; /* FP exception EL or 0 if enabled */
+    int sve_excp_el; /* SVE exception EL or 0 if enabled */
+    int sve_len;     /* SVE vector length in bytes */
     /* Flag indicating that exceptions from secure mode are routed to EL3. */
     bool secure_routed_to_el3;
     bool vfp_enabled; /* FP enabled via FPSCR.EN */
@@ -66,8 +68,8 @@ typedef struct DisasContext {
     bool ss_same_el;
     /* Bottom two bits of XScale c15_cpar coprocessor access control reg */
     int c15_cpar;
-    /* TCG op index of the current insn_start.  */
-    int insn_start_idx;
+    /* TCG op of the current insn_start.  */
+    TCGOp *insn_start;
 #define TMP_A64_MAX 16
     int tmp_a64_count;
     TCGv_i64 tmp_a64[TMP_A64_MAX];
@@ -108,7 +110,7 @@ static inline int default_exception_el(DisasContext *s)
             ? 3 : MAX(1, s->current_el);
 }
 
-static void disas_set_insn_syndrome(DisasContext *s, uint32_t syn)
+static inline void disas_set_insn_syndrome(DisasContext *s, uint32_t syn)
 {
     /* We don't need to save all of the syndrome so we mask and shift
      * out unneeded bits to help the sleb128 encoder do a better job.
@@ -117,9 +119,9 @@ static void disas_set_insn_syndrome(DisasContext *s, uint32_t syn)
     syn >>= ARM_INSN_START_WORD2_SHIFT;
 
     /* We check and clear insn_start_idx to catch multiple updates.  */
-    assert(s->insn_start_idx != 0);
-    tcg_set_insn_param(s->insn_start_idx, 2, syn);
-    s->insn_start_idx = 0;
+    assert(s->insn_start != NULL);
+    tcg_set_insn_start_param(s->insn_start, 2, syn);
+    s->insn_start = NULL;
 }
 
 /* is_jmp field values */

@@ -795,6 +795,9 @@ static uint64_t sm501_system_config_read(void *opaque, hwaddr addr,
     case SM501_ARBTRTN_CONTROL:
         ret = s->arbitration_control;
         break;
+    case SM501_COMMAND_LIST_STATUS:
+        ret = 0x00180002; /* FIFOs are empty, everything idle */
+        break;
     case SM501_IRQ_MASK:
         ret = s->irq_mask;
         break;
@@ -811,6 +814,9 @@ static uint64_t sm501_system_config_read(void *opaque, hwaddr addr,
         break;
     case SM501_POWER_MODE_CONTROL:
         ret = s->power_mode_control;
+        break;
+    case SM501_ENDIAN_CONTROL:
+        ret = 0; /* Only default little endian mode is supported */
         break;
 
     default:
@@ -864,6 +870,12 @@ static void sm501_system_config_write(void *opaque, hwaddr addr,
         break;
     case SM501_POWER_MODE_CONTROL:
         s->power_mode_control = value & 0x00000003;
+        break;
+    case SM501_ENDIAN_CONTROL:
+        if (value & 0x00000001) {
+            printf("sm501 system config : big endian mode not implemented.\n");
+            abort();
+        }
         break;
 
     default:
@@ -924,6 +936,9 @@ static uint64_t sm501_disp_ctrl_read(void *opaque, hwaddr addr,
     case SM501_DC_PANEL_PANNING_CONTROL:
         ret = s->dc_panel_panning_control;
         break;
+    case SM501_DC_PANEL_COLOR_KEY:
+        /* Not implemented yet */
+        break;
     case SM501_DC_PANEL_FB_ADDR:
         ret = s->dc_panel_fb_addr;
         break;
@@ -954,6 +969,19 @@ static uint64_t sm501_disp_ctrl_read(void *opaque, hwaddr addr,
         break;
     case SM501_DC_PANEL_V_SYNC:
         ret = s->dc_panel_v_sync;
+        break;
+
+    case SM501_DC_PANEL_HWC_ADDR:
+        ret = s->dc_panel_hwc_addr;
+        break;
+    case SM501_DC_PANEL_HWC_LOC:
+        ret = s->dc_panel_hwc_location;
+        break;
+    case SM501_DC_PANEL_HWC_COLOR_1_2:
+        ret = s->dc_panel_hwc_color_1_2;
+        break;
+    case SM501_DC_PANEL_HWC_COLOR_3:
+        ret = s->dc_panel_hwc_color_3;
         break;
 
     case SM501_DC_VIDEO_CONTROL:
@@ -1021,6 +1049,9 @@ static void sm501_disp_ctrl_write(void *opaque, hwaddr addr,
         break;
     case SM501_DC_PANEL_PANNING_CONTROL:
         s->dc_panel_panning_control = value & 0xFF3FFF3F;
+        break;
+    case SM501_DC_PANEL_COLOR_KEY:
+        /* Not implemented yet */
         break;
     case SM501_DC_PANEL_FB_ADDR:
         s->dc_panel_fb_addr = value & 0x8FFFFFF0;
@@ -1477,7 +1508,6 @@ static void sm501_update_display(void *opaque)
     }
 
     /* draw each line according to conditions */
-    memory_region_sync_dirty_bitmap(&s->local_mem_region);
     snap = memory_region_snapshot_and_clear_dirty(&s->local_mem_region,
               offset, width * height * src_bpp, DIRTY_MEMORY_VGA);
     for (y = 0, offset = 0; y < height; y++, offset += width * src_bpp) {

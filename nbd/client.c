@@ -66,7 +66,7 @@ static int nbd_send_option_request(QIOChannel *ioc, uint32_t opt,
                                    uint32_t len, const char *data,
                                    Error **errp)
 {
-    nbd_option req;
+    NBDOption req;
     QEMU_BUILD_BUG_ON(sizeof(req) != 16);
 
     if (len == -1) {
@@ -109,7 +109,7 @@ static void nbd_send_opt_abort(QIOChannel *ioc)
  * payload. Return 0 if successful, -1 with errp set if it is
  * impossible to continue. */
 static int nbd_receive_option_reply(QIOChannel *ioc, uint32_t opt,
-                                    nbd_opt_reply *reply, Error **errp)
+                                    NBDOptionReply *reply, Error **errp)
 {
     QEMU_BUILD_BUG_ON(sizeof(*reply) != 20);
     if (nbd_read(ioc, reply, sizeof(*reply), errp) < 0) {
@@ -146,7 +146,7 @@ static int nbd_receive_option_reply(QIOChannel *ioc, uint32_t opt,
  * can fall back to other approaches), or -1 with errp set for other
  * errors.
  */
-static int nbd_handle_reply_err(QIOChannel *ioc, nbd_opt_reply *reply,
+static int nbd_handle_reply_err(QIOChannel *ioc, NBDOptionReply *reply,
                                 Error **errp)
 {
     char *msg = NULL;
@@ -158,14 +158,14 @@ static int nbd_handle_reply_err(QIOChannel *ioc, nbd_opt_reply *reply,
 
     if (reply->length) {
         if (reply->length > NBD_MAX_BUFFER_SIZE) {
-            error_setg(errp, "server error 0x%" PRIx32
+            error_setg(errp, "server error %" PRIu32
                        " (%s) message is too long",
                        reply->type, nbd_rep_lookup(reply->type));
             goto cleanup;
         }
         msg = g_malloc(reply->length + 1);
         if (nbd_read(ioc, msg, reply->length, errp) < 0) {
-            error_prepend(errp, "failed to read option error 0x%" PRIx32
+            error_prepend(errp, "failed to read option error %" PRIu32
                           " (%s) message: ",
                           reply->type, nbd_rep_lookup(reply->type));
             goto cleanup;
@@ -180,22 +180,22 @@ static int nbd_handle_reply_err(QIOChannel *ioc, nbd_opt_reply *reply,
         goto cleanup;
 
     case NBD_REP_ERR_POLICY:
-        error_setg(errp, "Denied by server for option %" PRIx32 " (%s)",
+        error_setg(errp, "Denied by server for option %" PRIu32 " (%s)",
                    reply->option, nbd_opt_lookup(reply->option));
         break;
 
     case NBD_REP_ERR_INVALID:
-        error_setg(errp, "Invalid data length for option %" PRIx32 " (%s)",
+        error_setg(errp, "Invalid parameters for option %" PRIu32 " (%s)",
                    reply->option, nbd_opt_lookup(reply->option));
         break;
 
     case NBD_REP_ERR_PLATFORM:
-        error_setg(errp, "Server lacks support for option %" PRIx32 " (%s)",
+        error_setg(errp, "Server lacks support for option %" PRIu32 " (%s)",
                    reply->option, nbd_opt_lookup(reply->option));
         break;
 
     case NBD_REP_ERR_TLS_REQD:
-        error_setg(errp, "TLS negotiation required before option %" PRIx32
+        error_setg(errp, "TLS negotiation required before option %" PRIu32
                    " (%s)", reply->option, nbd_opt_lookup(reply->option));
         break;
 
@@ -204,17 +204,17 @@ static int nbd_handle_reply_err(QIOChannel *ioc, nbd_opt_reply *reply,
         break;
 
     case NBD_REP_ERR_SHUTDOWN:
-        error_setg(errp, "Server shutting down before option %" PRIx32 " (%s)",
+        error_setg(errp, "Server shutting down before option %" PRIu32 " (%s)",
                    reply->option, nbd_opt_lookup(reply->option));
         break;
 
     case NBD_REP_ERR_BLOCK_SIZE_REQD:
-        error_setg(errp, "Server requires INFO_BLOCK_SIZE for option %" PRIx32
+        error_setg(errp, "Server requires INFO_BLOCK_SIZE for option %" PRIu32
                    " (%s)", reply->option, nbd_opt_lookup(reply->option));
         break;
 
     default:
-        error_setg(errp, "Unknown error code when asking for option %" PRIx32
+        error_setg(errp, "Unknown error code when asking for option %" PRIu32
                    " (%s)", reply->option, nbd_opt_lookup(reply->option));
         break;
     }
@@ -239,7 +239,7 @@ static int nbd_handle_reply_err(QIOChannel *ioc, nbd_opt_reply *reply,
 static int nbd_receive_list(QIOChannel *ioc, const char *want, bool *match,
                             Error **errp)
 {
-    nbd_opt_reply reply;
+    NBDOptionReply reply;
     uint32_t len;
     uint32_t namelen;
     char name[NBD_MAX_NAME_SIZE + 1];
@@ -325,7 +325,7 @@ static int nbd_receive_list(QIOChannel *ioc, const char *want, bool *match,
 static int nbd_opt_go(QIOChannel *ioc, const char *wantname,
                       NBDExportInfo *info, Error **errp)
 {
-    nbd_opt_reply reply;
+    NBDOptionReply reply;
     uint32_t len = strlen(wantname);
     uint16_t type;
     int error;
@@ -378,8 +378,8 @@ static int nbd_opt_go(QIOChannel *ioc, const char *wantname,
             return 1;
         }
         if (reply.type != NBD_REP_INFO) {
-            error_setg(errp, "unexpected reply type %" PRIx32
-                       " (%s), expected %x",
+            error_setg(errp, "unexpected reply type %" PRIu32
+                       " (%s), expected %u",
                        reply.type, nbd_rep_lookup(reply.type), NBD_REP_INFO);
             nbd_send_opt_abort(ioc);
             return -1;
@@ -517,7 +517,7 @@ static int nbd_receive_query_exports(QIOChannel *ioc,
  */
 static int nbd_request_simple_option(QIOChannel *ioc, int opt, Error **errp)
 {
-    nbd_opt_reply reply;
+    NBDOptionReply reply;
     int error;
 
     if (nbd_send_option_request(ioc, opt, 0, NULL, errp) < 0) {
@@ -534,7 +534,7 @@ static int nbd_request_simple_option(QIOChannel *ioc, int opt, Error **errp)
 
     if (reply.type != NBD_REP_ACK) {
         error_setg(errp, "Server answered option %d (%s) with unexpected "
-                   "reply %" PRIx32 " (%s)", opt, nbd_opt_lookup(opt),
+                   "reply %" PRIu32 " (%s)", opt, nbd_opt_lookup(opt),
                    reply.type, nbd_rep_lookup(reply.type));
         nbd_send_opt_abort(ioc);
         return -1;
@@ -579,6 +579,7 @@ static QIOChannel *nbd_receive_starttls(QIOChannel *ioc,
     qio_channel_tls_handshake(tioc,
                               nbd_tls_handshake,
                               &data,
+                              NULL,
                               NULL);
 
     if (!data.complete) {
@@ -594,6 +595,127 @@ static QIOChannel *nbd_receive_starttls(QIOChannel *ioc,
     return QIO_CHANNEL(tioc);
 }
 
+/* nbd_negotiate_simple_meta_context:
+ * Set one meta context. Simple means that reply must contain zero (not
+ * negotiated) or one (negotiated) contexts. More contexts would be considered
+ * as a protocol error. It's also implied that meta-data query equals queried
+ * context name, so, if server replies with something different than @context,
+ * it is considered an error too.
+ * return 1 for successful negotiation, context_id is set
+ *        0 if operation is unsupported,
+ *        -1 with errp set for any other error
+ */
+static int nbd_negotiate_simple_meta_context(QIOChannel *ioc,
+                                             const char *export,
+                                             const char *context,
+                                             uint32_t *context_id,
+                                             Error **errp)
+{
+    int ret;
+    NBDOptionReply reply;
+    uint32_t received_id;
+    bool received;
+    uint32_t export_len = strlen(export);
+    uint32_t context_len = strlen(context);
+    uint32_t data_len = sizeof(export_len) + export_len +
+                        sizeof(uint32_t) + /* number of queries */
+                        sizeof(context_len) + context_len;
+    char *data = g_malloc(data_len);
+    char *p = data;
+
+    trace_nbd_opt_meta_request(context, export);
+    stl_be_p(p, export_len);
+    memcpy(p += sizeof(export_len), export, export_len);
+    stl_be_p(p += export_len, 1);
+    stl_be_p(p += sizeof(uint32_t), context_len);
+    memcpy(p += sizeof(context_len), context, context_len);
+
+    ret = nbd_send_option_request(ioc, NBD_OPT_SET_META_CONTEXT, data_len, data,
+                                  errp);
+    g_free(data);
+    if (ret < 0) {
+        return ret;
+    }
+
+    if (nbd_receive_option_reply(ioc, NBD_OPT_SET_META_CONTEXT, &reply,
+                                 errp) < 0)
+    {
+        return -1;
+    }
+
+    ret = nbd_handle_reply_err(ioc, &reply, errp);
+    if (ret <= 0) {
+        return ret;
+    }
+
+    if (reply.type == NBD_REP_META_CONTEXT) {
+        char *name;
+
+        if (reply.length != sizeof(received_id) + context_len) {
+            error_setg(errp, "Failed to negotiate meta context '%s', server "
+                       "answered with unexpected length %" PRIu32, context,
+                       reply.length);
+            nbd_send_opt_abort(ioc);
+            return -1;
+        }
+
+        if (nbd_read(ioc, &received_id, sizeof(received_id), errp) < 0) {
+            return -1;
+        }
+        be32_to_cpus(&received_id);
+
+        reply.length -= sizeof(received_id);
+        name = g_malloc(reply.length + 1);
+        if (nbd_read(ioc, name, reply.length, errp) < 0) {
+            g_free(name);
+            return -1;
+        }
+        name[reply.length] = '\0';
+        if (strcmp(context, name)) {
+            error_setg(errp, "Failed to negotiate meta context '%s', server "
+                       "answered with different context '%s'", context,
+                       name);
+            g_free(name);
+            nbd_send_opt_abort(ioc);
+            return -1;
+        }
+        g_free(name);
+
+        trace_nbd_opt_meta_reply(context, received_id);
+        received = true;
+
+        /* receive NBD_REP_ACK */
+        if (nbd_receive_option_reply(ioc, NBD_OPT_SET_META_CONTEXT, &reply,
+                                     errp) < 0)
+        {
+            return -1;
+        }
+
+        ret = nbd_handle_reply_err(ioc, &reply, errp);
+        if (ret <= 0) {
+            return ret;
+        }
+    }
+
+    if (reply.type != NBD_REP_ACK) {
+        error_setg(errp, "Unexpected reply type %" PRIx32 " expected %x",
+                   reply.type, NBD_REP_ACK);
+        nbd_send_opt_abort(ioc);
+        return -1;
+    }
+    if (reply.length) {
+        error_setg(errp, "Unexpected length to ACK response");
+        nbd_send_opt_abort(ioc);
+        return -1;
+    }
+
+    if (received) {
+        *context_id = received_id;
+        return 1;
+    }
+
+    return 0;
+}
 
 int nbd_receive_negotiate(QIOChannel *ioc, const char *name,
                           QCryptoTLSCreds *tlscreds, const char *hostname,
@@ -605,10 +727,12 @@ int nbd_receive_negotiate(QIOChannel *ioc, const char *name,
     int rc;
     bool zeroes = true;
     bool structured_reply = info->structured_reply;
+    bool base_allocation = info->base_allocation;
 
     trace_nbd_receive_negotiate(tlscreds, hostname ? hostname : "<null>");
 
     info->structured_reply = false;
+    info->base_allocation = false;
     rc = -EINVAL;
 
     if (outioc) {
@@ -697,6 +821,16 @@ int nbd_receive_negotiate(QIOChannel *ioc, const char *name,
                     goto fail;
                 }
                 info->structured_reply = result == 1;
+            }
+
+            if (info->structured_reply && base_allocation) {
+                result = nbd_negotiate_simple_meta_context(
+                        ioc, name, "base:allocation",
+                        &info->meta_base_allocation_id, errp);
+                if (result < 0) {
+                    goto fail;
+                }
+                info->base_allocation = result == 1;
             }
 
             /* Try NBD_OPT_GO first - if it works, we are done (it

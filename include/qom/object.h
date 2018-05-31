@@ -14,7 +14,7 @@
 #ifndef QEMU_OBJECT_H
 #define QEMU_OBJECT_H
 
-#include "qapi-types.h"
+#include "qapi/qapi-builtin-types.h"
 #include "qemu/queue.h"
 
 struct TypeImpl;
@@ -914,6 +914,17 @@ GSList *object_class_get_list(const char *implements_type,
                               bool include_abstract);
 
 /**
+ * object_class_get_list_sorted:
+ * @implements_type: The type to filter for, including its derivatives.
+ * @include_abstract: Whether to include abstract classes.
+ *
+ * Returns: A singly-linked list of the classes in alphabetical
+ * case-insensitive order.
+ */
+GSList *object_class_get_list_sorted(const char *implements_type,
+                              bool include_abstract);
+
+/**
  * object_ref:
  * @obj: the object
  *
@@ -1015,6 +1026,22 @@ typedef struct ObjectPropertyIterator {
  */
 void object_property_iter_init(ObjectPropertyIterator *iter,
                                Object *obj);
+
+/**
+ * object_class_property_iter_init:
+ * @klass: the class
+ *
+ * Initializes an iterator for traversing all properties
+ * registered against an object class and all parent classes.
+ *
+ * It is forbidden to modify the property list while iterating,
+ * whether removing or adding properties.
+ *
+ * This can be used on abstract classes as it does not create a temporary
+ * instance.
+ */
+void object_class_property_iter_init(ObjectPropertyIterator *iter,
+                                     ObjectClass *klass);
 
 /**
  * object_property_iter_next:

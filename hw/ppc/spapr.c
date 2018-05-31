@@ -74,7 +74,6 @@
 #include "hw/compat.h"
 #include "qemu/cutils.h"
 #include "hw/ppc/spapr_cpu_core.h"
-#include "qmp-commands.h"
 
 #include <libfdt.h>
 
@@ -99,6 +98,23 @@
 #define MIN_RMA_SLOF            128UL
 
 #define PHANDLE_XICP            0x00001111
+
+/* These two functions implement the VCPU id numbering: one to compute them
+ * all and one to identify thread 0 of a VCORE. Any change to the first one
+ * is likely to have an impact on the second one, so let's keep them close.
+ */
+static int spapr_vcpu_id(sPAPRMachineState *spapr, int cpu_index)
+{
+    assert(spapr->vsmt);
+    return
+        (cpu_index / smp_threads) * spapr->vsmt + cpu_index % smp_threads;
+}
+static bool spapr_is_thread0_in_vcore(sPAPRMachineState *spapr,
+                                      PowerPCCPU *cpu)
+{
+    assert(spapr->vsmt);
+    return spapr_get_vcpu_id(cpu) % spapr->vsmt == 0;
+}
 
 static ICSState *spapr_ics_create(sPAPRMachineState *spapr,
                                   const char *type_ics,
@@ -161,15 +177,15 @@ static void pre_2_10_vmstate_unregister_dummy_icp(int i)
                        (void *)(uintptr_t) i);
 }
 
-static inline int xics_max_server_number(void)
+static int xics_max_server_number(sPAPRMachineState *spapr)
 {
-    return DIV_ROUND_UP(max_cpus * kvmppc_smt_threads(), smp_threads);
+    assert(spapr->vsmt);
+    return DIV_ROUND_UP(max_cpus * spapr->vsmt, smp_threads);
 }
 
 static void xics_system_init(MachineState *machine, int nr_irqs, Error **errp)
 {
     sPAPRMachineState *spapr = SPAPR_MACHINE(machine);
-    sPAPRMachineClass *smc = SPAPR_MACHINE_GET_CLASS(machine);
 
     if (kvm_enabled()) {
         if (machine_kernel_irqchip_allowed(machine) &&
@@ -191,17 +207,6 @@ static void xics_system_init(MachineState *machine, int nr_irqs, Error **errp)
             return;
         }
     }
-
-    if (smc->pre_2_10_has_unused_icps) {
-        int i;
-
-        for (i = 0; i < xics_max_server_number(); i++) {
-            /* Dummy entries get deregistered when real ICPState objects
-             * are registered during CPU core hotplug.
-             */
-            pre_2_10_vmstate_register_dummy_icp(i);
-        }
-    }
 }
 
 static int spapr_fixup_cpu_smt_dt(void *fdt, int offset, PowerPCCPU *cpu,
@@ -210,7 +215,7 @@ static int spapr_fixup_cpu_smt_dt(void *fdt, int offset, PowerPCCPU *cpu,
     int i, ret = 0;
     uint32_t servers_prop[smt_threads];
     uint32_t gservers_prop[smt_threads * 2];
-    int index = spapr_vcpu_id(cpu);
+    int index = spapr_get_vcpu_id(cpu);
 
     if (cpu->compat_pvr) {
         ret = fdt_setprop_cell(fdt, offset, "cpu-version", cpu->compat_pvr);
@@ -239,7 +244,7 @@ static int spapr_fixup_cpu_smt_dt(void *fdt, int offset, PowerPCCPU *cpu,
 
 static int spapr_fixup_cpu_numa_dt(void *fdt, int offset, PowerPCCPU *cpu)
 {
-    int index = spapr_vcpu_id(cpu);
+    int index = spapr_get_vcpu_id(cpu);
     uint32_t associativity[] = {cpu_to_be32(0x5),
                                 cpu_to_be32(0x0),
                                 cpu_to_be32(0x0),
@@ -338,16 +343,15 @@ static int spapr_fixup_cpu_dt(void *fdt, sPAPRMachineState *spapr)
     int ret = 0, offset, cpus_offset;
     CPUState *cs;
     char cpu_model[32];
-    int smt = kvmppc_smt_threads();
     uint32_t pft_size_prop[] = {0, cpu_to_be32(spapr->htab_shift)};
 
     CPU_FOREACH(cs) {
         PowerPCCPU *cpu = POWERPC_CPU(cs);
         DeviceClass *dc = DEVICE_GET_CLASS(cs);
-        int index = spapr_vcpu_id(cpu);
-        int compat_smt = MIN(smp_threads, ppc_compat_max_threads(cpu));
+        int index = spapr_get_vcpu_id(cpu);
+        int compat_smt = MIN(smp_threads, ppc_compat_max_vthreads(cpu));
 
-        if ((index % smt) != 0) {
+        if (!spapr_is_thread0_in_vcore(spapr, cpu)) {
             continue;
         }
 
@@ -465,7 +469,8 @@ static int spapr_populate_memory(sPAPRMachineState *spapr, void *fdt)
             }
         }
         if (!mem_start) {
-            /* ppc_spapr_init() checks for rma_size <= node0_size already */
+            /* spapr_machine_init() checks for rma_size <= node0_size
+             * already */
             spapr_populate_memory_node(fdt, i, 0, spapr->rma_size);
             mem_start += spapr->rma_size;
             node_size -= spapr->rma_size;
@@ -493,7 +498,7 @@ static void spapr_populate_cpu_dt(CPUState *cs, void *fdt, int offset,
     PowerPCCPU *cpu = POWERPC_CPU(cs);
     CPUPPCState *env = &cpu->env;
     PowerPCCPUClass *pcc = POWERPC_CPU_GET_CLASS(cs);
-    int index = spapr_vcpu_id(cpu);
+    int index = spapr_get_vcpu_id(cpu);
     uint32_t segs[] = {cpu_to_be32(28), cpu_to_be32(40),
                        0xffffffff, 0xffffffff};
     uint32_t tbfreq = kvm_enabled() ? kvmppc_get_tbfreq()
@@ -503,7 +508,7 @@ static void spapr_populate_cpu_dt(CPUState *cs, void *fdt, int offset,
     size_t page_sizes_prop_size;
     uint32_t vcpus_per_socket = smp_threads * smp_cores;
     uint32_t pft_size_prop[] = {0, cpu_to_be32(spapr->htab_shift)};
-    int compat_smt = MIN(smp_threads, ppc_compat_max_threads(cpu));
+    int compat_smt = MIN(smp_threads, ppc_compat_max_vthreads(cpu));
     sPAPRDRConnector *drc;
     int drc_index;
     uint32_t radix_AP_encodings[PPC_PAGE_SIZES_MAX_SZ];
@@ -614,7 +619,6 @@ static void spapr_populate_cpus_dt_node(void *fdt, sPAPRMachineState *spapr)
     CPUState *cs;
     int cpus_offset;
     char *nodename;
-    int smt = kvmppc_smt_threads();
 
     cpus_offset = fdt_add_subnode(fdt, 0, "cpus");
     _FDT(cpus_offset);
@@ -628,11 +632,11 @@ static void spapr_populate_cpus_dt_node(void *fdt, sPAPRMachineState *spapr)
      */
     CPU_FOREACH_REVERSE(cs) {
         PowerPCCPU *cpu = POWERPC_CPU(cs);
-        int index = spapr_vcpu_id(cpu);
+        int index = spapr_get_vcpu_id(cpu);
         DeviceClass *dc = DEVICE_GET_CLASS(cs);
         int offset;
 
-        if ((index % smt) != 0) {
+        if (!spapr_is_thread0_in_vcore(spapr, cpu)) {
             continue;
         }
 
@@ -643,6 +647,26 @@ static void spapr_populate_cpus_dt_node(void *fdt, sPAPRMachineState *spapr)
         spapr_populate_cpu_dt(cs, fdt, offset, spapr);
     }
 
+}
+
+static uint32_t spapr_pc_dimm_node(MemoryDeviceInfoList *list, ram_addr_t addr)
+{
+    MemoryDeviceInfoList *info;
+
+    for (info = list; info; info = info->next) {
+        MemoryDeviceInfo *value = info->value;
+
+        if (value && value->type == MEMORY_DEVICE_INFO_KIND_DIMM) {
+            PCDIMMDeviceInfo *pcdimm_info = value->u.dimm.data;
+
+            if (pcdimm_info->addr >= addr &&
+                addr < (pcdimm_info->addr + pcdimm_info->size)) {
+                return pcdimm_info->node;
+            }
+        }
+    }
+
+    return -1;
 }
 
 /*
@@ -662,6 +686,7 @@ static int spapr_populate_drconf_memory(sPAPRMachineState *spapr, void *fdt)
                        lmb_size;
     uint32_t *int_buf, *cur_index, buf_len;
     int nr_nodes = nb_numa_nodes ? nb_numa_nodes : 1;
+    MemoryDeviceInfoList *dimms = NULL;
 
     /*
      * Don't create the node if there is no hotpluggable memory
@@ -696,6 +721,10 @@ static int spapr_populate_drconf_memory(sPAPRMachineState *spapr, void *fdt)
         goto out;
     }
 
+    if (hotplug_lmb_start) {
+        dimms = qmp_pc_dimm_device_list();
+    }
+
     /* ibm,dynamic-memory */
     int_buf[0] = cpu_to_be32(nr_lmbs);
     cur_index++;
@@ -713,7 +742,7 @@ static int spapr_populate_drconf_memory(sPAPRMachineState *spapr, void *fdt)
             dynamic_memory[1] = cpu_to_be32(addr & 0xffffffff);
             dynamic_memory[2] = cpu_to_be32(spapr_drc_index(drc));
             dynamic_memory[3] = cpu_to_be32(0); /* reserved */
-            dynamic_memory[4] = cpu_to_be32(numa_get_node(addr, NULL));
+            dynamic_memory[4] = cpu_to_be32(spapr_pc_dimm_node(dimms, addr));
             if (memory_region_present(get_system_memory(), addr)) {
                 dynamic_memory[5] = cpu_to_be32(SPAPR_LMB_FLAGS_ASSIGNED);
             } else {
@@ -736,6 +765,7 @@ static int spapr_populate_drconf_memory(sPAPRMachineState *spapr, void *fdt)
 
         cur_index += SPAPR_DR_LMB_LIST_ENTRY_SIZE;
     }
+    qapi_free_MemoryDeviceInfoList(dimms);
     ret = fdt_setprop(fdt, offset, "ibm,dynamic-memory", int_buf, buf_len);
     if (ret < 0) {
         goto out;
@@ -835,6 +865,7 @@ int spapr_h_cas_compose_response(sPAPRMachineState *spapr,
     /* Create skeleton */
     fdt_skel = g_malloc0(size);
     _FDT((fdt_create(fdt_skel, size)));
+    _FDT((fdt_finish_reservemap(fdt_skel)));
     _FDT((fdt_begin_node(fdt_skel, "")));
     _FDT((fdt_end_node(fdt_skel)));
     _FDT((fdt_finish(fdt_skel)));
@@ -920,9 +951,8 @@ static void spapr_dt_rtas(sPAPRMachineState *spapr, void *fdt)
     _FDT(fdt_setprop_cell(fdt, rtas, "rtas-event-scan-rate",
                           RTAS_EVENT_SCAN_RATE));
 
-    if (msi_nonbroken) {
-        _FDT(fdt_setprop(fdt, rtas, "ibm,change-msix-capable", NULL, 0));
-    }
+    g_assert(msi_nonbroken);
+    _FDT(fdt_setprop(fdt, rtas, "ibm,change-msix-capable", NULL, 0));
 
     /*
      * According to PAPR, rtas ibm,os-term does not guarantee a return
@@ -1023,7 +1053,14 @@ static void spapr_dt_chosen(sPAPRMachineState *spapr, void *fdt)
     }
 
     if (!spapr->has_graphics && stdout_path) {
+        /*
+         * "linux,stdout-path" and "stdout" properties are deprecated by linux
+         * kernel. New platforms should only use the "stdout-path" property. Set
+         * the new property and continue using older property to remain
+         * compatible with the existing firmware.
+         */
         _FDT(fdt_setprop_string(fdt, chosen, "linux,stdout-path", stdout_path));
+        _FDT(fdt_setprop_string(fdt, chosen, "stdout-path", stdout_path));
     }
 
     spapr_dt_ov5_platform_support(fdt, chosen);
@@ -1105,7 +1142,7 @@ static void *spapr_build_fdt(sPAPRMachineState *spapr,
     _FDT(fdt_setprop_cell(fdt, 0, "#size-cells", 2));
 
     /* /interrupt controller */
-    spapr_dt_xics(xics_max_server_number(), fdt, PHANDLE_XICP);
+    spapr_dt_xics(xics_max_server_number(spapr), fdt, PHANDLE_XICP);
 
     ret = spapr_populate_memory(spapr, fdt);
     if (ret < 0) {
@@ -1431,7 +1468,7 @@ static int spapr_reset_drcs(Object *child, void *opaque)
     return 0;
 }
 
-static void ppc_spapr_reset(void)
+static void spapr_machine_reset(void)
 {
     MachineState *machine = MACHINE(qdev_get_machine());
     sPAPRMachineState *spapr = SPAPR_MACHINE(machine);
@@ -2193,67 +2230,6 @@ static CPUArchId *spapr_find_cpu_slot(MachineState *ms, uint32_t id, int *idx)
     return &ms->possible_cpus->cpus[index];
 }
 
-static void spapr_init_cpus(sPAPRMachineState *spapr)
-{
-    MachineState *machine = MACHINE(spapr);
-    MachineClass *mc = MACHINE_GET_CLASS(machine);
-    const char *type = spapr_get_cpu_core_type(machine->cpu_type);
-    int smt = kvmppc_smt_threads();
-    const CPUArchIdList *possible_cpus;
-    int boot_cores_nr = smp_cpus / smp_threads;
-    int i;
-
-    if (!type) {
-        error_report("Unable to find sPAPR CPU Core definition");
-        exit(1);
-    }
-
-    possible_cpus = mc->possible_cpu_arch_ids(machine);
-    if (mc->has_hotpluggable_cpus) {
-        if (smp_cpus % smp_threads) {
-            error_report("smp_cpus (%u) must be multiple of threads (%u)",
-                         smp_cpus, smp_threads);
-            exit(1);
-        }
-        if (max_cpus % smp_threads) {
-            error_report("max_cpus (%u) must be multiple of threads (%u)",
-                         max_cpus, smp_threads);
-            exit(1);
-        }
-    } else {
-        if (max_cpus != smp_cpus) {
-            error_report("This machine version does not support CPU hotplug");
-            exit(1);
-        }
-        boot_cores_nr = possible_cpus->len;
-    }
-
-    for (i = 0; i < possible_cpus->len; i++) {
-        int core_id = i * smp_threads;
-
-        if (mc->has_hotpluggable_cpus) {
-            spapr_dr_connector_new(OBJECT(spapr), TYPE_SPAPR_DRC_CPU,
-                                   (core_id / smp_threads) * smt);
-        }
-
-        if (i < boot_cores_nr) {
-            Object *core  = object_new(type);
-            int nr_threads = smp_threads;
-
-            /* Handle the partially filled core for older machine types */
-            if ((i + 1) * smp_threads >= smp_cpus) {
-                nr_threads = smp_cpus - i * smp_threads;
-            }
-
-            object_property_set_int(core, nr_threads, "nr-threads",
-                                    &error_fatal);
-            object_property_set_int(core, core_id, CPU_CORE_PROP_CORE_ID,
-                                    &error_fatal);
-            object_property_set_bool(core, true, "realized", &error_fatal);
-        }
-    }
-}
-
 static void spapr_set_vsmt_mode(sPAPRMachineState *spapr, Error **errp)
 {
     Error *local_err = NULL;
@@ -2282,26 +2258,43 @@ static void spapr_set_vsmt_mode(sPAPRMachineState *spapr, Error **errp)
         }
         /* In this case, spapr->vsmt has been set by the command line */
     } else {
-        /* Choose a VSMT mode that may be higher than necessary but is
-         * likely to be compatible with hosts that don't have VSMT. */
-        spapr->vsmt = MAX(kvm_smt, smp_threads);
+        /*
+         * Default VSMT value is tricky, because we need it to be as
+         * consistent as possible (for migration), but this requires
+         * changing it for at least some existing cases.  We pick 8 as
+         * the value that we'd get with KVM on POWER8, the
+         * overwhelmingly common case in production systems.
+         */
+        spapr->vsmt = MAX(8, smp_threads);
     }
 
     /* KVM: If necessary, set the SMT mode: */
     if (kvm_enabled() && (spapr->vsmt != kvm_smt)) {
         ret = kvmppc_set_smt_threads(spapr->vsmt);
         if (ret) {
+            /* Looks like KVM isn't able to change VSMT mode */
             error_setg(&local_err,
                        "Failed to set KVM's VSMT mode to %d (errno %d)",
                        spapr->vsmt, ret);
-            if (!vsmt_user) {
-                error_append_hint(&local_err, "On PPC, a VM with %d threads/"
-                             "core on a host with %d threads/core requires "
-                             " the use of VSMT mode %d.\n",
-                             smp_threads, kvm_smt, spapr->vsmt);
+            /* We can live with that if the default one is big enough
+             * for the number of threads, and a submultiple of the one
+             * we want.  In this case we'll waste some vcpu ids, but
+             * behaviour will be correct */
+            if ((kvm_smt >= smp_threads) && ((spapr->vsmt % kvm_smt) == 0)) {
+                warn_report_err(local_err);
+                local_err = NULL;
+                goto out;
+            } else {
+                if (!vsmt_user) {
+                    error_append_hint(&local_err,
+                                      "On PPC, a VM with %d threads/core"
+                                      " on a host with %d threads/core"
+                                      " requires the use of VSMT mode %d.\n",
+                                      smp_threads, kvm_smt, spapr->vsmt);
+                }
+                kvmppc_hint_smt_possible(&local_err);
+                goto out;
             }
-            kvmppc_hint_smt_possible(&local_err);
-            goto out;
         }
     }
     /* else TCG: nothing to do currently */
@@ -2309,8 +2302,80 @@ out:
     error_propagate(errp, local_err);
 }
 
+static void spapr_init_cpus(sPAPRMachineState *spapr)
+{
+    MachineState *machine = MACHINE(spapr);
+    MachineClass *mc = MACHINE_GET_CLASS(machine);
+    sPAPRMachineClass *smc = SPAPR_MACHINE_GET_CLASS(machine);
+    const char *type = spapr_get_cpu_core_type(machine->cpu_type);
+    const CPUArchIdList *possible_cpus;
+    int boot_cores_nr = smp_cpus / smp_threads;
+    int i;
+
+    possible_cpus = mc->possible_cpu_arch_ids(machine);
+    if (mc->has_hotpluggable_cpus) {
+        if (smp_cpus % smp_threads) {
+            error_report("smp_cpus (%u) must be multiple of threads (%u)",
+                         smp_cpus, smp_threads);
+            exit(1);
+        }
+        if (max_cpus % smp_threads) {
+            error_report("max_cpus (%u) must be multiple of threads (%u)",
+                         max_cpus, smp_threads);
+            exit(1);
+        }
+    } else {
+        if (max_cpus != smp_cpus) {
+            error_report("This machine version does not support CPU hotplug");
+            exit(1);
+        }
+        boot_cores_nr = possible_cpus->len;
+    }
+
+    /* VSMT must be set in order to be able to compute VCPU ids, ie to
+     * call xics_max_server_number() or spapr_vcpu_id().
+     */
+    spapr_set_vsmt_mode(spapr, &error_fatal);
+
+    if (smc->pre_2_10_has_unused_icps) {
+        int i;
+
+        for (i = 0; i < xics_max_server_number(spapr); i++) {
+            /* Dummy entries get deregistered when real ICPState objects
+             * are registered during CPU core hotplug.
+             */
+            pre_2_10_vmstate_register_dummy_icp(i);
+        }
+    }
+
+    for (i = 0; i < possible_cpus->len; i++) {
+        int core_id = i * smp_threads;
+
+        if (mc->has_hotpluggable_cpus) {
+            spapr_dr_connector_new(OBJECT(spapr), TYPE_SPAPR_DRC_CPU,
+                                   spapr_vcpu_id(spapr, core_id));
+        }
+
+        if (i < boot_cores_nr) {
+            Object *core  = object_new(type);
+            int nr_threads = smp_threads;
+
+            /* Handle the partially filled core for older machine types */
+            if ((i + 1) * smp_threads >= smp_cpus) {
+                nr_threads = smp_cpus - i * smp_threads;
+            }
+
+            object_property_set_int(core, nr_threads, "nr-threads",
+                                    &error_fatal);
+            object_property_set_int(core, core_id, CPU_CORE_PROP_CORE_ID,
+                                    &error_fatal);
+            object_property_set_bool(core, true, "realized", &error_fatal);
+        }
+    }
+}
+
 /* pSeries LPAR / sPAPR hardware init */
-static void ppc_spapr_init(MachineState *machine)
+static void spapr_machine_init(MachineState *machine)
 {
     sPAPRMachineState *spapr = SPAPR_MACHINE(machine);
     sPAPRMachineClass *smc = SPAPR_MACHINE_GET_CLASS(machine);
@@ -2436,8 +2501,6 @@ static void ppc_spapr_init(MachineState *machine)
     }
 
     /* init CPUs */
-    spapr_set_vsmt_mode(spapr, &error_fatal);
-
     spapr_init_cpus(spapr);
 
     if (kvm_enabled()) {
@@ -2544,10 +2607,11 @@ static void ppc_spapr_init(MachineState *machine)
         NICInfo *nd = &nd_table[i];
 
         if (!nd->model) {
-            nd->model = g_strdup("ibmveth");
+            nd->model = g_strdup("spapr-vlan");
         }
 
-        if (strcmp(nd->model, "ibmveth") == 0) {
+        if (g_str_equal(nd->model, "spapr-vlan") ||
+            g_str_equal(nd->model, "ibmveth")) {
             spapr_vlan_create(spapr->vio_bus, nd);
         } else {
             pci_nic_init_nofail(&nd_table[i], phb->bus, nd->model, NULL);
@@ -2792,6 +2856,11 @@ static void spapr_set_modern_hotplug_events(Object *obj, bool value,
     spapr->use_hotplug_event_source = value;
 }
 
+static bool spapr_get_msix_emulation(Object *obj, Error **errp)
+{
+    return true;
+}
+
 static char *spapr_get_resize_hpt(Object *obj, Error **errp)
 {
     sPAPRMachineState *spapr = SPAPR_MACHINE(obj);
@@ -2838,7 +2907,7 @@ static void spapr_set_vsmt(Object *obj, Visitor *v, const char *name,
     visit_type_uint32(v, name, (uint32_t *)opaque, errp);
 }
 
-static void spapr_machine_initfn(Object *obj)
+static void spapr_instance_init(Object *obj)
 {
     sPAPRMachineState *spapr = SPAPR_MACHINE(obj);
 
@@ -2873,6 +2942,8 @@ static void spapr_machine_initfn(Object *obj)
     object_property_set_description(obj, "vsmt",
                                     "Virtual SMT: KVM behaves as if this were"
                                     " the host's SMT mode", &error_abort);
+    object_property_add_bool(obj, "vfio-no-msix-emulation",
+                             spapr_get_msix_emulation, NULL, NULL);
 }
 
 static void spapr_machine_finalizefn(Object *obj)
@@ -3199,7 +3270,7 @@ static void *spapr_populate_hotplug_cpu_dt(CPUState *cs, int *fdt_offset,
 {
     PowerPCCPU *cpu = POWERPC_CPU(cs);
     DeviceClass *dc = DEVICE_GET_CLASS(cs);
-    int id = spapr_vcpu_id(cpu);
+    int id = spapr_get_vcpu_id(cpu);
     void *fdt;
     int offset, fdt_size;
     char *nodename;
@@ -3225,12 +3296,10 @@ void spapr_core_release(DeviceState *dev)
 
     if (smc->pre_2_10_has_unused_icps) {
         sPAPRCPUCore *sc = SPAPR_CPU_CORE(OBJECT(dev));
-        sPAPRCPUCoreClass *scc = SPAPR_CPU_CORE_GET_CLASS(OBJECT(cc));
-        size_t size = object_type_get_instance_size(scc->cpu_type);
         int i;
 
         for (i = 0; i < cc->nr_threads; i++) {
-            CPUState *cs = CPU(sc->threads + i * size);
+            CPUState *cs = CPU(sc->threads[i]);
 
             pre_2_10_vmstate_register_dummy_icp(cs->cpu_index);
         }
@@ -3245,10 +3314,10 @@ static
 void spapr_core_unplug_request(HotplugHandler *hotplug_dev, DeviceState *dev,
                                Error **errp)
 {
+    sPAPRMachineState *spapr = SPAPR_MACHINE(OBJECT(hotplug_dev));
     int index;
     sPAPRDRConnector *drc;
     CPUCore *cc = CPU_CORE(dev);
-    int smt = kvmppc_smt_threads();
 
     if (!spapr_find_cpu_slot(MACHINE(hotplug_dev), cc->core_id, &index)) {
         error_setg(errp, "Unable to find CPU core with core-id: %d",
@@ -3260,7 +3329,8 @@ void spapr_core_unplug_request(HotplugHandler *hotplug_dev, DeviceState *dev,
         return;
     }
 
-    drc = spapr_drc_by_id(TYPE_SPAPR_DRC_CPU, index * smt);
+    drc = spapr_drc_by_id(TYPE_SPAPR_DRC_CPU,
+                          spapr_vcpu_id(spapr, cc->core_id));
     g_assert(drc);
 
     spapr_drc_detach(drc);
@@ -3276,10 +3346,9 @@ static void spapr_core_plug(HotplugHandler *hotplug_dev, DeviceState *dev,
     sPAPRMachineClass *smc = SPAPR_MACHINE_CLASS(mc);
     sPAPRCPUCore *core = SPAPR_CPU_CORE(OBJECT(dev));
     CPUCore *cc = CPU_CORE(dev);
-    CPUState *cs = CPU(core->threads);
+    CPUState *cs = CPU(core->threads[0]);
     sPAPRDRConnector *drc;
     Error *local_err = NULL;
-    int smt = kvmppc_smt_threads();
     CPUArchId *core_slot;
     int index;
     bool hotplugged = spapr_drc_hotplugged(dev);
@@ -3290,7 +3359,8 @@ static void spapr_core_plug(HotplugHandler *hotplug_dev, DeviceState *dev,
                    cc->core_id);
         return;
     }
-    drc = spapr_drc_by_id(TYPE_SPAPR_DRC_CPU, index * smt);
+    drc = spapr_drc_by_id(TYPE_SPAPR_DRC_CPU,
+                          spapr_vcpu_id(spapr, cc->core_id));
 
     g_assert(drc || !mc->has_hotpluggable_cpus);
 
@@ -3321,15 +3391,10 @@ static void spapr_core_plug(HotplugHandler *hotplug_dev, DeviceState *dev,
     core_slot->cpu = OBJECT(dev);
 
     if (smc->pre_2_10_has_unused_icps) {
-        sPAPRCPUCoreClass *scc = SPAPR_CPU_CORE_GET_CLASS(OBJECT(cc));
-        size_t size = object_type_get_instance_size(scc->cpu_type);
         int i;
 
         for (i = 0; i < cc->nr_threads; i++) {
-            sPAPRCPUCore *sc = SPAPR_CPU_CORE(dev);
-            void *obj = sc->threads + i * size;
-
-            cs = CPU(obj);
+            cs = CPU(core->threads[i]);
             pre_2_10_vmstate_unregister_dummy_icp(cs->cpu_index);
         }
     }
@@ -3510,6 +3575,7 @@ static int64_t spapr_get_default_cpu_node_id(const MachineState *ms, int idx)
 static const CPUArchIdList *spapr_possible_cpu_arch_ids(MachineState *machine)
 {
     int i;
+    const char *core_type;
     int spapr_max_cores = max_cpus / smp_threads;
     MachineClass *mc = MACHINE_GET_CLASS(machine);
 
@@ -3521,12 +3587,19 @@ static const CPUArchIdList *spapr_possible_cpu_arch_ids(MachineState *machine)
         return machine->possible_cpus;
     }
 
+    core_type = spapr_get_cpu_core_type(machine->cpu_type);
+    if (!core_type) {
+        error_report("Unable to find sPAPR CPU Core definition");
+        exit(1);
+    }
+
     machine->possible_cpus = g_malloc0(sizeof(CPUArchIdList) +
                              sizeof(CPUArchId) * spapr_max_cores);
     machine->possible_cpus->len = spapr_max_cores;
     for (i = 0; i < machine->possible_cpus->len; i++) {
         int core_id = i * smp_threads;
 
+        machine->possible_cpus->cpus[i].type = core_type;
         machine->possible_cpus->cpus[i].vcpus_count = smp_threads;
         machine->possible_cpus->cpus[i].arch_id = core_id;
         machine->possible_cpus->cpus[i].props.has_core_id = true;
@@ -3608,6 +3681,139 @@ static ICPState *spapr_icp_get(XICSFabric *xi, int vcpu_id)
     return cpu ? ICP(cpu->intc) : NULL;
 }
 
+#define ICS_IRQ_FREE(ics, srcno)   \
+    (!((ics)->irqs[(srcno)].flags & (XICS_FLAGS_IRQ_MASK)))
+
+static int ics_find_free_block(ICSState *ics, int num, int alignnum)
+{
+    int first, i;
+
+    for (first = 0; first < ics->nr_irqs; first += alignnum) {
+        if (num > (ics->nr_irqs - first)) {
+            return -1;
+        }
+        for (i = first; i < first + num; ++i) {
+            if (!ICS_IRQ_FREE(ics, i)) {
+                break;
+            }
+        }
+        if (i == (first + num)) {
+            return first;
+        }
+    }
+
+    return -1;
+}
+
+/*
+ * Allocate the IRQ number and set the IRQ type, LSI or MSI
+ */
+static void spapr_irq_set_lsi(sPAPRMachineState *spapr, int irq, bool lsi)
+{
+    ics_set_irq_type(spapr->ics, irq - spapr->ics->offset, lsi);
+}
+
+int spapr_irq_alloc(sPAPRMachineState *spapr, int irq_hint, bool lsi,
+                    Error **errp)
+{
+    ICSState *ics = spapr->ics;
+    int irq;
+
+    if (!ics) {
+        return -1;
+    }
+    if (irq_hint) {
+        if (!ICS_IRQ_FREE(ics, irq_hint - ics->offset)) {
+            error_setg(errp, "can't allocate IRQ %d: already in use", irq_hint);
+            return -1;
+        }
+        irq = irq_hint;
+    } else {
+        irq = ics_find_free_block(ics, 1, 1);
+        if (irq < 0) {
+            error_setg(errp, "can't allocate IRQ: no IRQ left");
+            return -1;
+        }
+        irq += ics->offset;
+    }
+
+    spapr_irq_set_lsi(spapr, irq, lsi);
+    trace_spapr_irq_alloc(irq);
+
+    return irq;
+}
+
+/*
+ * Allocate block of consecutive IRQs, and return the number of the first IRQ in
+ * the block. If align==true, aligns the first IRQ number to num.
+ */
+int spapr_irq_alloc_block(sPAPRMachineState *spapr, int num, bool lsi,
+                          bool align, Error **errp)
+{
+    ICSState *ics = spapr->ics;
+    int i, first = -1;
+
+    if (!ics) {
+        return -1;
+    }
+
+    /*
+     * MSIMesage::data is used for storing VIRQ so
+     * it has to be aligned to num to support multiple
+     * MSI vectors. MSI-X is not affected by this.
+     * The hint is used for the first IRQ, the rest should
+     * be allocated continuously.
+     */
+    if (align) {
+        assert((num == 1) || (num == 2) || (num == 4) ||
+               (num == 8) || (num == 16) || (num == 32));
+        first = ics_find_free_block(ics, num, num);
+    } else {
+        first = ics_find_free_block(ics, num, 1);
+    }
+    if (first < 0) {
+        error_setg(errp, "can't find a free %d-IRQ block", num);
+        return -1;
+    }
+
+    first += ics->offset;
+    for (i = first; i < first + num; ++i) {
+        spapr_irq_set_lsi(spapr, i, lsi);
+    }
+
+    trace_spapr_irq_alloc_block(first, num, lsi, align);
+
+    return first;
+}
+
+void spapr_irq_free(sPAPRMachineState *spapr, int irq, int num)
+{
+    ICSState *ics = spapr->ics;
+    int srcno = irq - ics->offset;
+    int i;
+
+    if (ics_valid_irq(ics, irq)) {
+        trace_spapr_irq_free(0, irq, num);
+        for (i = srcno; i < srcno + num; ++i) {
+            if (ICS_IRQ_FREE(ics, i)) {
+                trace_spapr_irq_free_warn(0, i + ics->offset);
+            }
+            memset(&ics->irqs[i], 0, sizeof(ICSIRQState));
+        }
+    }
+}
+
+qemu_irq spapr_qirq(sPAPRMachineState *spapr, int irq)
+{
+    ICSState *ics = spapr->ics;
+
+    if (ics_valid_irq(ics, irq)) {
+        return ics->qirqs[irq - ics->offset];
+    }
+
+    return NULL;
+}
+
 static void spapr_pic_print_info(InterruptStatsProvider *obj,
                                  Monitor *mon)
 {
@@ -3623,15 +3829,27 @@ static void spapr_pic_print_info(InterruptStatsProvider *obj,
     ics_pic_print_info(spapr->ics, mon);
 }
 
-int spapr_vcpu_id(PowerPCCPU *cpu)
+int spapr_get_vcpu_id(PowerPCCPU *cpu)
 {
-    CPUState *cs = CPU(cpu);
+    return cpu->vcpu_id;
+}
 
-    if (kvm_enabled()) {
-        return kvm_arch_vcpu_id(cs);
-    } else {
-        return cs->cpu_index;
+void spapr_set_vcpu_id(PowerPCCPU *cpu, int cpu_index, Error **errp)
+{
+    sPAPRMachineState *spapr = SPAPR_MACHINE(qdev_get_machine());
+    int vcpu_id;
+
+    vcpu_id = spapr_vcpu_id(spapr, cpu_index);
+
+    if (kvm_enabled() && !kvm_vcpu_id_is_valid(vcpu_id)) {
+        error_setg(errp, "Can't create CPU with id %d in KVM", vcpu_id);
+        error_append_hint(errp, "Adjust the number of cpus to %d "
+                          "or try to raise the number of threads per core\n",
+                          vcpu_id * smp_threads / spapr->vsmt);
+        return;
     }
+
+    cpu->vcpu_id = vcpu_id;
 }
 
 PowerPCCPU *spapr_find_cpu(int vcpu_id)
@@ -3641,7 +3859,7 @@ PowerPCCPU *spapr_find_cpu(int vcpu_id)
     CPU_FOREACH(cs) {
         PowerPCCPU *cpu = POWERPC_CPU(cs);
 
-        if (spapr_vcpu_id(cpu) == vcpu_id) {
+        if (spapr_get_vcpu_id(cpu) == vcpu_id) {
             return cpu;
         }
     }
@@ -3667,15 +3885,15 @@ static void spapr_machine_class_init(ObjectClass *oc, void *data)
      * functions for the specific versioned machine types can override
      * these details for backwards compatibility
      */
-    mc->init = ppc_spapr_init;
-    mc->reset = ppc_spapr_reset;
+    mc->init = spapr_machine_init;
+    mc->reset = spapr_machine_reset;
     mc->block_default_type = IF_SCSI;
     mc->max_cpus = 1024;
     mc->no_parallel = 1;
     mc->default_boot_order = "";
     mc->default_ram_size = 512 * M_BYTE;
     mc->kvm_type = spapr_kvm_type;
-    mc->has_dynamic_sysbus = true;
+    machine_class_allow_dynamic_sysbus_dev(mc, TYPE_SPAPR_PCI_HOST_BRIDGE);
     mc->pci_allow_0_address = true;
     mc->get_hotplug_handler = spapr_get_hotplug_handler;
     hc->pre_plug = spapr_machine_device_pre_plug;
@@ -3723,7 +3941,7 @@ static const TypeInfo spapr_machine_info = {
     .parent        = TYPE_MACHINE,
     .abstract      = true,
     .instance_size = sizeof(sPAPRMachineState),
-    .instance_init = spapr_machine_initfn,
+    .instance_init = spapr_instance_init,
     .instance_finalize = spapr_machine_finalizefn,
     .class_size    = sizeof(sPAPRMachineClass),
     .class_init    = spapr_machine_class_init,
@@ -3779,6 +3997,23 @@ static void spapr_machine_2_12_class_options(MachineClass *mc)
 }
 
 DEFINE_SPAPR_MACHINE(2_12, "2.12", true);
+
+static void spapr_machine_2_12_sxxm_instance_options(MachineState *machine)
+{
+    spapr_machine_2_12_instance_options(machine);
+}
+
+static void spapr_machine_2_12_sxxm_class_options(MachineClass *mc)
+{
+    sPAPRMachineClass *smc = SPAPR_MACHINE_CLASS(mc);
+
+    spapr_machine_2_12_class_options(mc);
+    smc->default_caps.caps[SPAPR_CAP_CFPC] = SPAPR_CAP_WORKAROUND;
+    smc->default_caps.caps[SPAPR_CAP_SBBC] = SPAPR_CAP_WORKAROUND;
+    smc->default_caps.caps[SPAPR_CAP_IBS] = SPAPR_CAP_FIXED_CCD;
+}
+
+DEFINE_SPAPR_MACHINE(2_12_sxxm, "2.12-sxxm", false);
 
 /*
  * pseries-2.11

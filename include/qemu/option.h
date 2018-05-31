@@ -27,15 +27,9 @@
 #define QEMU_OPTION_H
 
 #include "qemu/queue.h"
-#include "qapi/qmp/qdict.h"
 
 const char *get_opt_name(char *buf, int buf_size, const char *p, char delim);
 const char *get_opt_value(char *buf, int buf_size, const char *p);
-int get_next_param_value(char *buf, int buf_size,
-                         const char *tag, const char **pstr);
-int get_param_value(char *buf, int buf_size,
-                    const char *tag, const char *str);
-
 
 void parse_option_size(const char *name, const char *value,
                        uint64_t *ret, Error **errp);
@@ -130,6 +124,8 @@ void qemu_opts_set_defaults(QemuOptsList *list, const char *params,
                             int permit_abbrev);
 QemuOpts *qemu_opts_from_qdict(QemuOptsList *list, const QDict *qdict,
                                Error **errp);
+QDict *qemu_opts_to_qdict_filtered(QemuOpts *opts, QDict *qdict,
+                                   QemuOptsList *list, bool del);
 QDict *qemu_opts_to_qdict(QemuOpts *opts, QDict *qdict);
 void qemu_opts_absorb_qdict(QemuOpts *opts, QDict *qdict, Error **errp);
 

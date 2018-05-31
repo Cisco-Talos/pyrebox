@@ -24,6 +24,7 @@
 #include "exec/exec-all.h"
 #include "exec/cpu_ldst.h"
 #include "exec/helper-proto.h"
+#include "fpu/softfloat.h"
 
 /* #define DEBUG_HELPER */
 #ifdef DEBUG_HELPER
@@ -44,7 +45,7 @@ static void ieee_exception(CPUS390XState *env, uint32_t dxc, uintptr_t retaddr)
     /* Install the DXC code.  */
     env->fpc = (env->fpc & ~0xff00) | (dxc << 8);
     /* Trap.  */
-    runtime_exception(env, PGM_DATA, retaddr);
+    s390_program_interrupt(env, PGM_DATA, ILEN_AUTO, retaddr);
 }
 
 /* Should be called after any operation that may raise IEEE exceptions.  */

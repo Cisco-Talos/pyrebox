@@ -21,6 +21,7 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
  * THE SOFTWARE.
  */
+
 #include "qemu/osdep.h"
 #include "qemu/cutils.h"
 #include "qemu/bcd.h"
@@ -29,9 +30,10 @@
 #include "sysemu/sysemu.h"
 #include "sysemu/replay.h"
 #include "hw/timer/mc146818rtc.h"
+#include "qapi/error.h"
+#include "qapi/qapi-commands-misc.h"
+#include "qapi/qapi-events-misc.h"
 #include "qapi/visitor.h"
-#include "qapi-event.h"
-#include "qmp-commands.h"
 
 #ifdef TARGET_I386
 #include "hw/i386/apic.h"
@@ -999,7 +1001,7 @@ static void rtc_realizefn(DeviceState *dev, Error **errp)
     qdev_init_gpio_out(dev, &s->irq, 1);
 }
 
-ISADevice *rtc_init(ISABus *bus, int base_year, qemu_irq intercept_irq)
+ISADevice *mc146818_rtc_init(ISABus *bus, int base_year, qemu_irq intercept_irq)
 {
     DeviceState *dev;
     ISADevice *isadev;

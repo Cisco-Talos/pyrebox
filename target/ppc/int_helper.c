@@ -23,6 +23,7 @@
 #include "qemu/host-utils.h"
 #include "exec/helper-proto.h"
 #include "crypto/aes.h"
+#include "fpu/softfloat.h"
 
 #include "helper_regs.h"
 /*****************************************************************************/
@@ -183,7 +184,7 @@ uint64_t helper_bpermd(uint64_t rs, uint64_t rb)
     for (i = 0; i < 8; i++) {
         int index = (rs >> (i*8)) & 0xFF;
         if (index < 64) {
-            if (rb & (1ull << (63-index))) {
+            if (rb & PPC_BIT(index)) {
                 ra |= 1 << i;
             }
         }

@@ -21,10 +21,12 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
  * THE SOFTWARE.
  */
+
 #include "qemu/osdep.h"
 #include "hw/hw.h"
 #include "hw/i386/pc.h"
 #include "hw/char/serial.h"
+#include "hw/char/parallel.h"
 #include "hw/i386/apic.h"
 #include "hw/i386/topology.h"
 #include "sysemu/cpus.h"
@@ -39,7 +41,9 @@
 #include "elf.h"
 #include "multiboot.h"
 #include "hw/timer/mc146818rtc.h"
+#include "hw/dma/i8257.h"
 #include "hw/timer/i8254.h"
+#include "hw/input/i8042.h"
 #include "hw/audio/pcspk.h"
 #include "hw/pci/msi.h"
 #include "hw/sysbus.h"
@@ -49,8 +53,6 @@
 #include "sysemu/qtest.h"
 #include "kvm_i386.h"
 #include "hw/xen/xen.h"
-#include "sysemu/block-backend.h"
-#include "hw/block/block.h"
 #include "ui/qemu-spice.h"
 #include "exec/memory.h"
 #include "exec/address-spaces.h"
@@ -58,17 +60,20 @@
 #include "qemu/bitmap.h"
 #include "qemu/config-file.h"
 #include "qemu/error-report.h"
+#include "qemu/option.h"
 #include "hw/acpi/acpi.h"
 #include "hw/acpi/cpu_hotplug.h"
 #include "hw/boards.h"
 #include "hw/pci/pci_host.h"
 #include "acpi-build.h"
 #include "hw/mem/pc-dimm.h"
+#include "qapi/error.h"
+#include "qapi/qapi-visit-common.h"
 #include "qapi/visitor.h"
-#include "qapi-visit.h"
 #include "qom/cpu.h"
 #include "hw/nmi.h"
 #include "hw/i386/intel_iommu.h"
+#include "hw/net/ne2000-isa.h"
 
 /* debug PC/ISA interrupts */
 //#define DEBUG_IRQ
@@ -1147,7 +1152,8 @@ void pc_cpus_init(PCMachineState *pcms)
     pcms->apic_id_limit = x86_cpu_apic_id_from_index(max_cpus - 1) + 1;
     possible_cpus = mc->possible_cpu_arch_ids(ms);
     for (i = 0; i < smp_cpus; i++) {
-        pc_new_cpu(ms->cpu_type, possible_cpus->cpus[i].arch_id, &error_fatal);
+        pc_new_cpu(possible_cpus->cpus[i].type, possible_cpus->cpus[i].arch_id,
+                   &error_fatal);
     }
 }
 
@@ -1511,6 +1517,44 @@ static const MemoryRegionOps ioportF0_io_ops = {
     },
 };
 
+static void pc_superio_init(ISABus *isa_bus, bool create_fdctrl, bool no_vmport)
+{
+    int i;
+    DriveInfo *fd[MAX_FD];
+    qemu_irq *a20_line;
+    ISADevice *i8042, *port92, *vmmouse;
+
+    serial_hds_isa_init(isa_bus, 0, MAX_SERIAL_PORTS);
+    parallel_hds_isa_init(isa_bus, MAX_PARALLEL_PORTS);
+
+    for (i = 0; i < MAX_FD; i++) {
+        fd[i] = drive_get(IF_FLOPPY, 0, i);
+        create_fdctrl |= !!fd[i];
+    }
+    if (create_fdctrl) {
+        fdctrl_init_isa(isa_bus, fd);
+    }
+
+    i8042 = isa_create_simple(isa_bus, "i8042");
+    if (!no_vmport) {
+        vmport_init(isa_bus);
+        vmmouse = isa_try_create(isa_bus, "vmmouse");
+    } else {
+        vmmouse = NULL;
+    }
+    if (vmmouse) {
+        DeviceState *dev = DEVICE(vmmouse);
+        qdev_prop_set_ptr(dev, "ps2_mouse", i8042);
+        qdev_init_nofail(dev);
+    }
+    port92 = isa_create_simple(isa_bus, "port92");
+
+    a20_line = qemu_allocate_irqs(handle_a20_line_change, first_cpu, 2);
+    i8042_setup_a20_line(i8042, a20_line[0]);
+    port92_init(port92, a20_line[1]);
+    g_free(a20_line);
+}
+
 void pc_basic_device_init(ISABus *isa_bus, qemu_irq *gsi,
                           ISADevice **rtc_state,
                           bool create_fdctrl,
@@ -1519,13 +1563,11 @@ void pc_basic_device_init(ISABus *isa_bus, qemu_irq *gsi,
                           uint32_t hpet_irqs)
 {
     int i;
-    DriveInfo *fd[MAX_FD];
     DeviceState *hpet = NULL;
     int pit_isa_irq = 0;
     qemu_irq pit_alt_irq = NULL;
     qemu_irq rtc_irq = NULL;
-    qemu_irq *a20_line;
-    ISADevice *i8042, *port92, *vmmouse, *pit = NULL;
+    ISADevice *pit = NULL;
     MemoryRegion *ioport80_io = g_new(MemoryRegion, 1);
     MemoryRegion *ioportF0_io = g_new(MemoryRegion, 1);
 
@@ -1565,7 +1607,7 @@ void pc_basic_device_init(ISABus *isa_bus, qemu_irq *gsi,
             rtc_irq = qdev_get_gpio_in(hpet, HPET_LEGACY_RTC_INT);
         }
     }
-    *rtc_state = rtc_init(isa_bus, 2000, rtc_irq);
+    *rtc_state = mc146818_rtc_init(isa_bus, 2000, rtc_irq);
 
     qemu_register_boot_set(pc_boot_set, *rtc_state);
 
@@ -1573,7 +1615,7 @@ void pc_basic_device_init(ISABus *isa_bus, qemu_irq *gsi,
         if (kvm_pit_in_kernel()) {
             pit = kvm_pit_init(isa_bus, 0x40);
         } else {
-            pit = pit_init(isa_bus, 0x40, pit_isa_irq, pit_alt_irq);
+            pit = i8254_pit_init(isa_bus, 0x40, pit_isa_irq, pit_alt_irq);
         }
         if (hpet) {
             /* connect PIT to output control line of the HPET */
@@ -1582,70 +1624,28 @@ void pc_basic_device_init(ISABus *isa_bus, qemu_irq *gsi,
         pcspk_init(isa_bus, pit);
     }
 
-    serial_hds_isa_init(isa_bus, 0, MAX_SERIAL_PORTS);
-    parallel_hds_isa_init(isa_bus, MAX_PARALLEL_PORTS);
+    i8257_dma_init(isa_bus, 0);
 
-    a20_line = qemu_allocate_irqs(handle_a20_line_change, first_cpu, 2);
-    i8042 = isa_create_simple(isa_bus, "i8042");
-    i8042_setup_a20_line(i8042, a20_line[0]);
-    if (!no_vmport) {
-        vmport_init(isa_bus);
-        vmmouse = isa_try_create(isa_bus, "vmmouse");
-    } else {
-        vmmouse = NULL;
-    }
-    if (vmmouse) {
-        DeviceState *dev = DEVICE(vmmouse);
-        qdev_prop_set_ptr(dev, "ps2_mouse", i8042);
-        qdev_init_nofail(dev);
-    }
-    port92 = isa_create_simple(isa_bus, "port92");
-    port92_init(port92, a20_line[1]);
-    g_free(a20_line);
-
-    DMA_init(isa_bus, 0);
-
-    for(i = 0; i < MAX_FD; i++) {
-        fd[i] = drive_get(IF_FLOPPY, 0, i);
-        create_fdctrl |= !!fd[i];
-    }
-    if (create_fdctrl) {
-        fdctrl_init_isa(isa_bus, fd);
-    }
+    /* Super I/O */
+    pc_superio_init(isa_bus, create_fdctrl, no_vmport);
 }
 
-void pc_nic_init(ISABus *isa_bus, PCIBus *pci_bus)
+void pc_nic_init(PCMachineClass *pcmc, ISABus *isa_bus, PCIBus *pci_bus)
 {
     int i;
 
     rom_set_order_override(FW_CFG_ORDER_OVERRIDE_NIC);
     for (i = 0; i < nb_nics; i++) {
         NICInfo *nd = &nd_table[i];
+        const char *model = nd->model ? nd->model : pcmc->default_nic_model;
 
-        if (!pci_bus || (nd->model && strcmp(nd->model, "ne2k_isa") == 0)) {
+        if (g_str_equal(model, "ne2k_isa")) {
             pc_init_ne2k_isa(isa_bus, nd);
         } else {
-            pci_nic_init_nofail(nd, pci_bus, "e1000", NULL);
+            pci_nic_init_nofail(nd, pci_bus, model, NULL);
         }
     }
     rom_reset_order_override();
-}
-
-void pc_pci_device_init(PCIBus *pci_bus)
-{
-    int max_bus;
-    int bus;
-
-    /* Note: if=scsi is deprecated with PC machine types */
-    max_bus = drive_get_max_bus(IF_SCSI);
-    for (bus = 0; bus <= max_bus; bus++) {
-        pci_create_simple(pci_bus, -1, "lsi53c895a");
-        /*
-         * By not creating frontends here, we make
-         * scsi_legacy_handle_cmdline() create them, and warn that
-         * this usage is deprecated.
-         */
-    }
 }
 
 void ioapic_init_gsi(GSIState *gsi_state, const char *parent_name)
@@ -1694,9 +1694,14 @@ static void pc_dimm_plug(HotplugHandler *hotplug_dev,
         align = memory_region_get_alignment(mr);
     }
 
-    if (!pcms->acpi_dev) {
+    /*
+     * When -no-acpi is used with Q35 machine type, no ACPI is built,
+     * but pcms->acpi_dev is still created. Check !acpi_enabled in
+     * addition to cover this case.
+     */
+    if (!pcms->acpi_dev || !acpi_enabled) {
         error_setg(&local_err,
-                   "memory hotplug is not enabled: missing acpi device");
+                   "memory hotplug is not enabled: missing acpi device or acpi disabled");
         goto out;
     }
 
@@ -1728,9 +1733,14 @@ static void pc_dimm_unplug_request(HotplugHandler *hotplug_dev,
     Error *local_err = NULL;
     PCMachineState *pcms = PC_MACHINE(hotplug_dev);
 
-    if (!pcms->acpi_dev) {
+    /*
+     * When -no-acpi is used with Q35 machine type, no ACPI is built,
+     * but pcms->acpi_dev is still created. Check !acpi_enabled in
+     * addition to cover this case.
+     */
+    if (!pcms->acpi_dev || !acpi_enabled) {
         error_setg(&local_err,
-                   "memory hotplug is not enabled: missing acpi device");
+                   "memory hotplug is not enabled: missing acpi device or acpi disabled");
         goto out;
     }
 
@@ -2296,6 +2306,7 @@ static const CPUArchIdList *pc_possible_cpu_arch_ids(MachineState *ms)
     for (i = 0; i < ms->possible_cpus->len; i++) {
         X86CPUTopoInfo topo;
 
+        ms->possible_cpus->cpus[i].type = ms->cpu_type;
         ms->possible_cpus->cpus[i].vcpus_count = 1;
         ms->possible_cpus->cpus[i].arch_id = x86_cpu_apic_id_from_index(i);
         x86_topo_ids_from_apicid(ms->possible_cpus->cpus[i].arch_id,

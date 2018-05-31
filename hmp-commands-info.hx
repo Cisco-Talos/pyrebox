@@ -216,7 +216,7 @@ Show PCI information.
 ETEXI
 
 #if defined(TARGET_I386) || defined(TARGET_SH4) || defined(TARGET_SPARC) || \
-    defined(TARGET_PPC) || defined(TARGET_XTENSA)
+    defined(TARGET_PPC) || defined(TARGET_XTENSA) || defined(TARGET_M68K)
     {
         .name       = "tlb",
         .args_type  = "",
@@ -865,6 +865,22 @@ STEXI
 @findex info memory_size_summary
 Display the amount of initially allocated and present hotpluggable (if
 enabled) memory in bytes.
+ETEXI
+
+#if defined(TARGET_I386)
+    {
+        .name       = "sev",
+        .args_type  = "",
+        .params     = "",
+        .help       = "show SEV information",
+        .cmd        = hmp_info_sev,
+    },
+#endif
+
+STEXI
+@item info sev
+@findex info sev
+Show SEV information.
 ETEXI
 
 STEXI

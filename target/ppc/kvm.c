@@ -47,9 +47,6 @@
 #include "sysemu/hostmem.h"
 #include "qemu/cutils.h"
 #include "qemu/mmap-alloc.h"
-#if defined(TARGET_PPC64)
-#include "hw/ppc/spapr_cpu_core.h"
-#endif
 #include "elf.h"
 #include "sysemu/kvm_int.h"
 
@@ -140,7 +137,7 @@ int kvm_arch_init(MachineState *ms, KVMState *s)
     cap_spapr_tce = kvm_check_extension(s, KVM_CAP_SPAPR_TCE);
     cap_spapr_tce_64 = kvm_check_extension(s, KVM_CAP_SPAPR_TCE_64);
     cap_spapr_multitce = kvm_check_extension(s, KVM_CAP_SPAPR_MULTITCE);
-    cap_spapr_vfio = false;
+    cap_spapr_vfio = kvm_vm_check_extension(s, KVM_CAP_SPAPR_TCE_VFIO);
     cap_one_reg = kvm_check_extension(s, KVM_CAP_ONE_REG);
     cap_hior = kvm_check_extension(s, KVM_CAP_PPC_HIOR);
     cap_epr = kvm_check_extension(s, KVM_CAP_PPC_EPR);
@@ -2497,8 +2494,10 @@ static void kvmppc_get_cpu_characteristics(KVMState *s)
         cap_ppc_safe_bounds_check = 1;
     }
     /* Parse and set cap_ppc_safe_indirect_branch */
-    if (c.character & H_CPU_CHAR_BCCTRL_SERIALISED) {
-        cap_ppc_safe_indirect_branch = 2;
+    if (c.character & c.character_mask & H_CPU_CHAR_CACHE_COUNT_DIS) {
+        cap_ppc_safe_indirect_branch = SPAPR_CAP_FIXED_CCD;
+    } else if (c.character & c.character_mask & H_CPU_CHAR_BCCTRL_SERIALISED) {
+        cap_ppc_safe_indirect_branch = SPAPR_CAP_FIXED_IBS;
     }
 }
 
@@ -2515,6 +2514,11 @@ int kvmppc_get_cap_safe_bounds_check(void)
 int kvmppc_get_cap_safe_indirect_branch(void)
 {
     return cap_ppc_safe_indirect_branch;
+}
+
+bool kvmppc_has_cap_spapr_vfio(void)
+{
+    return cap_spapr_vfio;
 }
 
 PowerPCCPUClass *kvm_ppc_get_host_cpu_class(void)
@@ -2713,21 +2717,24 @@ void kvmppc_read_hptes(ppc_hash_pte64_t *hptes, hwaddr ptex, int n)
 
         hdr = (struct kvm_get_htab_header *)buf;
         while ((i < n) && ((char *)hdr < (buf + rc))) {
-            int invalid = hdr->n_invalid;
+            int invalid = hdr->n_invalid, valid = hdr->n_valid;
 
             if (hdr->index != (ptex + i)) {
                 hw_error("kvmppc_read_hptes: Unexpected HPTE index %"PRIu32
                          " != (%"HWADDR_PRIu" + %d", hdr->index, ptex, i);
             }
 
-            memcpy(hptes + i, hdr + 1, HASH_PTE_SIZE_64 * hdr->n_valid);
-            i += hdr->n_valid;
+            if (n - i < valid) {
+                valid = n - i;
+            }
+            memcpy(hptes + i, hdr + 1, HASH_PTE_SIZE_64 * valid);
+            i += valid;
 
             if ((n - i) < invalid) {
                 invalid = n - i;
             }
             memset(hptes + i, 0, invalid * HASH_PTE_SIZE_64);
-            i += hdr->n_invalid;
+            i += invalid;
 
             hdr = (struct kvm_get_htab_header *)
                 ((char *)(hdr + 1) + HASH_PTE_SIZE_64 * hdr->n_valid);

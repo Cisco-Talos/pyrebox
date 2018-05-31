@@ -14,6 +14,7 @@
 #ifndef _WIN32_WINNT
 #   define _WIN32_WINNT 0x0600
 #endif
+
 #include "qemu/osdep.h"
 #include <wtypes.h>
 #include <powrprof.h>
@@ -33,7 +34,8 @@
 
 #include "qga/guest-agent-core.h"
 #include "qga/vss-win32.h"
-#include "qga-qmp-commands.h"
+#include "qga-qapi-commands.h"
+#include "qapi/error.h"
 #include "qapi/qmp/qerror.h"
 #include "qemu/queue.h"
 #include "qemu/host-utils.h"

@@ -31,7 +31,6 @@
 #include "tcg.h"
 #if defined(CONFIG_USER_ONLY)
 #include "qemu.h"
-#include "exec/exec-all.h"
 #if defined(__FreeBSD__) || defined(__FreeBSD_kernel__)
 #include <sys/param.h>
 #if __FreeBSD_version >= 700104
@@ -257,7 +256,7 @@ static target_long decode_sleb128(uint8_t **pp)
 /* Encode the data collected about the instructions while compiling TB.
    Place the data at BLOCK, and return the number of bytes consumed.
 
-   The logical table consisits of TARGET_INSN_START_WORDS target_ulong's,
+   The logical table consists of TARGET_INSN_START_WORDS target_ulong's,
    which come from the target's insn_start data, followed by a uintptr_t
    which comes from the host pc of the end of the code implementing the insn.
 
@@ -300,9 +299,11 @@ static int encode_search(TranslationBlock *tb, uint8_t *block)
 
 /* The cpu state corresponding to 'searched_pc' is restored.
  * Called with tb_lock held.
+ * When reset_icount is true, current TB will be interrupted and
+ * icount should be recalculated.
  */
 static int cpu_restore_state_from_tb(CPUState *cpu, TranslationBlock *tb,
-                                     uintptr_t searched_pc)
+                                     uintptr_t searched_pc, bool reset_icount)
 {
     target_ulong data[TARGET_INSN_START_WORDS] = { tb->pc };
     uintptr_t host_pc = (uintptr_t)tb->tc.ptr;
@@ -334,14 +335,12 @@ static int cpu_restore_state_from_tb(CPUState *cpu, TranslationBlock *tb,
     return -1;
 
  found:
-    if (tb->cflags & CF_USE_ICOUNT) {
+    if (reset_icount && (tb->cflags & CF_USE_ICOUNT)) {
         assert(use_icount);
-        /* Reset the cycle counter to the start of the block.  */
-        cpu->icount_decr.u16.low += num_insns;
-        /* Clear the IO flag.  */
-        cpu->can_do_io = 0;
+        /* Reset the cycle counter to the start of the block
+           and shift if to the number of actually executed instructions */
+        cpu->icount_decr.u16.low += num_insns - i;
     }
-    cpu->icount_decr.u16.low -= i;
     restore_state_to_opc(env, tb, data);
 
 #ifdef CONFIG_PROFILER
@@ -352,7 +351,7 @@ static int cpu_restore_state_from_tb(CPUState *cpu, TranslationBlock *tb,
     return 0;
 }
 
-bool cpu_restore_state(CPUState *cpu, uintptr_t host_pc)
+bool cpu_restore_state(CPUState *cpu, uintptr_t host_pc, bool will_exit)
 {
     TranslationBlock *tb;
     bool r = false;
@@ -378,7 +377,7 @@ bool cpu_restore_state(CPUState *cpu, uintptr_t host_pc)
         tb_lock();
         tb = tb_find_pc(host_pc);
         if (tb) {
-            cpu_restore_state_from_tb(cpu, tb, host_pc);
+            cpu_restore_state_from_tb(cpu, tb, host_pc, will_exit);
             if (tb->cflags & CF_NOCACHE) {
                 /* one-shot translation, invalidate it immediately */
                 tb_phys_invalidate(tb, -1);
@@ -1512,7 +1511,8 @@ void tb_invalidate_phys_page_range(tb_page_addr_t start, tb_page_addr_t end,
                 restore the CPU state */
 
                 current_tb_modified = 1;
-                cpu_restore_state_from_tb(cpu, current_tb, cpu->mem_io_pc);
+                cpu_restore_state_from_tb(cpu, current_tb,
+                                          cpu->mem_io_pc, true);
                 cpu_get_tb_cpu_state(env, &current_pc, &current_cs_base,
                                      &current_flags);
             }
@@ -1635,7 +1635,7 @@ static bool tb_invalidate_phys_page(tb_page_addr_t addr, uintptr_t pc)
                    restore the CPU state */
 
             current_tb_modified = 1;
-            cpu_restore_state_from_tb(cpu, current_tb, pc);
+            cpu_restore_state_from_tb(cpu, current_tb, pc, true);
             cpu_get_tb_cpu_state(env, &current_pc, &current_cs_base,
                                  &current_flags);
         }
@@ -1701,7 +1701,7 @@ void tb_check_watchpoint(CPUState *cpu)
     tb = tb_find_pc(cpu->mem_io_pc);
     if (tb) {
         /* We can use retranslation to find the PC.  */
-        cpu_restore_state_from_tb(cpu, tb, cpu->mem_io_pc);
+        cpu_restore_state_from_tb(cpu, tb, cpu->mem_io_pc, true);
         tb_phys_invalidate(tb, -1);
     } else {
         /* The exception probably happened in a helper.  The CPU state should
@@ -1737,37 +1737,32 @@ void cpu_io_recompile(CPUState *cpu, uintptr_t retaddr)
         cpu_abort(cpu, "cpu_io_recompile: could not find TB for pc=%p",
                   (void *)retaddr);
     }
-    n = cpu->icount_decr.u16.low + tb->icount;
-    cpu_restore_state_from_tb(cpu, tb, retaddr);
-    /* Calculate how many instructions had been executed before the fault
-       occurred.  */
-    n = n - cpu->icount_decr.u16.low;
-    /* Generate a new TB ending on the I/O insn.  */
-    n++;
+    cpu_restore_state_from_tb(cpu, tb, retaddr, true);
+
     /* On MIPS and SH, delay slot instructions can only be restarted if
        they were already the first instruction in the TB.  If this is not
        the first instruction in a TB then re-execute the preceding
        branch.  */
+    n = 1;
 #if defined(TARGET_MIPS)
-    if ((env->hflags & MIPS_HFLAG_BMASK) != 0 && n > 1) {
+    if ((env->hflags & MIPS_HFLAG_BMASK) != 0
+        && env->active_tc.PC != tb->pc) {
         env->active_tc.PC -= (env->hflags & MIPS_HFLAG_B16 ? 2 : 4);
         cpu->icount_decr.u16.low++;
         env->hflags &= ~MIPS_HFLAG_BMASK;
+        n = 2;
     }
 #elif defined(TARGET_SH4)
     if ((env->flags & ((DELAY_SLOT | DELAY_SLOT_CONDITIONAL))) != 0
-            && n > 1) {
+        && env->pc != tb->pc) {
         env->pc -= 2;
         cpu->icount_decr.u16.low++;
         env->flags &= ~(DELAY_SLOT | DELAY_SLOT_CONDITIONAL);
+        n = 2;
     }
 #endif
-    /* This should never happen.  */
-    if (n > CF_COUNT_MASK) {
-        cpu_abort(cpu, "TB too big during recompile");
-    }
 
-    /* Adjust the execution state of the next TB.  */
+    /* Generate a new TB executing the I/O insn.  */
     cpu->cflags_next_tb = curr_cflags() | CF_LAST_IO | n;
 
     if (tb->cflags & CF_NOCACHE) {
@@ -2182,29 +2177,41 @@ int page_unprotect(target_ulong address, uintptr_t pc)
 
     /* if the page was really writable, then we change its
        protection back to writable */
-    if ((p->flags & PAGE_WRITE_ORG) && !(p->flags & PAGE_WRITE)) {
-        host_start = address & qemu_host_page_mask;
-        host_end = host_start + qemu_host_page_size;
-
-        prot = 0;
+    if (p->flags & PAGE_WRITE_ORG) {
         current_tb_invalidated = false;
-        for (addr = host_start ; addr < host_end ; addr += TARGET_PAGE_SIZE) {
-            p = page_find(addr >> TARGET_PAGE_BITS);
-            p->flags |= PAGE_WRITE;
-            prot |= p->flags;
-
-            /* and since the content will be modified, we must invalidate
-               the corresponding translated code. */
-            current_tb_invalidated |= tb_invalidate_phys_page(addr, pc);
-#ifdef CONFIG_USER_ONLY
-            if (DEBUG_TB_CHECK_GATE) {
-                tb_invalidate_check(addr);
+        if (p->flags & PAGE_WRITE) {
+            /* If the page is actually marked WRITE then assume this is because
+             * this thread raced with another one which got here first and
+             * set the page to PAGE_WRITE and did the TB invalidate for us.
+             */
+#ifdef TARGET_HAS_PRECISE_SMC
+            TranslationBlock *current_tb = tb_find_pc(pc);
+            if (current_tb) {
+                current_tb_invalidated = tb_cflags(current_tb) & CF_INVALID;
             }
 #endif
-        }
-        mprotect((void *)g2h(host_start), qemu_host_page_size,
-                 prot & PAGE_BITS);
+        } else {
+            host_start = address & qemu_host_page_mask;
+            host_end = host_start + qemu_host_page_size;
 
+            prot = 0;
+            for (addr = host_start; addr < host_end; addr += TARGET_PAGE_SIZE) {
+                p = page_find(addr >> TARGET_PAGE_BITS);
+                p->flags |= PAGE_WRITE;
+                prot |= p->flags;
+
+                /* and since the content will be modified, we must invalidate
+                   the corresponding translated code. */
+                current_tb_invalidated |= tb_invalidate_phys_page(addr, pc);
+#ifdef CONFIG_USER_ONLY
+                if (DEBUG_TB_CHECK_GATE) {
+                    tb_invalidate_check(addr);
+                }
+#endif
+            }
+            mprotect((void *)g2h(host_start), qemu_host_page_size,
+                     prot & PAGE_BITS);
+        }
         mmap_unlock();
         /* If current TB was invalidated return to main loop */
         return current_tb_invalidated ? 2 : 1;

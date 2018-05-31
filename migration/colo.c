@@ -12,6 +12,8 @@
 
 #include "qemu/osdep.h"
 #include "sysemu/sysemu.h"
+#include "qapi/error.h"
+#include "qapi/qapi-commands-migration.h"
 #include "qemu-file-channel.h"
 #include "migration.h"
 #include "qemu-file.h"
@@ -23,7 +25,6 @@
 #include "qemu/error-report.h"
 #include "migration/failover.h"
 #include "replication.h"
-#include "qmp-commands.h"
 
 static bool vmstate_loading;
 

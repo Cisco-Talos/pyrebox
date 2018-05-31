@@ -13,7 +13,7 @@
  */
 
 #include "qemu/osdep.h"
-#include "qemu-common.h"
+#include "qemu/option.h"
 #include "block/nbd.h"
 #include "block/blockjob.h"
 #include "block/block_int.h"
@@ -394,6 +394,9 @@ static void reopen_backing_file(BlockDriverState *bs, bool writable,
         new_secondary_flags = s->orig_secondary_flags;
     }
 
+    bdrv_subtree_drained_begin(s->hidden_disk->bs);
+    bdrv_subtree_drained_begin(s->secondary_disk->bs);
+
     if (orig_hidden_flags != new_hidden_flags) {
         reopen_queue = bdrv_reopen_queue(reopen_queue, s->hidden_disk->bs, NULL,
                                          new_hidden_flags);
@@ -409,6 +412,9 @@ static void reopen_backing_file(BlockDriverState *bs, bool writable,
                              reopen_queue, &local_err);
         error_propagate(errp, local_err);
     }
+
+    bdrv_subtree_drained_end(s->hidden_disk->bs);
+    bdrv_subtree_drained_end(s->secondary_disk->bs);
 }
 
 static void backup_job_cleanup(BlockDriverState *bs)
@@ -697,7 +703,6 @@ static void replication_stop(ReplicationState *rs, bool failover, Error **errp)
 
 BlockDriver bdrv_replication = {
     .format_name                = "replication",
-    .protocol_name              = "replication",
     .instance_size              = sizeof(BDRVReplicationState),
 
     .bdrv_open                  = replication_open,

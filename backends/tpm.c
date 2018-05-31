@@ -15,25 +15,43 @@
 #include "qemu/osdep.h"
 #include "sysemu/tpm_backend.h"
 #include "qapi/error.h"
-#include "qapi/qmp/qerror.h"
 #include "sysemu/tpm.h"
-#include "hw/tpm/tpm_int.h"
 #include "qemu/thread.h"
+#include "qemu/main-loop.h"
+#include "block/thread-pool.h"
+#include "qemu/error-report.h"
 
-static void tpm_backend_worker_thread(gpointer data, gpointer user_data)
+static void tpm_backend_request_completed(void *opaque, int ret)
 {
-    TPMBackend *s = TPM_BACKEND(user_data);
-    TPMBackendClass *k  = TPM_BACKEND_GET_CLASS(s);
+    TPMBackend *s = TPM_BACKEND(opaque);
+    TPMIfClass *tic = TPM_IF_GET_CLASS(s->tpmif);
 
-    assert(k->handle_request != NULL);
-    k->handle_request(s, (TPMBackendCmd *)data);
+    tic->request_completed(s->tpmif, ret);
+
+    /* no need for atomic, as long the BQL is taken */
+    s->cmd = NULL;
+    object_unref(OBJECT(s));
 }
 
-static void tpm_backend_thread_end(TPMBackend *s)
+static int tpm_backend_worker_thread(gpointer data)
 {
-    if (s->thread_pool) {
-        g_thread_pool_free(s->thread_pool, FALSE, TRUE);
-        s->thread_pool = NULL;
+    TPMBackend *s = TPM_BACKEND(data);
+    TPMBackendClass *k = TPM_BACKEND_GET_CLASS(s);
+    Error *err = NULL;
+
+    k->handle_request(s, s->cmd, &err);
+    if (err) {
+        error_report_err(err);
+        return -1;
+    }
+
+    return 0;
+}
+
+void tpm_backend_finish_sync(TPMBackend *s)
+{
+    while (s->cmd) {
+        aio_poll(qemu_get_aio_context(), true);
     }
 }
 
@@ -44,26 +62,30 @@ enum TpmType tpm_backend_get_type(TPMBackend *s)
     return k->type;
 }
 
-int tpm_backend_init(TPMBackend *s, TPMState *state)
+int tpm_backend_init(TPMBackend *s, TPMIf *tpmif, Error **errp)
 {
-    s->tpm_state = state;
+    if (s->tpmif) {
+        error_setg(errp, "TPM backend '%s' is already initialized", s->id);
+        return -1;
+    }
+
+    s->tpmif = tpmif;
+    object_ref(OBJECT(tpmif));
+
     s->had_startup_error = false;
 
     return 0;
 }
 
-int tpm_backend_startup_tpm(TPMBackend *s)
+int tpm_backend_startup_tpm(TPMBackend *s, size_t buffersize)
 {
     int res = 0;
     TPMBackendClass *k = TPM_BACKEND_GET_CLASS(s);
 
     /* terminate a running TPM */
-    tpm_backend_thread_end(s);
+    tpm_backend_finish_sync(s);
 
-    s->thread_pool = g_thread_pool_new(tpm_backend_worker_thread, s, 1, TRUE,
-                                       NULL);
-
-    res = k->startup_tpm ? k->startup_tpm(s) : 0;
+    res = k->startup_tpm ? k->startup_tpm(s, buffersize) : 0;
 
     s->had_startup_error = (res != 0);
 
@@ -77,7 +99,17 @@ bool tpm_backend_had_startup_error(TPMBackend *s)
 
 void tpm_backend_deliver_request(TPMBackend *s, TPMBackendCmd *cmd)
 {
-    g_thread_pool_push(s->thread_pool, cmd, NULL);
+    ThreadPool *pool = aio_get_thread_pool(qemu_get_aio_context());
+
+    if (s->cmd != NULL) {
+        error_report("There is a TPM request pending");
+        return;
+    }
+
+    s->cmd = cmd;
+    object_ref(OBJECT(s));
+    thread_pool_submit_aio(pool, tpm_backend_worker_thread, s,
+                           tpm_backend_request_completed, s);
 }
 
 void tpm_backend_reset(TPMBackend *s)
@@ -88,7 +120,7 @@ void tpm_backend_reset(TPMBackend *s)
         k->reset(s);
     }
 
-    tpm_backend_thread_end(s);
+    tpm_backend_finish_sync(s);
 
     s->had_startup_error = false;
 }
@@ -96,8 +128,6 @@ void tpm_backend_reset(TPMBackend *s)
 void tpm_backend_cancel_cmd(TPMBackend *s)
 {
     TPMBackendClass *k = TPM_BACKEND_GET_CLASS(s);
-
-    assert(k->cancel_cmd);
 
     k->cancel_cmd(s);
 }
@@ -122,87 +152,41 @@ TPMVersion tpm_backend_get_tpm_version(TPMBackend *s)
 {
     TPMBackendClass *k = TPM_BACKEND_GET_CLASS(s);
 
-    assert(k->get_tpm_version);
-
     return k->get_tpm_version(s);
+}
+
+size_t tpm_backend_get_buffer_size(TPMBackend *s)
+{
+    TPMBackendClass *k = TPM_BACKEND_GET_CLASS(s);
+
+    return k->get_buffer_size(s);
 }
 
 TPMInfo *tpm_backend_query_tpm(TPMBackend *s)
 {
     TPMInfo *info = g_new0(TPMInfo, 1);
     TPMBackendClass *k = TPM_BACKEND_GET_CLASS(s);
+    TPMIfClass *tic = TPM_IF_GET_CLASS(s->tpmif);
 
     info->id = g_strdup(s->id);
-    info->model = s->fe_model;
-    if (k->get_tpm_options) {
-        info->options = k->get_tpm_options(s);
-    }
+    info->model = tic->model;
+    info->options = k->get_tpm_options(s);
 
     return info;
-}
-
-static bool tpm_backend_prop_get_opened(Object *obj, Error **errp)
-{
-    TPMBackend *s = TPM_BACKEND(obj);
-
-    return s->opened;
-}
-
-void tpm_backend_open(TPMBackend *s, Error **errp)
-{
-    object_property_set_bool(OBJECT(s), true, "opened", errp);
-}
-
-static void tpm_backend_prop_set_opened(Object *obj, bool value, Error **errp)
-{
-    TPMBackend *s = TPM_BACKEND(obj);
-    TPMBackendClass *k = TPM_BACKEND_GET_CLASS(s);
-    Error *local_err = NULL;
-
-    if (value == s->opened) {
-        return;
-    }
-
-    if (!value && s->opened) {
-        error_setg(errp, QERR_PERMISSION_DENIED);
-        return;
-    }
-
-    if (k->opened) {
-        k->opened(s, &local_err);
-        if (local_err) {
-            error_propagate(errp, local_err);
-            return;
-        }
-    }
-
-    s->opened = true;
-}
-
-static void tpm_backend_instance_init(Object *obj)
-{
-    TPMBackend *s = TPM_BACKEND(obj);
-
-    object_property_add_bool(obj, "opened",
-                             tpm_backend_prop_get_opened,
-                             tpm_backend_prop_set_opened,
-                             NULL);
-    s->fe_model = -1;
 }
 
 static void tpm_backend_instance_finalize(Object *obj)
 {
     TPMBackend *s = TPM_BACKEND(obj);
 
+    object_unref(OBJECT(s->tpmif));
     g_free(s->id);
-    tpm_backend_thread_end(s);
 }
 
 static const TypeInfo tpm_backend_info = {
     .name = TYPE_TPM_BACKEND,
     .parent = TYPE_OBJECT,
     .instance_size = sizeof(TPMBackend),
-    .instance_init = tpm_backend_instance_init,
     .instance_finalize = tpm_backend_instance_finalize,
     .class_size = sizeof(TPMBackendClass),
     .abstract = true,

@@ -6,6 +6,7 @@
  * This work is licensed under the terms of the GNU GPL, version 2 or later.
  * See the COPYING file in the top-level directory.
  */
+#include "qemu/osdep.h"
 #include "hw/cpu/core.h"
 #include "hw/ppc/spapr_cpu_core.h"
 #include "target/ppc/cpu.h"
@@ -26,6 +27,7 @@ static void spapr_cpu_reset(void *opaque)
     PowerPCCPU *cpu = opaque;
     CPUState *cs = CPU(cpu);
     CPUPPCState *env = &cpu->env;
+    PowerPCCPUClass *pcc = POWERPC_CPU_GET_CLASS(cpu);
 
     cpu_reset(cs);
 
@@ -35,6 +37,13 @@ static void spapr_cpu_reset(void *opaque)
     cs->halted = 1;
 
     env->spr[SPR_HIOR] = 0;
+
+    /* Disable Power-saving mode Exit Cause exceptions for the CPU.
+     * This can cause issues when rebooting the guest if a secondary
+     * is awaken */
+    if (cs != first_cpu) {
+        env->spr[SPR_LPCR] &= ~pcc->lpcr_pm;
+    }
 
     /* Set compatibility mode to match the boot CPU, which was either set
      * by the machine reset code or by CAS. This should never fail.
@@ -86,13 +95,11 @@ const char *spapr_get_cpu_core_type(const char *cpu_type)
 static void spapr_cpu_core_unrealizefn(DeviceState *dev, Error **errp)
 {
     sPAPRCPUCore *sc = SPAPR_CPU_CORE(OBJECT(dev));
-    sPAPRCPUCoreClass *scc = SPAPR_CPU_CORE_GET_CLASS(OBJECT(dev));
-    size_t size = object_type_get_instance_size(scc->cpu_type);
     CPUCore *cc = CPU_CORE(dev);
     int i;
 
     for (i = 0; i < cc->nr_threads; i++) {
-        void *obj = sc->threads + i * size;
+        Object *obj = OBJECT(sc->threads[i]);
         DeviceState *dev = DEVICE(obj);
         CPUState *cs = CPU(dev);
         PowerPCCPU *cpu = POWERPC_CPU(cs);
@@ -111,7 +118,6 @@ static void spapr_cpu_core_realize_child(Object *child,
     Error *local_err = NULL;
     CPUState *cs = CPU(child);
     PowerPCCPU *cpu = POWERPC_CPU(cs);
-    Object *obj;
 
     object_property_set_bool(child, true, "realized", &local_err);
     if (local_err) {
@@ -123,21 +129,14 @@ static void spapr_cpu_core_realize_child(Object *child,
         goto error;
     }
 
-    obj = object_new(spapr->icp_type);
-    object_property_add_child(child, "icp", obj, &error_abort);
-    object_unref(obj);
-    object_property_add_const_link(obj, ICP_PROP_XICS, OBJECT(spapr),
-                                   &error_abort);
-    object_property_add_const_link(obj, ICP_PROP_CPU, child, &error_abort);
-    object_property_set_bool(obj, true, "realized", &local_err);
+    cpu->intc = icp_create(child, spapr->icp_type, XICS_FABRIC(spapr),
+                           &local_err);
     if (local_err) {
-        goto free_icp;
+        goto error;
     }
 
     return;
 
-free_icp:
-    object_unparent(obj);
 error:
     error_propagate(errp, local_err);
 }
@@ -153,9 +152,8 @@ static void spapr_cpu_core_realize(DeviceState *dev, Error **errp)
     sPAPRCPUCore *sc = SPAPR_CPU_CORE(OBJECT(dev));
     sPAPRCPUCoreClass *scc = SPAPR_CPU_CORE_GET_CLASS(OBJECT(dev));
     CPUCore *cc = CPU_CORE(OBJECT(dev));
-    size_t size;
     Error *local_err = NULL;
-    void *obj;
+    Object *obj;
     int i, j;
 
     if (!spapr) {
@@ -163,26 +161,19 @@ static void spapr_cpu_core_realize(DeviceState *dev, Error **errp)
         return;
     }
 
-    size = object_type_get_instance_size(scc->cpu_type);
-    sc->threads = g_malloc0(size * cc->nr_threads);
+    sc->threads = g_new(PowerPCCPU *, cc->nr_threads);
     for (i = 0; i < cc->nr_threads; i++) {
         char id[32];
         CPUState *cs;
         PowerPCCPU *cpu;
 
-        obj = sc->threads + i * size;
+        obj = object_new(scc->cpu_type);
 
-        object_initialize(obj, size, scc->cpu_type);
         cs = CPU(obj);
-        cpu = POWERPC_CPU(cs);
+        cpu = sc->threads[i] = POWERPC_CPU(obj);
         cs->cpu_index = cc->core_id + i;
-        cpu->vcpu_id = (cc->core_id * spapr->vsmt / smp_threads) + i;
-        if (kvm_enabled() && !kvm_vcpu_id_is_valid(cpu->vcpu_id)) {
-            error_setg(&local_err, "Can't create CPU with id %d in KVM",
-                       cpu->vcpu_id);
-            error_append_hint(&local_err, "Adjust the number of cpus to %d "
-                              "or try to raise the number of threads per core\n",
-                              cpu->vcpu_id * smp_threads / spapr->vsmt);
+        spapr_set_vcpu_id(cpu, cs->cpu_index, &local_err);
+        if (local_err) {
             goto err;
         }
 
@@ -199,7 +190,7 @@ static void spapr_cpu_core_realize(DeviceState *dev, Error **errp)
     }
 
     for (j = 0; j < cc->nr_threads; j++) {
-        obj = sc->threads + j * size;
+        obj = OBJECT(sc->threads[j]);
 
         spapr_cpu_core_realize_child(obj, spapr, &local_err);
         if (local_err) {
@@ -210,7 +201,7 @@ static void spapr_cpu_core_realize(DeviceState *dev, Error **errp)
 
 err:
     while (--i >= 0) {
-        obj = sc->threads + i * size;
+        obj = OBJECT(sc->threads[i]);
         object_unparent(obj);
     }
     g_free(sc->threads);

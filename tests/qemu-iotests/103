@@ -40,6 +40,8 @@ trap "_cleanup; exit \$status" 0 1 2 3 15
 _supported_fmt qcow2
 _supported_proto file nfs
 _supported_os Linux
+# Internal snapshots are (currently) impossible with refcount_bits=1
+_unsupported_imgopts 'refcount_bits=1[^0-9]'
 
 IMG_SIZE=64K
 
@@ -62,6 +64,14 @@ $QEMU_IO -c "open -o cache-size=1M,refcount-cache-size=2M $TEST_IMG" 2>&1 \
 # 0 should be a valid size (e.g. for enforcing the minimum), so this should not
 # work
 $QEMU_IO -c "open -o cache-size=0,l2-cache-size=0,refcount-cache-size=0 $TEST_IMG" \
+    2>&1 | _filter_testdir | _filter_imgfmt
+
+# Invalid cache entry sizes
+$QEMU_IO -c "open -o l2-cache-entry-size=256 $TEST_IMG" \
+    2>&1 | _filter_testdir | _filter_imgfmt
+$QEMU_IO -c "open -o l2-cache-entry-size=4242 $TEST_IMG" \
+    2>&1 | _filter_testdir | _filter_imgfmt
+$QEMU_IO -c "open -o l2-cache-entry-size=128k $TEST_IMG" \
     2>&1 | _filter_testdir | _filter_imgfmt
 
 echo
@@ -91,6 +101,15 @@ $QEMU_IO -c "open -o cache-size=2M,refcount-cache-size=1M $TEST_IMG" \
 $QEMU_IO -c "open -o l2-cache-size=1M,refcount-cache-size=0.25M $TEST_IMG" \
          -c 'read -P 42 0 64k' \
     | _filter_qemu_io
+
+# Valid cache entry sizes
+$QEMU_IO -c "open -o l2-cache-entry-size=512 $TEST_IMG" \
+    2>&1 | _filter_testdir | _filter_imgfmt
+$QEMU_IO -c "open -o l2-cache-entry-size=16k $TEST_IMG" \
+    2>&1 | _filter_testdir | _filter_imgfmt
+$QEMU_IO -c "open -o l2-cache-entry-size=64k $TEST_IMG" \
+    2>&1 | _filter_testdir | _filter_imgfmt
+
 
 echo
 echo '=== Testing minimal L2 cache and COW ==='

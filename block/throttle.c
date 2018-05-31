@@ -19,6 +19,7 @@
 
 #include "qemu/osdep.h"
 #include "block/throttle-groups.h"
+#include "qemu/option.h"
 #include "qemu/throttle-options.h"
 #include "qapi/error.h"
 
@@ -214,10 +215,9 @@ static void coroutine_fn throttle_co_drain_end(BlockDriverState *bs)
 
 static BlockDriver bdrv_throttle = {
     .format_name                        =   "throttle",
-    .protocol_name                      =   "throttle",
     .instance_size                      =   sizeof(ThrottleGroupMember),
 
-    .bdrv_file_open                     =   throttle_open,
+    .bdrv_open                          =   throttle_open,
     .bdrv_close                         =   throttle_close,
     .bdrv_co_flush                      =   throttle_co_flush,
 
@@ -239,7 +239,7 @@ static BlockDriver bdrv_throttle = {
     .bdrv_reopen_prepare                =   throttle_reopen_prepare,
     .bdrv_reopen_commit                 =   throttle_reopen_commit,
     .bdrv_reopen_abort                  =   throttle_reopen_abort,
-    .bdrv_co_get_block_status           =   bdrv_co_get_block_status_from_file,
+    .bdrv_co_block_status               =   bdrv_co_block_status_from_file,
 
     .bdrv_co_drain_begin                =   throttle_co_drain_begin,
     .bdrv_co_drain_end                  =   throttle_co_drain_end,

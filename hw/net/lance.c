@@ -36,11 +36,8 @@
  */
 
 #include "qemu/osdep.h"
-#include "hw/sysbus.h"
-#include "net/net.h"
 #include "qemu/timer.h"
-#include "qemu/sockets.h"
-#include "hw/sparc/sun4m.h"
+#include "hw/sparc/sparc32_dma.h"
 #include "hw/net/lance.h"
 #include "trace.h"
 #include "sysemu/sysemu.h"

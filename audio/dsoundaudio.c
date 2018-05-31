@@ -543,7 +543,7 @@ static int dsound_run_out (HWVoiceOut *hw, int live)
         }
     }
 
-    if (audio_bug (AUDIO_FUNC, len < 0 || len > bufsize)) {
+    if (audio_bug(__func__, len < 0 || len > bufsize)) {
         dolog ("len=%d bufsize=%d old_pos=%ld ppos=%ld\n",
                len, bufsize, old_pos, ppos);
         return 0;
@@ -890,7 +890,7 @@ static struct audio_pcm_ops dsound_pcm_ops = {
     .ctl_in   = dsound_ctl_in
 };
 
-struct audio_driver dsound_audio_driver = {
+static struct audio_driver dsound_audio_driver = {
     .name           = "dsound",
     .descr          = "DirectSound http://wikipedia.org/wiki/DirectSound",
     .options        = dsound_options,
@@ -903,3 +903,9 @@ struct audio_driver dsound_audio_driver = {
     .voice_size_out = sizeof (DSoundVoiceOut),
     .voice_size_in  = sizeof (DSoundVoiceIn)
 };
+
+static void register_audio_dsound(void)
+{
+    audio_driver_register(&dsound_audio_driver);
+}
+type_init(register_audio_dsound);

@@ -373,14 +373,20 @@ Is another process using the image?
 QEMU_PROG: -drive if=none,file=TEST_DIR/t.qcow2: Failed to get "write" lock
 Is another process using the image?
 
-== Closing an image should unlock it ==
+== Active commit to intermediate layer should work when base in use ==
+{"return": {}}
+
+_qemu_img_wrapper commit -b TEST_DIR/t.qcow2.b TEST_DIR/t.qcow2.c
 {"return": {}}
 Adding drive
 
 _qemu_io_wrapper TEST_DIR/t.qcow2 -c write 0 512
 can't open device TEST_DIR/t.qcow2: Failed to get "write" lock
 Is another process using the image?
-Closing drive
+Creating overlay with qemu-img when the guest is running should be allowed
+
+_qemu_img_wrapper create -f qcow2 -b TEST_DIR/t.qcow2 TEST_DIR/t.qcow2.overlay
+== Closing an image should unlock it ==
 
 _qemu_io_wrapper TEST_DIR/t.qcow2 -c write 0 512
 Adding two and closing one

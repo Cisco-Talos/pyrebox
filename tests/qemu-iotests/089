@@ -82,6 +82,26 @@ $QEMU_IO_PROG --cache $CACHEMODE \
 $QEMU_IO -c 'read -P 42 0 512' "$TEST_IMG" | _filter_qemu_io
 
 
+echo
+echo "=== Testing correct handling of 'backing':null ==="
+echo
+
+_make_test_img -b "$TEST_IMG.base" $IMG_SIZE
+
+# This should read 42
+$QEMU_IO -c 'read -P 42 0 512' "$TEST_IMG" | _filter_qemu_io
+
+# This should read 0
+$QEMU_IO -c 'read -P 0 0 512' "json:{\
+    'driver': '$IMGFMT',
+    'file': {
+        'driver': 'file',
+        'filename': '$TEST_IMG'
+    },
+    'backing': null
+}" | _filter_qemu_io
+
+
 # Taken from test 071
 echo
 echo "=== Testing blkdebug ==="
@@ -119,11 +139,11 @@ echo
 
 # Both options given directly and those given in the filename should be used
 $QEMU_IO -c "open -o driver=qcow2 json:{\"file.filename\":\"$TEST_IMG\"}" \
-         -c "info" 2>&1 | _filter_testdir | _filter_imgfmt
+         -c "info" 2>&1 | _filter_img_info
 
 # Options given directly should be prioritized over those given in the filename
 $QEMU_IO -c "open -o driver=qcow2 json:{\"driver\":\"raw\",\"file.filename\":\"$TEST_IMG\"}" \
-         -c "info" 2>&1 | _filter_testdir | _filter_imgfmt
+         -c "info" 2>&1 | _filter_img_info
 
 
 # success, all done

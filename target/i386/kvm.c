@@ -92,9 +92,11 @@ static bool has_msr_hv_stimer;
 static bool has_msr_hv_frequencies;
 static bool has_msr_xss;
 static bool has_msr_spec_ctrl;
+static bool has_msr_smi_count;
 
-static bool has_msr_architectural_pmu;
-static uint32_t num_architectural_pmu_counters;
+static uint32_t has_architectural_pmu_version;
+static uint32_t num_architectural_pmu_gp_counters;
+static uint32_t num_architectural_pmu_fixed_counters;
 
 static int has_xsave;
 static int has_xcrs;
@@ -382,6 +384,9 @@ uint32_t kvm_arch_get_supported_cpuid(KVMState *s, uint32_t function,
         if (!kvm_irqchip_in_kernel()) {
             ret &= ~(1U << KVM_FEATURE_PV_UNHALT);
         }
+    } else if (function == KVM_CPUID_FEATURES && reg == R_EDX) {
+        ret |= KVM_HINTS_DEDICATED;
+        found = 1;
     }
 
     /* fallback for older kernels */
@@ -627,11 +632,6 @@ static int hyperv_handle_properties(CPUState *cs)
     X86CPU *cpu = X86_CPU(cs);
     CPUX86State *env = &cpu->env;
 
-    if (cpu->hyperv_time &&
-            kvm_check_extension(cs->kvm_state, KVM_CAP_HYPERV_TIME) <= 0) {
-        cpu->hyperv_time = false;
-    }
-
     if (cpu->hyperv_relaxed_timing) {
         env->features[FEAT_HYPERV_EAX] |= HV_HYPERCALL_AVAILABLE;
     }
@@ -640,31 +640,64 @@ static int hyperv_handle_properties(CPUState *cs)
         env->features[FEAT_HYPERV_EAX] |= HV_APIC_ACCESS_AVAILABLE;
     }
     if (cpu->hyperv_time) {
+        if (kvm_check_extension(cs->kvm_state, KVM_CAP_HYPERV_TIME) <= 0) {
+            fprintf(stderr, "Hyper-V clocksources "
+                    "(requested by 'hv-time' cpu flag) "
+                    "are not supported by kernel\n");
+            return -ENOSYS;
+        }
         env->features[FEAT_HYPERV_EAX] |= HV_HYPERCALL_AVAILABLE;
         env->features[FEAT_HYPERV_EAX] |= HV_TIME_REF_COUNT_AVAILABLE;
         env->features[FEAT_HYPERV_EAX] |= HV_REFERENCE_TSC_AVAILABLE;
-
-        if (has_msr_hv_frequencies && tsc_is_stable_and_known(env)) {
-            env->features[FEAT_HYPERV_EAX] |= HV_ACCESS_FREQUENCY_MSRS;
-            env->features[FEAT_HYPERV_EDX] |= HV_FREQUENCY_MSRS_AVAILABLE;
-        }
     }
-    if (cpu->hyperv_crash && has_msr_hv_crash) {
+    if (cpu->hyperv_frequencies) {
+        if (!has_msr_hv_frequencies) {
+            fprintf(stderr, "Hyper-V frequency MSRs "
+                    "(requested by 'hv-frequencies' cpu flag) "
+                    "are not supported by kernel\n");
+            return -ENOSYS;
+        }
+        env->features[FEAT_HYPERV_EAX] |= HV_ACCESS_FREQUENCY_MSRS;
+        env->features[FEAT_HYPERV_EDX] |= HV_FREQUENCY_MSRS_AVAILABLE;
+    }
+    if (cpu->hyperv_crash) {
+        if (!has_msr_hv_crash) {
+            fprintf(stderr, "Hyper-V crash MSRs "
+                    "(requested by 'hv-crash' cpu flag) "
+                    "are not supported by kernel\n");
+            return -ENOSYS;
+        }
         env->features[FEAT_HYPERV_EDX] |= HV_GUEST_CRASH_MSR_AVAILABLE;
     }
     env->features[FEAT_HYPERV_EDX] |= HV_CPU_DYNAMIC_PARTITIONING_AVAILABLE;
-    if (cpu->hyperv_reset && has_msr_hv_reset) {
+    if (cpu->hyperv_reset) {
+        if (!has_msr_hv_reset) {
+            fprintf(stderr, "Hyper-V reset MSR "
+                    "(requested by 'hv-reset' cpu flag) "
+                    "is not supported by kernel\n");
+            return -ENOSYS;
+        }
         env->features[FEAT_HYPERV_EAX] |= HV_RESET_AVAILABLE;
     }
-    if (cpu->hyperv_vpindex && has_msr_hv_vpindex) {
+    if (cpu->hyperv_vpindex) {
+        if (!has_msr_hv_vpindex) {
+            fprintf(stderr, "Hyper-V VP_INDEX MSR "
+                    "(requested by 'hv-vpindex' cpu flag) "
+                    "is not supported by kernel\n");
+            return -ENOSYS;
+        }
         env->features[FEAT_HYPERV_EAX] |= HV_VP_INDEX_AVAILABLE;
     }
-    if (cpu->hyperv_runtime && has_msr_hv_runtime) {
+    if (cpu->hyperv_runtime) {
+        if (!has_msr_hv_runtime) {
+            fprintf(stderr, "Hyper-V VP_RUNTIME MSR "
+                    "(requested by 'hv-runtime' cpu flag) "
+                    "is not supported by kernel\n");
+            return -ENOSYS;
+        }
         env->features[FEAT_HYPERV_EAX] |= HV_VP_RUNTIME_AVAILABLE;
     }
     if (cpu->hyperv_synic) {
-        int sint;
-
         if (!has_msr_hv_synic ||
             kvm_vcpu_enable_cap(cs, KVM_CAP_HYPERV_SYNIC, 0)) {
             fprintf(stderr, "Hyper-V SynIC is not supported by kernel\n");
@@ -672,10 +705,6 @@ static int hyperv_handle_properties(CPUState *cs)
         }
 
         env->features[FEAT_HYPERV_EAX] |= HV_SYNIC_AVAILABLE;
-        env->msr_hv_synic_version = HV_SYNIC_VERSION;
-        for (sint = 0; sint < ARRAY_SIZE(env->msr_hv_synic_sint); sint++) {
-            env->msr_hv_synic_sint[sint] = HV_SINT_MASKED;
-        }
     }
     if (cpu->hyperv_stimer) {
         if (!has_msr_hv_stimer) {
@@ -806,6 +835,7 @@ int kvm_arch_init_vcpu(CPUState *cs)
         c = &cpuid_data.entries[cpuid_i++];
         c->function = KVM_CPUID_FEATURES | kvm_base;
         c->eax = env->features[FEAT_KVM];
+        c->edx = env->features[FEAT_KVM_HINTS];
     }
 
     cpu_x86_cpuid(env, 0, 0, &limit, &unused, &unused, &unused);
@@ -870,6 +900,29 @@ int kvm_arch_init_vcpu(CPUState *cs)
                 c = &cpuid_data.entries[cpuid_i++];
             }
             break;
+        case 0x14: {
+            uint32_t times;
+
+            c->function = i;
+            c->index = 0;
+            c->flags = KVM_CPUID_FLAG_SIGNIFCANT_INDEX;
+            cpu_x86_cpuid(env, i, 0, &c->eax, &c->ebx, &c->ecx, &c->edx);
+            times = c->eax;
+
+            for (j = 1; j <= times; ++j) {
+                if (cpuid_i == KVM_MAX_CPUID_ENTRIES) {
+                    fprintf(stderr, "cpuid_data is full, no space for "
+                                "cpuid(eax:0x14,ecx:0x%x)\n", j);
+                    abort();
+                }
+                c = &cpuid_data.entries[cpuid_i++];
+                c->function = i;
+                c->index = j;
+                c->flags = KVM_CPUID_FLAG_SIGNIFCANT_INDEX;
+                cpu_x86_cpuid(env, i, j, &c->eax, &c->ebx, &c->ecx, &c->edx);
+            }
+            break;
+        }
         default:
             c->function = i;
             c->flags = 0;
@@ -879,19 +932,28 @@ int kvm_arch_init_vcpu(CPUState *cs)
     }
 
     if (limit >= 0x0a) {
-        uint32_t ver;
+        uint32_t eax, edx;
 
-        cpu_x86_cpuid(env, 0x0a, 0, &ver, &unused, &unused, &unused);
-        if ((ver & 0xff) > 0) {
-            has_msr_architectural_pmu = true;
-            num_architectural_pmu_counters = (ver & 0xff00) >> 8;
+        cpu_x86_cpuid(env, 0x0a, 0, &eax, &unused, &unused, &edx);
+
+        has_architectural_pmu_version = eax & 0xff;
+        if (has_architectural_pmu_version > 0) {
+            num_architectural_pmu_gp_counters = (eax & 0xff00) >> 8;
 
             /* Shouldn't be more than 32, since that's the number of bits
              * available in EBX to tell us _which_ counters are available.
              * Play it safe.
              */
-            if (num_architectural_pmu_counters > MAX_GP_COUNTERS) {
-                num_architectural_pmu_counters = MAX_GP_COUNTERS;
+            if (num_architectural_pmu_gp_counters > MAX_GP_COUNTERS) {
+                num_architectural_pmu_gp_counters = MAX_GP_COUNTERS;
+            }
+
+            if (has_architectural_pmu_version > 1) {
+                num_architectural_pmu_fixed_counters = edx & 0x1f;
+
+                if (num_architectural_pmu_fixed_counters > MAX_FIXED_COUNTERS) {
+                    num_architectural_pmu_fixed_counters = MAX_FIXED_COUNTERS;
+                }
             }
         }
     }
@@ -1045,14 +1107,19 @@ void kvm_arch_reset_vcpu(X86CPU *cpu)
 {
     CPUX86State *env = &cpu->env;
 
-    env->exception_injected = -1;
-    env->interrupt_injected = -1;
     env->xcr0 = 1;
     if (kvm_irqchip_in_kernel()) {
         env->mp_state = cpu_is_bsp(cpu) ? KVM_MP_STATE_RUNNABLE :
                                           KVM_MP_STATE_UNINITIALIZED;
     } else {
         env->mp_state = KVM_MP_STATE_RUNNABLE;
+    }
+
+    if (cpu->hyperv_synic) {
+        int i;
+        for (i = 0; i < ARRAY_SIZE(env->msr_hv_synic_sint); i++) {
+            env->msr_hv_synic_sint[i] = HV_SINT_MASKED;
+        }
     }
 }
 
@@ -1115,6 +1182,9 @@ static int kvm_get_supported_msrs(KVMState *s)
                 case MSR_IA32_SMBASE:
                     has_msr_smbase = true;
                     break;
+                case MSR_SMI_COUNT:
+                    has_msr_smi_count = true;
+                    break;
                 case MSR_IA32_MISC_ENABLE:
                     has_msr_misc_enable = true;
                     break;
@@ -1123,7 +1193,7 @@ static int kvm_get_supported_msrs(KVMState *s)
                     break;
                 case MSR_IA32_XSS:
                     has_msr_xss = true;
-                    break;;
+                    break;
                 case HV_X64_MSR_CRASH_CTL:
                     has_msr_hv_crash = true;
                     break;
@@ -1624,6 +1694,9 @@ static int kvm_put_msrs(X86CPU *cpu, int level)
     if (has_msr_smbase) {
         kvm_msr_entry_add(cpu, MSR_IA32_SMBASE, env->smbase);
     }
+    if (has_msr_smi_count) {
+        kvm_msr_entry_add(cpu, MSR_SMI_COUNT, env->msr_smi_count);
+    }
     if (has_msr_bndcfgs) {
         kvm_msr_entry_add(cpu, MSR_IA32_BNDCFGS, env->msr_bndcfgs);
     }
@@ -1659,45 +1732,56 @@ static int kvm_put_msrs(X86CPU *cpu, int level)
         if (env->features[FEAT_KVM] & (1 << KVM_FEATURE_STEAL_TIME)) {
             kvm_msr_entry_add(cpu, MSR_KVM_STEAL_TIME, env->steal_time_msr);
         }
-        if (has_msr_architectural_pmu) {
-            /* Stop the counter.  */
-            kvm_msr_entry_add(cpu, MSR_CORE_PERF_FIXED_CTR_CTRL, 0);
-            kvm_msr_entry_add(cpu, MSR_CORE_PERF_GLOBAL_CTRL, 0);
+        if (has_architectural_pmu_version > 0) {
+            if (has_architectural_pmu_version > 1) {
+                /* Stop the counter.  */
+                kvm_msr_entry_add(cpu, MSR_CORE_PERF_FIXED_CTR_CTRL, 0);
+                kvm_msr_entry_add(cpu, MSR_CORE_PERF_GLOBAL_CTRL, 0);
+            }
 
             /* Set the counter values.  */
-            for (i = 0; i < MAX_FIXED_COUNTERS; i++) {
+            for (i = 0; i < num_architectural_pmu_fixed_counters; i++) {
                 kvm_msr_entry_add(cpu, MSR_CORE_PERF_FIXED_CTR0 + i,
                                   env->msr_fixed_counters[i]);
             }
-            for (i = 0; i < num_architectural_pmu_counters; i++) {
+            for (i = 0; i < num_architectural_pmu_gp_counters; i++) {
                 kvm_msr_entry_add(cpu, MSR_P6_PERFCTR0 + i,
                                   env->msr_gp_counters[i]);
                 kvm_msr_entry_add(cpu, MSR_P6_EVNTSEL0 + i,
                                   env->msr_gp_evtsel[i]);
             }
-            kvm_msr_entry_add(cpu, MSR_CORE_PERF_GLOBAL_STATUS,
-                              env->msr_global_status);
-            kvm_msr_entry_add(cpu, MSR_CORE_PERF_GLOBAL_OVF_CTRL,
-                              env->msr_global_ovf_ctrl);
+            if (has_architectural_pmu_version > 1) {
+                kvm_msr_entry_add(cpu, MSR_CORE_PERF_GLOBAL_STATUS,
+                                  env->msr_global_status);
+                kvm_msr_entry_add(cpu, MSR_CORE_PERF_GLOBAL_OVF_CTRL,
+                                  env->msr_global_ovf_ctrl);
 
-            /* Now start the PMU.  */
-            kvm_msr_entry_add(cpu, MSR_CORE_PERF_FIXED_CTR_CTRL,
-                              env->msr_fixed_ctr_ctrl);
-            kvm_msr_entry_add(cpu, MSR_CORE_PERF_GLOBAL_CTRL,
-                              env->msr_global_ctrl);
+                /* Now start the PMU.  */
+                kvm_msr_entry_add(cpu, MSR_CORE_PERF_FIXED_CTR_CTRL,
+                                  env->msr_fixed_ctr_ctrl);
+                kvm_msr_entry_add(cpu, MSR_CORE_PERF_GLOBAL_CTRL,
+                                  env->msr_global_ctrl);
+            }
         }
-        if (has_msr_hv_hypercall) {
-            kvm_msr_entry_add(cpu, HV_X64_MSR_GUEST_OS_ID,
-                              env->msr_hv_guest_os_id);
-            kvm_msr_entry_add(cpu, HV_X64_MSR_HYPERCALL,
-                              env->msr_hv_hypercall);
+        /*
+         * Hyper-V partition-wide MSRs: to avoid clearing them on cpu hot-add,
+         * only sync them to KVM on the first cpu
+         */
+        if (current_cpu == first_cpu) {
+            if (has_msr_hv_hypercall) {
+                kvm_msr_entry_add(cpu, HV_X64_MSR_GUEST_OS_ID,
+                                  env->msr_hv_guest_os_id);
+                kvm_msr_entry_add(cpu, HV_X64_MSR_HYPERCALL,
+                                  env->msr_hv_hypercall);
+            }
+            if (cpu->hyperv_time) {
+                kvm_msr_entry_add(cpu, HV_X64_MSR_REFERENCE_TSC,
+                                  env->msr_hv_tsc);
+            }
         }
         if (cpu->hyperv_vapic) {
             kvm_msr_entry_add(cpu, HV_X64_MSR_APIC_ASSIST_PAGE,
                               env->msr_hv_vapic);
-        }
-        if (cpu->hyperv_time) {
-            kvm_msr_entry_add(cpu, HV_X64_MSR_REFERENCE_TSC, env->msr_hv_tsc);
         }
         if (has_msr_hv_crash) {
             int j;
@@ -1714,10 +1798,10 @@ static int kvm_put_msrs(X86CPU *cpu, int level)
         if (cpu->hyperv_synic) {
             int j;
 
+            kvm_msr_entry_add(cpu, HV_X64_MSR_SVERSION, HV_SYNIC_VERSION);
+
             kvm_msr_entry_add(cpu, HV_X64_MSR_SCONTROL,
                               env->msr_hv_synic_control);
-            kvm_msr_entry_add(cpu, HV_X64_MSR_SVERSION,
-                              env->msr_hv_synic_version);
             kvm_msr_entry_add(cpu, HV_X64_MSR_SIEFP,
                               env->msr_hv_synic_evt_page);
             kvm_msr_entry_add(cpu, HV_X64_MSR_SIMP,
@@ -1766,6 +1850,25 @@ static int kvm_put_msrs(X86CPU *cpu, int level)
                 kvm_msr_entry_add(cpu, MSR_MTRRphysBase(i),
                                   env->mtrr_var[i].base);
                 kvm_msr_entry_add(cpu, MSR_MTRRphysMask(i), mask);
+            }
+        }
+        if (env->features[FEAT_7_0_EBX] & CPUID_7_0_EBX_INTEL_PT) {
+            int addr_num = kvm_arch_get_supported_cpuid(kvm_state,
+                                                    0x14, 1, R_EAX) & 0x7;
+
+            kvm_msr_entry_add(cpu, MSR_IA32_RTIT_CTL,
+                            env->msr_rtit_ctrl);
+            kvm_msr_entry_add(cpu, MSR_IA32_RTIT_STATUS,
+                            env->msr_rtit_status);
+            kvm_msr_entry_add(cpu, MSR_IA32_RTIT_OUTPUT_BASE,
+                            env->msr_rtit_output_base);
+            kvm_msr_entry_add(cpu, MSR_IA32_RTIT_OUTPUT_MASK,
+                            env->msr_rtit_output_mask);
+            kvm_msr_entry_add(cpu, MSR_IA32_RTIT_CR3_MATCH,
+                            env->msr_rtit_cr3_match);
+            for (i = 0; i < addr_num; i++) {
+                kvm_msr_entry_add(cpu, MSR_IA32_RTIT_ADDR0_A + i,
+                            env->msr_rtit_addrs[i]);
             }
         }
 
@@ -1879,7 +1982,6 @@ static int kvm_get_sregs(X86CPU *cpu)
 {
     CPUX86State *env = &cpu->env;
     struct kvm_sregs sregs;
-    uint32_t hflags;
     int bit, i, ret;
 
     ret = kvm_vcpu_ioctl(CPU(cpu), KVM_GET_SREGS, &sregs);
@@ -1921,44 +2023,7 @@ static int kvm_get_sregs(X86CPU *cpu)
     env->efer = sregs.efer;
 
     /* changes to apic base and cr8/tpr are read back via kvm_arch_post_run */
-
-#define HFLAG_COPY_MASK \
-    ~( HF_CPL_MASK | HF_PE_MASK | HF_MP_MASK | HF_EM_MASK | \
-       HF_TS_MASK | HF_TF_MASK | HF_VM_MASK | HF_IOPL_MASK | \
-       HF_OSFXSR_MASK | HF_LMA_MASK | HF_CS32_MASK | \
-       HF_SS32_MASK | HF_CS64_MASK | HF_ADDSEG_MASK)
-
-    hflags = env->hflags & HFLAG_COPY_MASK;
-    hflags |= (env->segs[R_SS].flags >> DESC_DPL_SHIFT) & HF_CPL_MASK;
-    hflags |= (env->cr[0] & CR0_PE_MASK) << (HF_PE_SHIFT - CR0_PE_SHIFT);
-    hflags |= (env->cr[0] << (HF_MP_SHIFT - CR0_MP_SHIFT)) &
-                (HF_MP_MASK | HF_EM_MASK | HF_TS_MASK);
-    hflags |= (env->eflags & (HF_TF_MASK | HF_VM_MASK | HF_IOPL_MASK));
-
-    if (env->cr[4] & CR4_OSFXSR_MASK) {
-        hflags |= HF_OSFXSR_MASK;
-    }
-
-    if (env->efer & MSR_EFER_LMA) {
-        hflags |= HF_LMA_MASK;
-    }
-
-    if ((hflags & HF_LMA_MASK) && (env->segs[R_CS].flags & DESC_L_MASK)) {
-        hflags |= HF_CS32_MASK | HF_SS32_MASK | HF_CS64_MASK;
-    } else {
-        hflags |= (env->segs[R_CS].flags & DESC_B_MASK) >>
-                    (DESC_B_SHIFT - HF_CS32_SHIFT);
-        hflags |= (env->segs[R_SS].flags & DESC_B_MASK) >>
-                    (DESC_B_SHIFT - HF_SS32_SHIFT);
-        if (!(env->cr[0] & CR0_PE_MASK) || (env->eflags & VM_MASK) ||
-            !(hflags & HF_CS32_MASK)) {
-            hflags |= HF_ADDSEG_MASK;
-        } else {
-            hflags |= ((env->segs[R_DS].base | env->segs[R_ES].base |
-                        env->segs[R_SS].base) != 0) << HF_ADDSEG_SHIFT;
-        }
-    }
-    env->hflags = hflags;
+    x86_update_hflags(env);
 
     return 0;
 }
@@ -1996,6 +2061,9 @@ static int kvm_get_msrs(X86CPU *cpu)
     }
     if (has_msr_smbase) {
         kvm_msr_entry_add(cpu, MSR_IA32_SMBASE, 0);
+    }
+    if (has_msr_smi_count) {
+        kvm_msr_entry_add(cpu, MSR_SMI_COUNT, 0);
     }
     if (has_msr_feature_control) {
         kvm_msr_entry_add(cpu, MSR_IA32_FEATURE_CONTROL, 0);
@@ -2035,15 +2103,17 @@ static int kvm_get_msrs(X86CPU *cpu)
     if (env->features[FEAT_KVM] & (1 << KVM_FEATURE_STEAL_TIME)) {
         kvm_msr_entry_add(cpu, MSR_KVM_STEAL_TIME, 0);
     }
-    if (has_msr_architectural_pmu) {
-        kvm_msr_entry_add(cpu, MSR_CORE_PERF_FIXED_CTR_CTRL, 0);
-        kvm_msr_entry_add(cpu, MSR_CORE_PERF_GLOBAL_CTRL, 0);
-        kvm_msr_entry_add(cpu, MSR_CORE_PERF_GLOBAL_STATUS, 0);
-        kvm_msr_entry_add(cpu, MSR_CORE_PERF_GLOBAL_OVF_CTRL, 0);
-        for (i = 0; i < MAX_FIXED_COUNTERS; i++) {
+    if (has_architectural_pmu_version > 0) {
+        if (has_architectural_pmu_version > 1) {
+            kvm_msr_entry_add(cpu, MSR_CORE_PERF_FIXED_CTR_CTRL, 0);
+            kvm_msr_entry_add(cpu, MSR_CORE_PERF_GLOBAL_CTRL, 0);
+            kvm_msr_entry_add(cpu, MSR_CORE_PERF_GLOBAL_STATUS, 0);
+            kvm_msr_entry_add(cpu, MSR_CORE_PERF_GLOBAL_OVF_CTRL, 0);
+        }
+        for (i = 0; i < num_architectural_pmu_fixed_counters; i++) {
             kvm_msr_entry_add(cpu, MSR_CORE_PERF_FIXED_CTR0 + i, 0);
         }
-        for (i = 0; i < num_architectural_pmu_counters; i++) {
+        for (i = 0; i < num_architectural_pmu_gp_counters; i++) {
             kvm_msr_entry_add(cpu, MSR_P6_PERFCTR0 + i, 0);
             kvm_msr_entry_add(cpu, MSR_P6_EVNTSEL0 + i, 0);
         }
@@ -2084,7 +2154,6 @@ static int kvm_get_msrs(X86CPU *cpu)
         uint32_t msr;
 
         kvm_msr_entry_add(cpu, HV_X64_MSR_SCONTROL, 0);
-        kvm_msr_entry_add(cpu, HV_X64_MSR_SVERSION, 0);
         kvm_msr_entry_add(cpu, HV_X64_MSR_SIEFP, 0);
         kvm_msr_entry_add(cpu, HV_X64_MSR_SIMP, 0);
         for (msr = HV_X64_MSR_SINT0; msr <= HV_X64_MSR_SINT15; msr++) {
@@ -2115,6 +2184,20 @@ static int kvm_get_msrs(X86CPU *cpu)
         for (i = 0; i < MSR_MTRRcap_VCNT; i++) {
             kvm_msr_entry_add(cpu, MSR_MTRRphysBase(i), 0);
             kvm_msr_entry_add(cpu, MSR_MTRRphysMask(i), 0);
+        }
+    }
+
+    if (env->features[FEAT_7_0_EBX] & CPUID_7_0_EBX_INTEL_PT) {
+        int addr_num =
+            kvm_arch_get_supported_cpuid(kvm_state, 0x14, 1, R_EAX) & 0x7;
+
+        kvm_msr_entry_add(cpu, MSR_IA32_RTIT_CTL, 0);
+        kvm_msr_entry_add(cpu, MSR_IA32_RTIT_STATUS, 0);
+        kvm_msr_entry_add(cpu, MSR_IA32_RTIT_OUTPUT_BASE, 0);
+        kvm_msr_entry_add(cpu, MSR_IA32_RTIT_OUTPUT_MASK, 0);
+        kvm_msr_entry_add(cpu, MSR_IA32_RTIT_CR3_MATCH, 0);
+        for (i = 0; i < addr_num; i++) {
+            kvm_msr_entry_add(cpu, MSR_IA32_RTIT_ADDR0_A + i, 0);
         }
     }
 
@@ -2222,6 +2305,9 @@ static int kvm_get_msrs(X86CPU *cpu)
         case MSR_IA32_SMBASE:
             env->smbase = msrs[i].data;
             break;
+        case MSR_SMI_COUNT:
+            env->msr_smi_count = msrs[i].data;
+            break;
         case MSR_IA32_FEATURE_CONTROL:
             env->msr_ia32_feature_control = msrs[i].data;
             break;
@@ -2287,9 +2373,6 @@ static int kvm_get_msrs(X86CPU *cpu)
             break;
         case HV_X64_MSR_SCONTROL:
             env->msr_hv_synic_control = msrs[i].data;
-            break;
-        case HV_X64_MSR_SVERSION:
-            env->msr_hv_synic_version = msrs[i].data;
             break;
         case HV_X64_MSR_SIEFP:
             env->msr_hv_synic_evt_page = msrs[i].data;
@@ -2360,6 +2443,24 @@ static int kvm_get_msrs(X86CPU *cpu)
             break;
         case MSR_IA32_SPEC_CTRL:
             env->spec_ctrl = msrs[i].data;
+            break;
+        case MSR_IA32_RTIT_CTL:
+            env->msr_rtit_ctrl = msrs[i].data;
+            break;
+        case MSR_IA32_RTIT_STATUS:
+            env->msr_rtit_status = msrs[i].data;
+            break;
+        case MSR_IA32_RTIT_OUTPUT_BASE:
+            env->msr_rtit_output_base = msrs[i].data;
+            break;
+        case MSR_IA32_RTIT_OUTPUT_MASK:
+            env->msr_rtit_output_mask = msrs[i].data;
+            break;
+        case MSR_IA32_RTIT_CR3_MATCH:
+            env->msr_rtit_cr3_match = msrs[i].data;
+            break;
+        case MSR_IA32_RTIT_ADDR0_A ... MSR_IA32_RTIT_ADDR3_B:
+            env->msr_rtit_addrs[index - MSR_IA32_RTIT_ADDR0_A] = msrs[i].data;
             break;
         }
     }
@@ -3504,6 +3605,7 @@ int kvm_arch_release_virq_post(int virq)
         if (entry->virq == virq) {
             trace_kvm_x86_remove_msi_route(virq);
             QLIST_REMOVE(entry, list);
+            g_free(entry);
             break;
         }
     }

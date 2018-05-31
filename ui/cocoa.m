@@ -31,7 +31,8 @@
 #include "ui/console.h"
 #include "ui/input.h"
 #include "sysemu/sysemu.h"
-#include "qmp-commands.h"
+#include "qapi/error.h"
+#include "qapi/qapi-commands.h"
 #include "sysemu/blockdev.h"
 #include "qemu-version.h"
 #include <Carbon/Carbon.h>
@@ -786,11 +787,24 @@ QemuCocoaView *cocoaView;
             mouse_event = true;
             break;
         case NSEventTypeScrollWheel:
-            if (isMouseGrabbed) {
-                buttons |= ([event deltaY] < 0) ?
-                    MOUSE_EVENT_WHEELUP : MOUSE_EVENT_WHEELDN;
-            }
-            mouse_event = true;
+            /*
+             * Send wheel events to the guest regardless of window focus.
+             * This is in-line with standard Mac OS X UI behaviour.
+             */
+
+            /* Determine if this is a scroll up or scroll down event */
+            buttons = ([event scrollingDeltaY] > 0) ?
+                INPUT_BUTTON_WHEEL_UP : INPUT_BUTTON_WHEEL_DOWN;
+            qemu_input_queue_btn(dcl->con, buttons, true);
+            qemu_input_event_sync();
+            qemu_input_queue_btn(dcl->con, buttons, false);
+            qemu_input_event_sync();
+
+            /*
+             * Since deltaY also reports scroll wheel events we prevent mouse
+             * movement code from executing.
+             */
+            mouse_event = false;
             break;
         default:
             [NSApp sendEvent:event];
@@ -809,9 +823,7 @@ QemuCocoaView *cocoaView;
             static uint32_t bmap[INPUT_BUTTON__MAX] = {
                 [INPUT_BUTTON_LEFT]       = MOUSE_EVENT_LBUTTON,
                 [INPUT_BUTTON_MIDDLE]     = MOUSE_EVENT_MBUTTON,
-                [INPUT_BUTTON_RIGHT]      = MOUSE_EVENT_RBUTTON,
-                [INPUT_BUTTON_WHEEL_UP]   = MOUSE_EVENT_WHEELUP,
-                [INPUT_BUTTON_WHEEL_DOWN] = MOUSE_EVENT_WHEELDN,
+                [INPUT_BUTTON_RIGHT]      = MOUSE_EVENT_RBUTTON
             };
             qemu_input_update_buttons(dcl->con, bmap, last_buttons, buttons);
             last_buttons = buttons;
@@ -1318,7 +1330,7 @@ QemuCocoaView *cocoaView;
     /* Create the version string*/
     NSString *version_string;
     version_string = [[NSString alloc] initWithFormat:
-    @"QEMU emulator version %s%s", QEMU_VERSION, QEMU_PKGVERSION];
+    @"QEMU emulator version %s", QEMU_FULL_VERSION];
     [version_label setStringValue: version_string];
     [superView addSubview: version_label];
 
@@ -1671,12 +1683,12 @@ static void addRemovableDevicesMenuItems(void)
     qapi_free_BlockInfoList(pointerToFree);
 }
 
-void cocoa_display_init(DisplayState *ds, int full_screen)
+static void cocoa_display_init(DisplayState *ds, DisplayOptions *opts)
 {
     COCOA_DEBUG("qemu_cocoa: cocoa_display_init\n");
 
     /* if fullscreen mode is to be used */
-    if (full_screen == true) {
+    if (opts->has_full_screen && opts->full_screen) {
         [NSApp activateIgnoringOtherApps: YES];
         [(QemuCocoaAppController *)[[NSApplication sharedApplication] delegate] toggleFullScreen: nil];
     }
@@ -1701,3 +1713,15 @@ void cocoa_display_init(DisplayState *ds, int full_screen)
      */
     addRemovableDevicesMenuItems();
 }
+
+static QemuDisplay qemu_display_cocoa = {
+    .type       = DISPLAY_TYPE_COCOA,
+    .init       = cocoa_display_init,
+};
+
+static void register_cocoa(void)
+{
+    qemu_display_register(&qemu_display_cocoa);
+}
+
+type_init(register_cocoa);

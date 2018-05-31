@@ -30,6 +30,7 @@
 #include "exec/address-spaces.h"
 #include "hw/hw.h"
 #include "hw/ppc/openpic.h"
+#include "hw/ppc/openpic_kvm.h"
 #include "hw/pci/msi.h"
 #include "hw/sysbus.h"
 #include "sysemu/kvm.h"
@@ -123,10 +124,6 @@ static void kvm_openpic_region_add(MemoryListener *listener,
     struct kvm_device_attr attr;
     uint64_t reg_base;
     int ret;
-
-    if (section->fv != address_space_to_flatview(&address_space_memory)) {
-        abort();
-    }
 
     /* Ignore events on regions that are not us */
     if (section->mr != &opp->mem) {

@@ -28,7 +28,6 @@
 #include "qemu-common.h"
 #include "exec/cpu-defs.h"
 #include "cpu-qom.h"
-#include "fpu/softfloat.h"
 
 #define OS_BYTE     0
 #define OS_WORD     1
@@ -45,6 +44,8 @@
 #define EXCP_ADDRESS        3   /* Address error.  */
 #define EXCP_ILLEGAL        4   /* Illegal instruction.  */
 #define EXCP_DIV0           5   /* Divide by zero */
+#define EXCP_CHK            6   /* CHK, CHK2 Instructions */
+#define EXCP_TRAPCC         7   /* FTRAPcc, TRAPcc, TRAPV Instructions */
 #define EXCP_PRIVILEGE      8   /* Privilege violation.  */
 #define EXCP_TRACE          9
 #define EXCP_LINEA          10  /* Unimplemented line-A (MAC) opcode.  */
@@ -53,6 +54,9 @@
 #define EXCP_DEBEGBP        13  /* Breakpoint debug interrupt.  */
 #define EXCP_FORMAT         14  /* RTE format error.  */
 #define EXCP_UNINITIALIZED  15
+#define EXCP_SPURIOUS       24  /* Spurious interrupt */
+#define EXCP_INT_LEVEL_1    25  /* Level 1 Interrupt autovector */
+#define EXCP_INT_LEVEL_7    31  /* Level 7 Interrupt autovector */
 #define EXCP_TRAP0          32   /* User trap #0.  */
 #define EXCP_TRAP15         47   /* User trap #15.  */
 #define EXCP_FP_BSUN        48 /* Branch Set on Unordered */
@@ -63,10 +67,21 @@
 #define EXCP_FP_OVFL        53 /* Overflow */
 #define EXCP_FP_SNAN        54 /* Signaling Not-A-Number */
 #define EXCP_FP_UNIMP       55 /* Unimplemented Data type */
+#define EXCP_MMU_CONF       56  /* MMU Configuration Error */
+#define EXCP_MMU_ILLEGAL    57  /* MMU Illegal Operation Error */
+#define EXCP_MMU_ACCESS     58  /* MMU Access Level Violation Error */
 #define EXCP_UNSUPPORTED    61
 
 #define EXCP_RTE            0x100
 #define EXCP_HALT_INSN      0x101
+
+#define M68K_DTTR0   0
+#define M68K_DTTR1   1
+#define M68K_ITTR0   2
+#define M68K_ITTR1   3
+
+#define M68K_MAX_TTR 2
+#define TTR(type, index) ttr[((type & ACCESS_CODE) == ACCESS_CODE) * 2 + index]
 
 #define NB_MMU_MODES 2
 #define TARGET_INSN_START_EXTRA_WORDS 1
@@ -81,7 +96,7 @@ typedef struct CPUM68KState {
 
     /* SSP and USP.  The current_sp is stored in aregs[7], the other here.  */
     int current_sp;
-    uint32_t sp[2];
+    uint32_t sp[3];
 
     /* Condition flags.  */
     uint32_t cc_op;
@@ -108,6 +123,14 @@ typedef struct CPUM68KState {
     /* MMU status.  */
     struct {
         uint32_t ar;
+        uint32_t ssw;
+        /* 68040 */
+        uint16_t tcr;
+        uint32_t urp;
+        uint32_t srp;
+        bool fault;
+        uint32_t ttr[4];
+        uint32_t mmusr;
     } mmu;
 
     /* Control registers.  */
@@ -115,6 +138,8 @@ typedef struct CPUM68KState {
     uint32_t mbar;
     uint32_t rambar0;
     uint32_t cacr;
+    uint32_t sfc;
+    uint32_t dfc;
 
     int pending_vector;
     int pending_level;
@@ -170,6 +195,7 @@ int cpu_m68k_signal_handler(int host_signum, void *pinfo,
                            void *puc);
 uint32_t cpu_m68k_get_ccr(CPUM68KState *env);
 void cpu_m68k_set_ccr(CPUM68KState *env, uint32_t);
+void cpu_m68k_set_sr(CPUM68KState *env, uint32_t);
 void cpu_m68k_set_fpcr(CPUM68KState *env, uint32_t val);
 
 
@@ -182,7 +208,7 @@ void cpu_m68k_set_fpcr(CPUM68KState *env, uint32_t val);
  */
 typedef enum {
     /* Translator only -- use env->cc_op.  */
-    CC_OP_DYNAMIC = -1,
+    CC_OP_DYNAMIC,
 
     /* Each flag bit computed into cc_[xcnvz].  */
     CC_OP_FLAGS,
@@ -210,10 +236,177 @@ typedef enum {
 #define SR_I  0x0700
 #define SR_M  0x1000
 #define SR_S  0x2000
-#define SR_T  0x8000
+#define SR_T_SHIFT 14
+#define SR_T  0xc000
 
 #define M68K_SSP    0
 #define M68K_USP    1
+#define M68K_ISP    2
+
+/* bits for 68040 special status word */
+#define M68K_CP_040  0x8000
+#define M68K_CU_040  0x4000
+#define M68K_CT_040  0x2000
+#define M68K_CM_040  0x1000
+#define M68K_MA_040  0x0800
+#define M68K_ATC_040 0x0400
+#define M68K_LK_040  0x0200
+#define M68K_RW_040  0x0100
+#define M68K_SIZ_040 0x0060
+#define M68K_TT_040  0x0018
+#define M68K_TM_040  0x0007
+
+#define M68K_TM_040_DATA  0x0001
+#define M68K_TM_040_CODE  0x0002
+#define M68K_TM_040_SUPER 0x0004
+
+/* bits for 68040 write back status word */
+#define M68K_WBV_040   0x80
+#define M68K_WBSIZ_040 0x60
+#define M68K_WBBYT_040 0x20
+#define M68K_WBWRD_040 0x40
+#define M68K_WBLNG_040 0x00
+#define M68K_WBTT_040  0x18
+#define M68K_WBTM_040  0x07
+
+/* bus access size codes */
+#define M68K_BA_SIZE_MASK    0x60
+#define M68K_BA_SIZE_BYTE    0x20
+#define M68K_BA_SIZE_WORD    0x40
+#define M68K_BA_SIZE_LONG    0x00
+#define M68K_BA_SIZE_LINE    0x60
+
+/* bus access transfer type codes */
+#define M68K_BA_TT_MOVE16    0x08
+
+/* bits for 68040 MMU status register (mmusr) */
+#define M68K_MMU_B_040   0x0800
+#define M68K_MMU_G_040   0x0400
+#define M68K_MMU_U1_040  0x0200
+#define M68K_MMU_U0_040  0x0100
+#define M68K_MMU_S_040   0x0080
+#define M68K_MMU_CM_040  0x0060
+#define M68K_MMU_M_040   0x0010
+#define M68K_MMU_WP_040  0x0004
+#define M68K_MMU_T_040   0x0002
+#define M68K_MMU_R_040   0x0001
+
+#define M68K_MMU_SR_MASK_040 (M68K_MMU_G_040 | M68K_MMU_U1_040 | \
+                              M68K_MMU_U0_040 | M68K_MMU_S_040 | \
+                              M68K_MMU_CM_040 | M68K_MMU_M_040 | \
+                              M68K_MMU_WP_040)
+
+/* bits for 68040 MMU Translation Control Register */
+#define M68K_TCR_ENABLED 0x8000
+#define M68K_TCR_PAGE_8K 0x4000
+
+/* bits for 68040 MMU Table Descriptor / Page Descriptor / TTR */
+#define M68K_DESC_WRITEPROT 0x00000004
+#define M68K_DESC_USED      0x00000008
+#define M68K_DESC_MODIFIED  0x00000010
+#define M68K_DESC_CACHEMODE 0x00000060
+#define M68K_DESC_CM_WRTHRU 0x00000000
+#define M68K_DESC_CM_COPYBK 0x00000020
+#define M68K_DESC_CM_SERIAL 0x00000040
+#define M68K_DESC_CM_NCACHE 0x00000060
+#define M68K_DESC_SUPERONLY 0x00000080
+#define M68K_DESC_USERATTR  0x00000300
+#define M68K_DESC_USERATTR_SHIFT     8
+#define M68K_DESC_GLOBAL    0x00000400
+#define M68K_DESC_URESERVED 0x00000800
+
+#define M68K_ROOT_POINTER_ENTRIES   128
+#define M68K_4K_PAGE_MASK           (~0xff)
+#define M68K_POINTER_BASE(entry)    (entry & ~0x1ff)
+#define M68K_ROOT_INDEX(addr)       ((address >> 23) & 0x1fc)
+#define M68K_POINTER_INDEX(addr)    ((address >> 16) & 0x1fc)
+#define M68K_4K_PAGE_BASE(entry)    (next & M68K_4K_PAGE_MASK)
+#define M68K_4K_PAGE_INDEX(addr)    ((address >> 10) & 0xfc)
+#define M68K_8K_PAGE_MASK           (~0x7f)
+#define M68K_8K_PAGE_BASE(entry)    (next & M68K_8K_PAGE_MASK)
+#define M68K_8K_PAGE_INDEX(addr)    ((address >> 11) & 0x7c)
+#define M68K_UDT_VALID(entry)       (entry & 2)
+#define M68K_PDT_VALID(entry)       (entry & 3)
+#define M68K_PDT_INDIRECT(entry)    ((entry & 3) == 2)
+#define M68K_INDIRECT_POINTER(addr) (addr & ~3)
+#define M68K_TTS_POINTER_SHIFT      18
+#define M68K_TTS_ROOT_SHIFT         25
+
+/* bits for 68040 MMU Transparent Translation Registers */
+#define M68K_TTR_ADDR_BASE 0xff000000
+#define M68K_TTR_ADDR_MASK 0x00ff0000
+#define M68K_TTR_ADDR_MASK_SHIFT    8
+#define M68K_TTR_ENABLED   0x00008000
+#define M68K_TTR_SFIELD    0x00006000
+#define M68K_TTR_SFIELD_USER   0x0000
+#define M68K_TTR_SFIELD_SUPER  0x2000
+
+/* m68k Control Registers */
+
+/* ColdFire */
+/* Memory Management Control Registers */
+#define M68K_CR_ASID     0x003
+#define M68K_CR_ACR0     0x004
+#define M68K_CR_ACR1     0x005
+#define M68K_CR_ACR2     0x006
+#define M68K_CR_ACR3     0x007
+#define M68K_CR_MMUBAR   0x008
+
+/* Processor Miscellaneous Registers */
+#define M68K_CR_PC       0x80F
+
+/* Local Memory and Module Control Registers */
+#define M68K_CR_ROMBAR0  0xC00
+#define M68K_CR_ROMBAR1  0xC01
+#define M68K_CR_RAMBAR0  0xC04
+#define M68K_CR_RAMBAR1  0xC05
+#define M68K_CR_MPCR     0xC0C
+#define M68K_CR_EDRAMBAR 0xC0D
+#define M68K_CR_SECMBAR  0xC0E
+#define M68K_CR_MBAR     0xC0F
+
+/* Local Memory Address Permutation Control Registers */
+#define M68K_CR_PCR1U0   0xD02
+#define M68K_CR_PCR1L0   0xD03
+#define M68K_CR_PCR2U0   0xD04
+#define M68K_CR_PCR2L0   0xD05
+#define M68K_CR_PCR3U0   0xD06
+#define M68K_CR_PCR3L0   0xD07
+#define M68K_CR_PCR1U1   0xD0A
+#define M68K_CR_PCR1L1   0xD0B
+#define M68K_CR_PCR2U1   0xD0C
+#define M68K_CR_PCR2L1   0xD0D
+#define M68K_CR_PCR3U1   0xD0E
+#define M68K_CR_PCR3L1   0xD0F
+
+/* MC680x0 */
+/* MC680[1234]0/CPU32 */
+#define M68K_CR_SFC      0x000
+#define M68K_CR_DFC      0x001
+#define M68K_CR_USP      0x800
+#define M68K_CR_VBR      0x801 /* + Coldfire */
+
+/* MC680[234]0 */
+#define M68K_CR_CACR     0x002 /* + Coldfire */
+#define M68K_CR_CAAR     0x802 /* MC68020 and MC68030 only */
+#define M68K_CR_MSP      0x803
+#define M68K_CR_ISP      0x804
+
+/* MC68040/MC68LC040 */
+#define M68K_CR_TC       0x003
+#define M68K_CR_ITT0     0x004
+#define M68K_CR_ITT1     0x005
+#define M68K_CR_DTT0     0x006
+#define M68K_CR_DTT1     0x007
+#define M68K_CR_MMUSR    0x805
+#define M68K_CR_URP      0x806
+#define M68K_CR_SRP      0x807
+
+/* MC68EC040 */
+#define M68K_CR_IACR0    0x004
+#define M68K_CR_IACR1    0x005
+#define M68K_CR_DACR0    0x006
+#define M68K_CR_DACR1    0x007
 
 #define M68K_FPIAR_SHIFT  0
 #define M68K_FPIAR        (1 << M68K_FPIAR_SHIFT)
@@ -234,6 +427,7 @@ typedef enum {
 /* Quotient */
 
 #define FPSR_QT_MASK  0x00ff0000
+#define FPSR_QT_SHIFT 16
 
 /* Floating-Point Control Register */
 /* Rounding mode */
@@ -296,6 +490,9 @@ enum m68k_features {
     M68K_FEATURE_CAS,
     M68K_FEATURE_BKPT,
     M68K_FEATURE_RTD,
+    M68K_FEATURE_CHK2,
+    M68K_FEATURE_M68040, /* instructions specific to MC68040 */
+    M68K_FEATURE_MOVEP,
 };
 
 static inline int m68k_feature(CPUM68KState *env, int feature)
@@ -307,24 +504,32 @@ void m68k_cpu_list(FILE *f, fprintf_function cpu_fprintf);
 
 void register_m68k_insns (CPUM68KState *env);
 
-#ifdef CONFIG_USER_ONLY
 /* Coldfire Linux uses 8k pages
  * and m68k linux uses 4k pages
- * use the smaller one
+ * use the smallest one
  */
 #define TARGET_PAGE_BITS 12
-#else
-/* Smallest TLB entry size is 1k.  */
-#define TARGET_PAGE_BITS 10
-#endif
+
+enum {
+    /* 1 bit to define user level / supervisor access */
+    ACCESS_SUPER = 0x01,
+    /* 1 bit to indicate direction */
+    ACCESS_STORE = 0x02,
+    /* 1 bit to indicate debug access */
+    ACCESS_DEBUG = 0x04,
+    /* PTEST instruction */
+    ACCESS_PTEST = 0x08,
+    /* Type of instruction that generated the access */
+    ACCESS_CODE  = 0x10, /* Code fetch access                */
+    ACCESS_DATA  = 0x20, /* Data load/store access        */
+};
 
 #define TARGET_PHYS_ADDR_SPACE_BITS 32
 #define TARGET_VIRT_ADDR_SPACE_BITS 32
 
-#define cpu_init(cpu_model) cpu_generic_init(TYPE_M68K_CPU, cpu_model)
-
 #define M68K_CPU_TYPE_SUFFIX "-" TYPE_M68K_CPU
 #define M68K_CPU_TYPE_NAME(model) model M68K_CPU_TYPE_SUFFIX
+#define CPU_RESOLVING_TYPE TYPE_M68K_CPU
 
 #define cpu_signal_handler cpu_m68k_signal_handler
 #define cpu_list m68k_cpu_list
@@ -332,24 +537,42 @@ void register_m68k_insns (CPUM68KState *env);
 /* MMU modes definitions */
 #define MMU_MODE0_SUFFIX _kernel
 #define MMU_MODE1_SUFFIX _user
+#define MMU_KERNEL_IDX 0
 #define MMU_USER_IDX 1
 static inline int cpu_mmu_index (CPUM68KState *env, bool ifetch)
 {
     return (env->sr & SR_S) == 0 ? 1 : 0;
 }
 
-int m68k_cpu_handle_mmu_fault(CPUState *cpu, vaddr address, int rw,
+int m68k_cpu_handle_mmu_fault(CPUState *cpu, vaddr address, int size, int rw,
                               int mmu_idx);
+void m68k_cpu_unassigned_access(CPUState *cs, hwaddr addr,
+                                bool is_write, bool is_exec, int is_asi,
+                                unsigned size);
 
 #include "exec/cpu-all.h"
+
+/* TB flags */
+#define TB_FLAGS_MACSR          0x0f
+#define TB_FLAGS_MSR_S_BIT      13
+#define TB_FLAGS_MSR_S          (1 << TB_FLAGS_MSR_S_BIT)
+#define TB_FLAGS_SFC_S_BIT      14
+#define TB_FLAGS_SFC_S          (1 << TB_FLAGS_SFC_S_BIT)
+#define TB_FLAGS_DFC_S_BIT      15
+#define TB_FLAGS_DFC_S          (1 << TB_FLAGS_DFC_S_BIT)
 
 static inline void cpu_get_tb_cpu_state(CPUM68KState *env, target_ulong *pc,
                                         target_ulong *cs_base, uint32_t *flags)
 {
     *pc = env->pc;
     *cs_base = 0;
-    *flags = (env->sr & SR_S)                   /* Bit  13 */
-            | ((env->macsr >> 4) & 0xf);        /* Bits 0-3 */
+    *flags = (env->macsr >> 4) & TB_FLAGS_MACSR;
+    if (env->sr & SR_S) {
+        *flags |= TB_FLAGS_MSR_S;
+        *flags |= (env->sfc << (TB_FLAGS_SFC_S_BIT - 2)) & TB_FLAGS_SFC_S;
+        *flags |= (env->dfc << (TB_FLAGS_DFC_S_BIT - 2)) & TB_FLAGS_DFC_S;
+    }
 }
 
+void dump_mmu(FILE *f, fprintf_function cpu_fprintf, CPUM68KState *env);
 #endif

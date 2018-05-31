@@ -31,17 +31,24 @@
 #define ALIGNED_ONLY
 #define TARGET_LONG_BITS 32
 
+/* Xtensa processors have a weak memory model */
+#define TCG_GUEST_DEFAULT_MO      (0)
+
 #define CPUArchState struct CPUXtensaState
 
 #include "qemu-common.h"
 #include "cpu-qom.h"
 #include "exec/cpu-defs.h"
-#include "fpu/softfloat.h"
+#include "xtensa-isa.h"
 
 #define NB_MMU_MODES 4
 
 #define TARGET_PHYS_ADDR_SPACE_BITS 32
+#ifdef CONFIG_USER_ONLY
+#define TARGET_VIRT_ADDR_SPACE_BITS 30
+#else
 #define TARGET_VIRT_ADDR_SPACE_BITS 32
+#endif
 #define TARGET_PAGE_BITS 12
 
 enum {
@@ -107,6 +114,7 @@ enum {
 };
 
 enum {
+    EXPSTATE = 230,
     THREADPTR = 231,
     FCR = 232,
     FSR = 233,
@@ -126,6 +134,7 @@ enum {
     WINDOW_BASE = 72,
     WINDOW_START = 73,
     PTEVADDR = 83,
+    MMID = 89,
     RASID = 90,
     ITLBCFG = 91,
     DTLBCFG = 92,
@@ -133,6 +142,7 @@ enum {
     MEMCTL = 97,
     CACHEATTR = 98,
     ATOMCTL = 99,
+    DDR = 104,
     IBREAKA = 128,
     DBREAKA = 144,
     DBREAKC = 160,
@@ -170,6 +180,7 @@ enum {
 
 #define PS_OWB 0xf00
 #define PS_OWB_SHIFT 8
+#define PS_OWB_LEN 4
 
 #define PS_CALLINC 0x30000
 #define PS_CALLINC_SHIFT 16
@@ -205,6 +216,8 @@ enum {
 #define MEMCTL_DSNP 0x2
 #define MEMCTL_IL0EN 0x1
 
+#define MAX_INSN_LENGTH 64
+#define MAX_OPCODE_ARGS 16
 #define MAX_NAREG 64
 #define MAX_NINTERRUPT 32
 #define MAX_NLEVEL 6
@@ -305,6 +318,7 @@ typedef struct xtensa_tlb {
 
 typedef struct XtensaGdbReg {
     int targno;
+    unsigned flags;
     int type;
     int group;
     unsigned size;
@@ -329,6 +343,24 @@ typedef struct XtensaMemory {
         uint32_t size;
     } location[MAX_NMEMORY];
 } XtensaMemory;
+
+typedef struct DisasContext DisasContext;
+typedef void (*XtensaOpcodeOp)(DisasContext *dc, const uint32_t arg[],
+                               const uint32_t par[]);
+
+typedef struct XtensaOpcodeOps {
+    const char *name;
+    XtensaOpcodeOp translate;
+    const uint32_t *par;
+} XtensaOpcodeOps;
+
+typedef struct XtensaOpcodeTranslators {
+    unsigned num_opcodes;
+    const XtensaOpcodeOps *opcode;
+} XtensaOpcodeTranslators;
+
+extern const XtensaOpcodeTranslators xtensa_core_opcodes;
+extern const XtensaOpcodeTranslators xtensa_fpu2000_opcodes;
 
 struct XtensaConfig {
     const char *name;
@@ -370,6 +402,11 @@ struct XtensaConfig {
 
     uint32_t configid[2];
 
+    void *isa_internal;
+    xtensa_isa isa;
+    XtensaOpcodeOps **opcode_ops;
+    const XtensaOpcodeTranslators **opcode_translators;
+
     uint32_t clock_freq_khz;
 
     xtensa_tlb itlb;
@@ -406,6 +443,7 @@ typedef struct CPUXtensaState {
     } fregs[16];
     float_status fp_status;
 
+#ifndef CONFIG_USER_ONLY
     xtensa_tlb_entry itlb[7][MAX_TLB_WAY_SIZE];
     xtensa_tlb_entry dtlb[10][MAX_TLB_WAY_SIZE];
     unsigned autorefill_idx;
@@ -418,6 +456,7 @@ typedef struct CPUXtensaState {
     uint64_t time_base;
     uint64_t ccount_time;
     uint32_t ccount_base;
+#endif
 
     int exception_taken;
     int yield_needed;
@@ -452,6 +491,9 @@ static inline XtensaCPU *xtensa_env_get_cpu(const CPUXtensaState *env)
 
 #define ENV_OFFSET offsetof(XtensaCPU, env)
 
+
+int xtensa_cpu_handle_mmu_fault(CPUState *cs, vaddr address, int rw, int size,
+                                int mmu_idx);
 void xtensa_cpu_do_interrupt(CPUState *cpu);
 bool xtensa_cpu_exec_interrupt(CPUState *cpu, int interrupt_request);
 void xtensa_cpu_do_unassigned_access(CPUState *cpu, hwaddr addr,
@@ -471,15 +513,19 @@ void xtensa_cpu_do_unaligned_access(CPUState *cpu, vaddr addr,
 
 #define XTENSA_CPU_TYPE_SUFFIX "-" TYPE_XTENSA_CPU
 #define XTENSA_CPU_TYPE_NAME(model) model XTENSA_CPU_TYPE_SUFFIX
+#define CPU_RESOLVING_TYPE TYPE_XTENSA_CPU
 
 #ifdef TARGET_WORDS_BIGENDIAN
 #define XTENSA_DEFAULT_CPU_MODEL "fsf"
+#define XTENSA_DEFAULT_CPU_NOMMU_MODEL "fsf"
 #else
 #define XTENSA_DEFAULT_CPU_MODEL "dc232b"
+#define XTENSA_DEFAULT_CPU_NOMMU_MODEL "de212"
 #endif
-#define XTENSA_DEFAULT_CPU_TYPE XTENSA_CPU_TYPE_NAME(XTENSA_DEFAULT_CPU_MODEL)
-
-#define cpu_init(cpu_model) cpu_generic_init(TYPE_XTENSA_CPU, cpu_model)
+#define XTENSA_DEFAULT_CPU_TYPE \
+    XTENSA_CPU_TYPE_NAME(XTENSA_DEFAULT_CPU_MODEL)
+#define XTENSA_DEFAULT_CPU_NOMMU_TYPE \
+    XTENSA_CPU_TYPE_NAME(XTENSA_DEFAULT_CPU_NOMMU_MODEL)
 
 void xtensa_translate_init(void);
 void xtensa_breakpoint_handler(CPUState *cs);
@@ -494,26 +540,9 @@ int cpu_xtensa_signal_handler(int host_signum, void *pinfo, void *puc);
 void xtensa_cpu_list(FILE *f, fprintf_function cpu_fprintf);
 void xtensa_sync_window_from_phys(CPUXtensaState *env);
 void xtensa_sync_phys_from_window(CPUXtensaState *env);
-uint32_t xtensa_tlb_get_addr_mask(const CPUXtensaState *env, bool dtlb, uint32_t way);
-void split_tlb_entry_spec_way(const CPUXtensaState *env, uint32_t v, bool dtlb,
-        uint32_t *vpn, uint32_t wi, uint32_t *ei);
-int xtensa_tlb_lookup(const CPUXtensaState *env, uint32_t addr, bool dtlb,
-        uint32_t *pwi, uint32_t *pei, uint8_t *pring);
-void xtensa_tlb_set_entry_mmu(const CPUXtensaState *env,
-        xtensa_tlb_entry *entry, bool dtlb,
-        unsigned wi, unsigned ei, uint32_t vpn, uint32_t pte);
-void xtensa_tlb_set_entry(CPUXtensaState *env, bool dtlb,
-        unsigned wi, unsigned ei, uint32_t vpn, uint32_t pte);
-int xtensa_get_physical_addr(CPUXtensaState *env, bool update_tlb,
-        uint32_t vaddr, int is_write, int mmu_idx,
-        uint32_t *paddr, uint32_t *page_size, unsigned *access);
-void reset_mmu(CPUXtensaState *env);
-void dump_mmu(FILE *f, fprintf_function cpu_fprintf, CPUXtensaState *env);
+void xtensa_rotate_window(CPUXtensaState *env, uint32_t delta);
+void xtensa_restore_owb(CPUXtensaState *env);
 void debug_exception_env(CPUXtensaState *new_env, uint32_t cause);
-static inline MemoryRegion *xtensa_get_er_region(CPUXtensaState *env)
-{
-    return env->system_er;
-}
 
 static inline void xtensa_select_static_vectors(CPUXtensaState *env,
                                                 unsigned n)
@@ -522,6 +551,8 @@ static inline void xtensa_select_static_vectors(CPUXtensaState *env,
     env->static_vectors = n;
 }
 void xtensa_runstall(CPUXtensaState *env, bool runstall);
+XtensaOpcodeOps *xtensa_find_opcode_ops(const XtensaOpcodeTranslators *t,
+                                        const char *opcode);
 
 #define XTENSA_OPTION_BIT(opt) (((uint64_t)1) << (opt))
 #define XTENSA_OPTION_ALL (~(uint64_t)0)
@@ -565,6 +596,29 @@ static inline int xtensa_get_cring(const CPUXtensaState *env)
     }
 }
 
+#ifndef CONFIG_USER_ONLY
+uint32_t xtensa_tlb_get_addr_mask(const CPUXtensaState *env,
+                                  bool dtlb, uint32_t way);
+void split_tlb_entry_spec_way(const CPUXtensaState *env, uint32_t v, bool dtlb,
+        uint32_t *vpn, uint32_t wi, uint32_t *ei);
+int xtensa_tlb_lookup(const CPUXtensaState *env, uint32_t addr, bool dtlb,
+        uint32_t *pwi, uint32_t *pei, uint8_t *pring);
+void xtensa_tlb_set_entry_mmu(const CPUXtensaState *env,
+        xtensa_tlb_entry *entry, bool dtlb,
+        unsigned wi, unsigned ei, uint32_t vpn, uint32_t pte);
+void xtensa_tlb_set_entry(CPUXtensaState *env, bool dtlb,
+        unsigned wi, unsigned ei, uint32_t vpn, uint32_t pte);
+int xtensa_get_physical_addr(CPUXtensaState *env, bool update_tlb,
+        uint32_t vaddr, int is_write, int mmu_idx,
+        uint32_t *paddr, uint32_t *page_size, unsigned *access);
+void reset_mmu(CPUXtensaState *env);
+void dump_mmu(FILE *f, fprintf_function cpu_fprintf, CPUXtensaState *env);
+
+static inline MemoryRegion *xtensa_get_er_region(CPUXtensaState *env)
+{
+    return env->system_er;
+}
+
 static inline xtensa_tlb_entry *xtensa_tlb_get_entry(CPUXtensaState *env,
         bool dtlb, unsigned wi, unsigned ei)
 {
@@ -572,6 +626,7 @@ static inline xtensa_tlb_entry *xtensa_tlb_get_entry(CPUXtensaState *env,
         env->dtlb[wi] + ei :
         env->itlb[wi] + ei;
 }
+#endif
 
 static inline uint32_t xtensa_replicate_windowstart(CPUXtensaState *env)
 {
@@ -584,6 +639,7 @@ static inline uint32_t xtensa_replicate_windowstart(CPUXtensaState *env)
 #define MMU_MODE1_SUFFIX _ring1
 #define MMU_MODE2_SUFFIX _ring2
 #define MMU_MODE3_SUFFIX _ring3
+#define MMU_USER_IDX 3
 
 static inline int cpu_mmu_index(CPUXtensaState *env, bool ifetch)
 {

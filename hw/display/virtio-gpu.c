@@ -1173,6 +1173,11 @@ static void virtio_gpu_device_realize(DeviceState *qdev, Error **errp)
     Error *local_err = NULL;
     int i;
 
+    if (virtio_host_has_feature(vdev, VIRTIO_F_IOMMU_PLATFORM)) {
+        error_setg(errp, "virtio-gpu does not support vIOMMU yet");
+        return;
+    }
+
     if (g->conf.max_outputs > VIRTIO_GPU_MAX_SCANOUTS) {
         error_setg(errp, "invalid max_outputs > %d", VIRTIO_GPU_MAX_SCANOUTS);
         return;
@@ -1210,7 +1215,12 @@ static void virtio_gpu_device_realize(DeviceState *qdev, Error **errp)
         /* use larger control queue in 3d mode */
         g->ctrl_vq   = virtio_add_queue(vdev, 256, virtio_gpu_handle_ctrl_cb);
         g->cursor_vq = virtio_add_queue(vdev, 16, virtio_gpu_handle_cursor_cb);
-        g->virtio_config.num_capsets = 1;
+
+#if defined(CONFIG_VIRGL)
+        g->virtio_config.num_capsets = virtio_gpu_virgl_get_num_capsets(g);
+#else
+        g->virtio_config.num_capsets = 0;
+#endif
     } else {
         g->ctrl_vq   = virtio_add_queue(vdev, 64, virtio_gpu_handle_ctrl_cb);
         g->cursor_vq = virtio_add_queue(vdev, 16, virtio_gpu_handle_cursor_cb);

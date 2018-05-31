@@ -21,12 +21,13 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
  * THE SOFTWARE.
  */
+
 #include "qemu/osdep.h"
 #include "qapi/error.h"
-#include "qemu-common.h"
 #include "qemu/error-report.h"
+#include "qemu/option.h"
 #include "block/block_int.h"
-#include "qapi/qmp/qbool.h"
+#include "qapi/qmp/qdict.h"
 #include "qapi/qmp/qstring.h"
 #include "crypto/secret.h"
 #include <curl/curl.h>
@@ -89,6 +90,8 @@ static CURLMcode __curl_multi_socket_action(CURLM *multi_handle,
 
 struct BDRVCURLState;
 
+static bool libcurl_initialized;
+
 typedef struct CURLAIOCB {
     Coroutine *co;
     QEMUIOVector *qiov;
@@ -99,8 +102,6 @@ typedef struct CURLAIOCB {
 
     size_t start;
     size_t end;
-
-    QSIMPLEQ_ENTRY(CURLAIOCB) next;
 } CURLAIOCB;
 
 typedef struct CURLSocket {
@@ -136,7 +137,7 @@ typedef struct BDRVCURLState {
     bool accept_range;
     AioContext *aio_context;
     QemuMutex mutex;
-    QSIMPLEQ_HEAD(, CURLAIOCB) free_state_waitq;
+    CoQueue free_state_waitq;
     char *username;
     char *password;
     char *proxyusername;
@@ -536,7 +537,6 @@ static int curl_init_state(BDRVCURLState *s, CURLState *state)
 /* Called with s->mutex held.  */
 static void curl_clean_state(CURLState *s)
 {
-    CURLAIOCB *next;
     int j;
     for (j = 0; j < CURL_NUM_ACB; j++) {
         assert(!s->acb[j]);
@@ -554,13 +554,7 @@ static void curl_clean_state(CURLState *s)
 
     s->in_use = 0;
 
-    next = QSIMPLEQ_FIRST(&s->s->free_state_waitq);
-    if (next) {
-        QSIMPLEQ_REMOVE_HEAD(&s->s->free_state_waitq, next);
-        qemu_mutex_unlock(&s->s->mutex);
-        aio_co_wake(next->co);
-        qemu_mutex_lock(&s->s->mutex);
-    }
+    qemu_co_enter_next(&s->s->free_state_waitq, &s->s->mutex);
 }
 
 static void curl_parse_filename(const char *filename, QDict *options,
@@ -686,12 +680,21 @@ static int curl_open(BlockDriverState *bs, QDict *options, int flags,
     double d;
     const char *secretid;
     const char *protocol_delimiter;
+    int ret;
 
-    static int inited = 0;
 
     if (flags & BDRV_O_RDWR) {
         error_setg(errp, "curl block device does not support writes");
         return -EROFS;
+    }
+
+    if (!libcurl_initialized) {
+        ret = curl_global_init(CURL_GLOBAL_ALL);
+        if (ret) {
+            error_setg(errp, "libcurl initialization failed with %d", ret);
+            return -EIO;
+        }
+        libcurl_initialized = true;
     }
 
     qemu_mutex_init(&s->mutex);
@@ -772,13 +775,8 @@ static int curl_open(BlockDriverState *bs, QDict *options, int flags,
         }
     }
 
-    if (!inited) {
-        curl_global_init(CURL_GLOBAL_ALL);
-        inited = 1;
-    }
-
     DPRINTF("CURL: Opening %s\n", file);
-    QSIMPLEQ_INIT(&s->free_state_waitq);
+    qemu_co_queue_init(&s->free_state_waitq);
     s->aio_context = bdrv_get_aio_context(bs);
     s->url = g_strdup(file);
     qemu_mutex_lock(&s->mutex);
@@ -851,6 +849,9 @@ out_noclean:
     qemu_mutex_destroy(&s->mutex);
     g_free(s->cookie);
     g_free(s->url);
+    g_free(s->username);
+    g_free(s->proxyusername);
+    g_free(s->proxypassword);
     qemu_opts_del(opts);
     return -EINVAL;
 }
@@ -879,10 +880,7 @@ static void curl_setup_preadv(BlockDriverState *bs, CURLAIOCB *acb)
         if (state) {
             break;
         }
-        QSIMPLEQ_INSERT_TAIL(&s->free_state_waitq, acb, next);
-        qemu_mutex_unlock(&s->mutex);
-        qemu_coroutine_yield();
-        qemu_mutex_lock(&s->mutex);
+        qemu_co_queue_wait(&s->free_state_waitq, &s->mutex);
     }
 
     if (curl_init_state(s, state) < 0) {
@@ -949,6 +947,9 @@ static void curl_close(BlockDriverState *bs)
 
     g_free(s->cookie);
     g_free(s->url);
+    g_free(s->username);
+    g_free(s->proxyusername);
+    g_free(s->proxypassword);
 }
 
 static int64_t curl_getlength(BlockDriverState *bs)

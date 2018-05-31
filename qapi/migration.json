@@ -327,8 +327,10 @@
 #          to speed up convergence of RAM migration. (since 1.6)
 #
 # @postcopy-ram: Start executing on the migration target before all of RAM has
-#          been migrated, pulling the remaining pages along as needed. NOTE: If
-#          the migration fails during postcopy the VM will fail.  (since 2.6)
+#          been migrated, pulling the remaining pages along as needed. The
+#          capacity must have the same setting on both source and target
+#          or migration will not even start. NOTE: If the migration fails during
+#          postcopy the VM will fail.  (since 2.6)
 #
 # @x-colo: If enabled, migration will never end, and the state of the VM on the
 #        primary side will be migrated continuously to the VM on secondary
@@ -352,12 +354,16 @@
 #
 # @x-multifd: Use more than one fd for migration (since 2.11)
 #
+# @dirty-bitmaps: If enabled, QEMU will migrate named dirty bitmaps.
+#                 (since 2.12)
+#
 # Since: 1.2
 ##
 { 'enum': 'MigrationCapability',
   'data': ['xbzrle', 'rdma-pin-all', 'auto-converge', 'zero-blocks',
            'compress', 'events', 'postcopy-ram', 'x-colo', 'release-ram',
-           'block', 'return-path', 'pause-before-switchover', 'x-multifd' ] }
+           'block', 'return-path', 'pause-before-switchover', 'x-multifd',
+           'dirty-bitmaps' ] }
 
 ##
 # @MigrationCapabilityStatus:
@@ -668,19 +674,19 @@
 # Since: 2.4
 ##
 { 'struct': 'MigrationParameters',
-  'data': { '*compress-level': 'int',
-            '*compress-threads': 'int',
-            '*decompress-threads': 'int',
-            '*cpu-throttle-initial': 'int',
-            '*cpu-throttle-increment': 'int',
+  'data': { '*compress-level': 'uint8',
+            '*compress-threads': 'uint8',
+            '*decompress-threads': 'uint8',
+            '*cpu-throttle-initial': 'uint8',
+            '*cpu-throttle-increment': 'uint8',
             '*tls-creds': 'str',
             '*tls-hostname': 'str',
-            '*max-bandwidth': 'int',
-            '*downtime-limit': 'int',
-            '*x-checkpoint-delay': 'int',
+            '*max-bandwidth': 'size',
+            '*downtime-limit': 'uint64',
+            '*x-checkpoint-delay': 'uint32',
             '*block-incremental': 'bool' ,
-            '*x-multifd-channels': 'int',
-            '*x-multifd-page-count': 'int',
+            '*x-multifd-channels': 'uint8',
+            '*x-multifd-page-count': 'uint32',
             '*xbzrle-cache-size': 'size' } }
 
 ##
@@ -742,8 +748,8 @@
 # @migrate-start-postcopy:
 #
 # Followup to a migration command to switch the migration to postcopy mode.
-# The postcopy-ram capability must be set before the original migration
-# command.
+# The postcopy-ram capability must be set on both source and destination
+# before the original migration command.
 #
 # Since: 2.5
 #

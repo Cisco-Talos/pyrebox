@@ -19,7 +19,6 @@
  */
 
 #include "qemu/osdep.h"
-#include "qapi/error.h"
 #include "cpu.h"
 #include "internal.h"
 #include "exec/gdbstub.h"
@@ -30,24 +29,6 @@
 #ifndef CONFIG_USER_ONLY
 #include "sysemu/sysemu.h"
 #endif
-
-//#define DEBUG_S390
-//#define DEBUG_S390_STDOUT
-
-#ifdef DEBUG_S390
-#ifdef DEBUG_S390_STDOUT
-#define DPRINTF(fmt, ...) \
-    do { fprintf(stderr, fmt, ## __VA_ARGS__); \
-         if (qemu_log_separate()) qemu_log(fmt, ##__VA_ARGS__); } while (0)
-#else
-#define DPRINTF(fmt, ...) \
-    do { qemu_log(fmt, ## __VA_ARGS__); } while (0)
-#endif
-#else
-#define DPRINTF(fmt, ...) \
-    do { } while (0)
-#endif
-
 
 #ifndef CONFIG_USER_ONLY
 void s390x_tod_timer(void *opaque)
@@ -102,12 +83,15 @@ static inline bool is_special_wait_psw(uint64_t psw_addr)
 
 void s390_handle_wait(S390CPU *cpu)
 {
+    CPUState *cs = CPU(cpu);
+
     if (s390_cpu_halt(cpu) == 0) {
 #ifndef CONFIG_USER_ONLY
         if (is_special_wait_psw(cpu->env.psw.addr)) {
             qemu_system_shutdown_request(SHUTDOWN_CAUSE_GUEST_SHUTDOWN);
         } else {
-            qemu_system_guest_panicked(NULL);
+            cpu->env.crash_reason = S390_CRASH_REASON_DISABLED_WAIT;
+            qemu_system_guest_panicked(cpu_get_crash_info(cs));
         }
 #endif
     }
@@ -119,16 +103,18 @@ void load_psw(CPUS390XState *env, uint64_t mask, uint64_t addr)
 
     env->psw.addr = addr;
     env->psw.mask = mask;
-    if (tcg_enabled()) {
-        env->cc_op = (mask >> 44) & 3;
+
+    /* KVM will handle all WAITs and trigger a WAIT exit on disabled_wait */
+    if (!tcg_enabled()) {
+        return;
     }
+    env->cc_op = (mask >> 44) & 3;
 
     if ((old_mask ^ mask) & PSW_MASK_PER) {
         s390_cpu_recompute_watchpoints(CPU(s390_env_get_cpu(env)));
     }
 
-    /* KVM will handle all WAITs and trigger a WAIT exit on disabled_wait */
-    if (tcg_enabled() && (mask & PSW_MASK_WAIT)) {
+    if (mask & PSW_MASK_WAIT) {
         s390_handle_wait(s390_env_get_cpu(env));
     }
 }

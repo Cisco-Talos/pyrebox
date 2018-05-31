@@ -14,14 +14,13 @@
 #ifndef QLIT_H
 #define QLIT_H
 
-#include "qapi-types.h"
 #include "qobject.h"
 
 typedef struct QLitDictEntry QLitDictEntry;
 typedef struct QLitObject QLitObject;
 
 struct QLitObject {
-    int type;
+    QType type;
     union {
         bool qbool;
         int64_t qnum;
@@ -50,5 +49,7 @@ struct QLitDictEntry {
     { .type = QTYPE_QLIST, .value.qlist = (val) }
 
 bool qlit_equal_qobject(const QLitObject *lhs, const QObject *rhs);
+
+QObject *qobject_from_qlit(const QLitObject *qlit);
 
 #endif /* QLIT_H */

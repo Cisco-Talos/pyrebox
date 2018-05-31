@@ -23,14 +23,37 @@
 /* "QA7" (Pi2) interrupt controller and mailboxes etc. */
 #define BCM2836_CONTROL_BASE    0x40000000
 
+struct BCM283XInfo {
+    const char *name;
+    const char *cpu_type;
+    int clusterid;
+};
+
+static const BCM283XInfo bcm283x_socs[] = {
+    {
+        .name = TYPE_BCM2836,
+        .cpu_type = ARM_CPU_TYPE_NAME("cortex-a7"),
+        .clusterid = 0xf,
+    },
+#ifdef TARGET_AARCH64
+    {
+        .name = TYPE_BCM2837,
+        .cpu_type = ARM_CPU_TYPE_NAME("cortex-a53"),
+        .clusterid = 0x0,
+    },
+#endif
+};
+
 static void bcm2836_init(Object *obj)
 {
-    BCM2836State *s = BCM2836(obj);
+    BCM283XState *s = BCM283X(obj);
+    BCM283XClass *bc = BCM283X_GET_CLASS(obj);
+    const BCM283XInfo *info = bc->info;
     int n;
 
-    for (n = 0; n < BCM2836_NCPUS; n++) {
+    for (n = 0; n < BCM283X_NCPUS; n++) {
         object_initialize(&s->cpus[n], sizeof(s->cpus[n]),
-                          "cortex-a15-" TYPE_ARM_CPU);
+                          info->cpu_type);
         object_property_add_child(obj, "cpu[*]", OBJECT(&s->cpus[n]),
                                   &error_abort);
     }
@@ -52,7 +75,9 @@ static void bcm2836_init(Object *obj)
 
 static void bcm2836_realize(DeviceState *dev, Error **errp)
 {
-    BCM2836State *s = BCM2836(dev);
+    BCM283XState *s = BCM283X(dev);
+    BCM283XClass *bc = BCM283X_GET_CLASS(dev);
+    const BCM283XInfo *info = bc->info;
     Object *obj;
     Error *err = NULL;
     int n;
@@ -102,11 +127,9 @@ static void bcm2836_realize(DeviceState *dev, Error **errp)
     sysbus_connect_irq(SYS_BUS_DEVICE(&s->peripherals), 1,
         qdev_get_gpio_in_named(DEVICE(&s->control), "gpu-fiq", 0));
 
-    for (n = 0; n < BCM2836_NCPUS; n++) {
-        /* Mirror bcm2836, which has clusterid set to 0xf
-         * TODO: this should be converted to a property of ARM_CPU
-         */
-        s->cpus[n].mp_affinity = 0xF00 | n;
+    for (n = 0; n < BCM283X_NCPUS; n++) {
+        /* TODO: this should be converted to a property of ARM_CPU */
+        s->cpus[n].mp_affinity = (info->clusterid << 8) | n;
 
         /* set periphbase/CBAR value for CPU-local registers */
         object_property_set_int(OBJECT(&s->cpus[n]),
@@ -150,29 +173,44 @@ static void bcm2836_realize(DeviceState *dev, Error **errp)
 }
 
 static Property bcm2836_props[] = {
-    DEFINE_PROP_UINT32("enabled-cpus", BCM2836State, enabled_cpus, BCM2836_NCPUS),
+    DEFINE_PROP_UINT32("enabled-cpus", BCM283XState, enabled_cpus,
+                       BCM283X_NCPUS),
     DEFINE_PROP_END_OF_LIST()
 };
 
-static void bcm2836_class_init(ObjectClass *oc, void *data)
+static void bcm283x_class_init(ObjectClass *oc, void *data)
 {
     DeviceClass *dc = DEVICE_CLASS(oc);
+    BCM283XClass *bc = BCM283X_CLASS(oc);
 
-    dc->props = bcm2836_props;
+    bc->info = data;
     dc->realize = bcm2836_realize;
+    dc->props = bcm2836_props;
 }
 
-static const TypeInfo bcm2836_type_info = {
-    .name = TYPE_BCM2836,
-    .parent = TYPE_SYS_BUS_DEVICE,
-    .instance_size = sizeof(BCM2836State),
+static const TypeInfo bcm283x_type_info = {
+    .name = TYPE_BCM283X,
+    .parent = TYPE_DEVICE,
+    .instance_size = sizeof(BCM283XState),
     .instance_init = bcm2836_init,
-    .class_init = bcm2836_class_init,
+    .class_size = sizeof(BCM283XClass),
+    .abstract = true,
 };
 
 static void bcm2836_register_types(void)
 {
-    type_register_static(&bcm2836_type_info);
+    int i;
+
+    type_register_static(&bcm283x_type_info);
+    for (i = 0; i < ARRAY_SIZE(bcm283x_socs); i++) {
+        TypeInfo ti = {
+            .name = bcm283x_socs[i].name,
+            .parent = TYPE_BCM283X,
+            .class_init = bcm283x_class_init,
+            .class_data = (void *) &bcm283x_socs[i],
+        };
+        type_register(&ti);
+    }
 }
 
 type_init(bcm2836_register_types)

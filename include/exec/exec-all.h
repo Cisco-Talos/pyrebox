@@ -50,13 +50,16 @@ void cpu_gen_init(void);
  * cpu_restore_state:
  * @cpu: the vCPU state is to be restore to
  * @searched_pc: the host PC the fault occurred at
+ * @will_exit: true if the TB executed will be interrupted after some
+               cpu adjustments. Required for maintaining the correct
+               icount valus
  * @return: true if state was restored, false otherwise
  *
  * Attempt to restore the state for a fault occurring in translated
  * code. If the searched_pc is not in translated code no state is
  * restored and the function returns false.
  */
-bool cpu_restore_state(CPUState *cpu, uintptr_t searched_pc);
+bool cpu_restore_state(CPUState *cpu, uintptr_t searched_pc, bool will_exit);
 
 void QEMU_NORETURN cpu_loop_exit_noexc(CPUState *cpu);
 void QEMU_NORETURN cpu_io_recompile(CPUState *cpu, uintptr_t retaddr);
@@ -74,8 +77,9 @@ void cpu_reloading_memory_map(void);
 /**
  * cpu_address_space_init:
  * @cpu: CPU to add this address space to
- * @as: address space to add
  * @asidx: integer index of this address space
+ * @prefix: prefix to be used as name of address space
+ * @mr: the root memory region of address space
  *
  * Add the specified address space to the CPU's cpu_ases list.
  * The address space added with @asidx 0 is the one used for the
@@ -89,7 +93,8 @@ void cpu_reloading_memory_map(void);
  *
  * Note that with KVM only one address space is supported.
  */
-void cpu_address_space_init(CPUState *cpu, AddressSpace *as, int asidx);
+void cpu_address_space_init(CPUState *cpu, int asidx,
+                            const char *prefix, MemoryRegion *mr);
 #endif
 
 #if !defined(CONFIG_USER_ONLY) && defined(CONFIG_TCG)
@@ -251,7 +256,7 @@ void tlb_set_page(CPUState *cpu, target_ulong vaddr,
                   hwaddr paddr, int prot,
                   int mmu_idx, target_ulong size);
 void tb_invalidate_phys_addr(AddressSpace *as, hwaddr addr);
-void probe_write(CPUArchState *env, target_ulong addr, int mmu_idx,
+void probe_write(CPUArchState *env, target_ulong addr, int size, int mmu_idx,
                  uintptr_t retaddr);
 #else
 static inline void tlb_flush_page(CPUState *cpu, target_ulong addr)
@@ -434,8 +439,8 @@ void tb_lock_reset(void);
 struct MemoryRegion *iotlb_to_region(CPUState *cpu,
                                      hwaddr index, MemTxAttrs attrs);
 
-void tlb_fill(CPUState *cpu, target_ulong addr, MMUAccessType access_type,
-              int mmu_idx, uintptr_t retaddr);
+void tlb_fill(CPUState *cpu, target_ulong addr, int size,
+              MMUAccessType access_type, int mmu_idx, uintptr_t retaddr);
 
 #endif
 

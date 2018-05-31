@@ -54,20 +54,17 @@ static int exception_target_el(CPUARMState *env)
     return target_el;
 }
 
-uint32_t HELPER(neon_tbl)(CPUARMState *env, uint32_t ireg, uint32_t def,
-                          uint32_t rn, uint32_t maxindex)
+uint32_t HELPER(neon_tbl)(uint32_t ireg, uint32_t def, void *vn,
+                          uint32_t maxindex)
 {
-    uint32_t val;
-    uint32_t tmp;
-    int index;
-    int shift;
-    uint64_t *table;
-    table = (uint64_t *)&env->vfp.regs[rn];
+    uint32_t val, shift;
+    uint64_t *table = vn;
+
     val = 0;
     for (shift = 0; shift < 32; shift += 8) {
-        index = (ireg >> shift) & 0xff;
+        uint32_t index = (ireg >> shift) & 0xff;
         if (index < maxindex) {
-            tmp = (table[index >> 3] >> ((index & 7) << 3)) & 0xff;
+            uint32_t tmp = (table[index >> 3] >> ((index & 7) << 3)) & 0xff;
             val |= tmp << shift;
         } else {
             val |= def & (0xff << shift);
@@ -116,12 +113,13 @@ static inline uint32_t merge_syn_data_abort(uint32_t template_syn,
 }
 
 static void deliver_fault(ARMCPU *cpu, vaddr addr, MMUAccessType access_type,
-                          uint32_t fsr, uint32_t fsc, ARMMMUFaultInfo *fi)
+                          int mmu_idx, ARMMMUFaultInfo *fi)
 {
     CPUARMState *env = &cpu->env;
     int target_el;
     bool same_el;
-    uint32_t syn, exc;
+    uint32_t syn, exc, fsr, fsc;
+    ARMMMUIdx arm_mmu_idx = core_to_arm_mmu_idx(env, mmu_idx);
 
     target_el = exception_target_el(env);
     if (fi->stage2) {
@@ -130,14 +128,21 @@ static void deliver_fault(ARMCPU *cpu, vaddr addr, MMUAccessType access_type,
     }
     same_el = (arm_current_el(env) == target_el);
 
-    if (fsc == 0x3f) {
-        /* Caller doesn't have a long-format fault status code. This
-         * should only happen if this fault will never actually be reported
-         * to an EL that uses a syndrome register. Check that here.
-         * 0x3f is a (currently) reserved FSC code, in case the constructed
-         * syndrome does leak into the guest somehow.
+    if (target_el == 2 || arm_el_is_aa64(env, target_el) ||
+        arm_s1_regime_using_lpae_format(env, arm_mmu_idx)) {
+        /* LPAE format fault status register : bottom 6 bits are
+         * status code in the same form as needed for syndrome
          */
-        assert(target_el != 2 && !arm_el_is_aa64(env, target_el));
+        fsr = arm_fi_to_lfsc(fi);
+        fsc = extract32(fsr, 0, 6);
+    } else {
+        fsr = arm_fi_to_sfsc(fi);
+        /* Short format FSR : this fault will never actually be reported
+         * to an EL that uses a syndrome register. Use a (currently)
+         * reserved FSR code in case the constructed syndrome does leak
+         * into the guest somehow.
+         */
+        fsc = 0x3f;
     }
 
     if (access_type == MMU_INST_FETCH) {
@@ -164,39 +169,20 @@ static void deliver_fault(ARMCPU *cpu, vaddr addr, MMUAccessType access_type,
  * NULL, it means that the function was called in C code (i.e. not
  * from generated code or from helper.c)
  */
-void tlb_fill(CPUState *cs, target_ulong addr, MMUAccessType access_type,
-              int mmu_idx, uintptr_t retaddr)
+void tlb_fill(CPUState *cs, target_ulong addr, int size,
+              MMUAccessType access_type, int mmu_idx, uintptr_t retaddr)
 {
     bool ret;
-    uint32_t fsr = 0;
     ARMMMUFaultInfo fi = {};
 
-    ret = arm_tlb_fill(cs, addr, access_type, mmu_idx, &fsr, &fi);
+    ret = arm_tlb_fill(cs, addr, access_type, mmu_idx, &fi);
     if (unlikely(ret)) {
         ARMCPU *cpu = ARM_CPU(cs);
-        uint32_t fsc;
 
-        if (retaddr) {
-            /* now we have a real cpu fault */
-            cpu_restore_state(cs, retaddr);
-        }
+        /* now we have a real cpu fault */
+        cpu_restore_state(cs, retaddr, true);
 
-        if (fsr & (1 << 9)) {
-            /* LPAE format fault status register : bottom 6 bits are
-             * status code in the same form as needed for syndrome
-             */
-            fsc = extract32(fsr, 0, 6);
-        } else {
-            /* Short format FSR : this fault will never actually be reported
-             * to an EL that uses a syndrome register. Use a (currently)
-             * reserved FSR code in case the constructed syndrome does leak
-             * into the guest somehow. deliver_fault will assert that
-             * we don't target an EL using the syndrome.
-             */
-            fsc = 0x3f;
-        }
-
-        deliver_fault(cpu, addr, access_type, fsr, fsc, &fi);
+        deliver_fault(cpu, addr, access_type, mmu_idx, &fi);
     }
 }
 
@@ -206,27 +192,13 @@ void arm_cpu_do_unaligned_access(CPUState *cs, vaddr vaddr,
                                  int mmu_idx, uintptr_t retaddr)
 {
     ARMCPU *cpu = ARM_CPU(cs);
-    CPUARMState *env = &cpu->env;
-    uint32_t fsr, fsc;
     ARMMMUFaultInfo fi = {};
-    ARMMMUIdx arm_mmu_idx = core_to_arm_mmu_idx(env, mmu_idx);
 
-    if (retaddr) {
-        /* now we have a real cpu fault */
-        cpu_restore_state(cs, retaddr);
-    }
+    /* now we have a real cpu fault */
+    cpu_restore_state(cs, retaddr, true);
 
-    /* the DFSR for an alignment fault depends on whether we're using
-     * the LPAE long descriptor format, or the short descriptor format
-     */
-    if (arm_s1_regime_using_lpae_format(env, arm_mmu_idx)) {
-        fsr = (1 << 9) | 0x21;
-    } else {
-        fsr = 0x1;
-    }
-    fsc = 0x21;
-
-    deliver_fault(cpu, vaddr, access_type, fsr, fsc, &fi);
+    fi.type = ARMFault_Alignment;
+    deliver_fault(cpu, vaddr, access_type, mmu_idx, &fi);
 }
 
 /* arm_cpu_do_transaction_failed: handle a memory system error response
@@ -240,36 +212,14 @@ void arm_cpu_do_transaction_failed(CPUState *cs, hwaddr physaddr,
                                    MemTxResult response, uintptr_t retaddr)
 {
     ARMCPU *cpu = ARM_CPU(cs);
-    CPUARMState *env = &cpu->env;
-    uint32_t fsr, fsc;
     ARMMMUFaultInfo fi = {};
-    ARMMMUIdx arm_mmu_idx = core_to_arm_mmu_idx(env, mmu_idx);
 
-    if (retaddr) {
-        /* now we have a real cpu fault */
-        cpu_restore_state(cs, retaddr);
-    }
+    /* now we have a real cpu fault */
+    cpu_restore_state(cs, retaddr, true);
 
-    /* The EA bit in syndromes and fault status registers is an
-     * IMPDEF classification of external aborts. ARM implementations
-     * usually use this to indicate AXI bus Decode error (0) or
-     * Slave error (1); in QEMU we follow that.
-     */
-    fi.ea = (response != MEMTX_DECODE_ERROR);
-
-    /* The fault status register format depends on whether we're using
-     * the LPAE long descriptor format, or the short descriptor format.
-     */
-    if (arm_s1_regime_using_lpae_format(env, arm_mmu_idx)) {
-        /* long descriptor form, STATUS 0b010000: synchronous ext abort */
-        fsr = (fi.ea << 12) | (1 << 9) | 0x10;
-    } else {
-        /* short descriptor form, FSR 0b01000 : synchronous ext abort */
-        fsr = (fi.ea << 12) | 0x8;
-    }
-    fsc = 0x10;
-
-    deliver_fault(cpu, addr, access_type, fsr, fsc, &fi);
+    fi.ea = arm_extabort_type(response);
+    fi.type = ARMFault_SyncExternal;
+    deliver_fault(cpu, addr, access_type, mmu_idx, &fi);
 }
 
 #endif /* !defined(CONFIG_USER_ONLY) */
@@ -531,6 +481,21 @@ void HELPER(exception_with_syndrome)(CPUARMState *env, uint32_t excp,
                                      uint32_t syndrome, uint32_t target_el)
 {
     raise_exception(env, excp, syndrome, target_el);
+}
+
+/* Raise an EXCP_BKPT with the specified syndrome register value,
+ * targeting the correct exception level for debug exceptions.
+ */
+void HELPER(exception_bkpt_insn)(CPUARMState *env, uint32_t syndrome)
+{
+    /* FSR will only be used if the debug target EL is AArch32. */
+    env->exception.fsr = arm_debug_exception_fsr(env);
+    /* FAR is UNKNOWN: clear vaddress to avoid potentially exposing
+     * values to the guest that it shouldn't be able to see at its
+     * exception/security level.
+     */
+    env->exception.vaddress = 0;
+    raise_exception(env, EXCP_BKPT, syndrome, arm_debug_target_el(env));
 }
 
 uint32_t HELPER(cpsr_read)(CPUARMState *env)
@@ -1372,11 +1337,7 @@ void arm_debug_excp_handler(CPUState *cs)
 
             cs->watchpoint_hit = NULL;
 
-            if (extended_addresses_enabled(env)) {
-                env->exception.fsr = (1 << 9) | 0x22;
-            } else {
-                env->exception.fsr = 0x2;
-            }
+            env->exception.fsr = arm_debug_exception_fsr(env);
             env->exception.vaddress = wp_hit->hitaddr;
             raise_exception(env, EXCP_DATA_ABORT,
                     syn_watchpoint(same_el, 0, wnr),
@@ -1396,12 +1357,12 @@ void arm_debug_excp_handler(CPUState *cs)
             return;
         }
 
-        if (extended_addresses_enabled(env)) {
-            env->exception.fsr = (1 << 9) | 0x22;
-        } else {
-            env->exception.fsr = 0x2;
-        }
-        /* FAR is UNKNOWN, so doesn't need setting */
+        env->exception.fsr = arm_debug_exception_fsr(env);
+        /* FAR is UNKNOWN: clear vaddress to avoid potentially exposing
+         * values to the guest that it shouldn't be able to see at its
+         * exception/security level.
+         */
+        env->exception.vaddress = 0;
         raise_exception(env, EXCP_PREFETCH_ABORT,
                         syn_breakpoint(same_el),
                         arm_debug_target_el(env));

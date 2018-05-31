@@ -79,7 +79,6 @@
 
 #include "exec/cpu-defs.h"
 #include "cpu-qom.h"
-#include "fpu/softfloat.h"
 
 #if defined (TARGET_PPC64)
 #define PPC_ELF_MACHINE     EM_PPC64
@@ -93,6 +92,19 @@
 #define PPC_BITMASK(bs, be)     ((PPC_BIT(bs) - PPC_BIT(be)) | PPC_BIT(bs))
 #define PPC_BITMASK32(bs, be)   ((PPC_BIT32(bs) - PPC_BIT32(be)) | \
                                  PPC_BIT32(bs))
+#define PPC_BITMASK8(bs, be)    ((PPC_BIT8(bs) - PPC_BIT8(be)) | PPC_BIT8(bs))
+
+#if HOST_LONG_BITS == 32
+# define MASK_TO_LSH(m)          (__builtin_ffsll(m) - 1)
+#elif HOST_LONG_BITS == 64
+# define MASK_TO_LSH(m)          (__builtin_ffsl(m) - 1)
+#else
+# error Unknown sizeof long
+#endif
+
+#define GETFIELD(m, v)          (((v) & (m)) >> MASK_TO_LSH(m))
+#define SETFIELD(m, v, val)                             \
+        (((v) & ~(m)) | ((((typeof(v))(val)) << MASK_TO_LSH(m)) & (m)))
 
 /*****************************************************************************/
 /* Exception vectors definitions                                             */
@@ -127,9 +139,6 @@ enum {
     POWERPC_EXCP_HYPPRIV  = 41, /* Embedded hypervisor priv instruction      */
     /* Vectors 42 to 63 are reserved                                         */
     /* Exceptions defined in the PowerPC server specification                */
-    /* Server doorbell variants */
-#define POWERPC_EXCP_SDOOR      POWERPC_EXCP_GDOORI
-#define POWERPC_EXCP_SDOOR_HV   POWERPC_EXCP_DOORI
     POWERPC_EXCP_RESET    = 64, /* System reset exception                    */
     POWERPC_EXCP_DSEG     = 65, /* Data segment exception                    */
     POWERPC_EXCP_ISEG     = 66, /* Instruction segment exception             */
@@ -176,8 +185,11 @@ enum {
     POWERPC_EXCP_HV_EMU   = 96, /* HV emulation assistance                   */
     POWERPC_EXCP_HV_MAINT = 97, /* HMI                                       */
     POWERPC_EXCP_HV_FU    = 98, /* Hypervisor Facility unavailable           */
+    /* Server doorbell variants */
+    POWERPC_EXCP_SDOOR    = 99,
+    POWERPC_EXCP_SDOOR_HV = 100,
     /* EOL                                                                   */
-    POWERPC_EXCP_NB       = 99,
+    POWERPC_EXCP_NB       = 101,
     /* QEMU exceptions: used internally during code translation              */
     POWERPC_EXCP_STOP         = 0x200, /* stop translation                   */
     POWERPC_EXCP_BRANCH       = 0x201, /* branch instruction                 */
@@ -917,7 +929,7 @@ enum {
 #define BOOKE206_MAX_TLBN      4
 
 /*****************************************************************************/
-/* Embedded.Processor Control */
+/* Server and Embedded Processor Control */
 
 #define DBELL_TYPE_SHIFT               27
 #define DBELL_TYPE_MASK                (0x1f << DBELL_TYPE_SHIFT)
@@ -927,10 +939,14 @@ enum {
 #define DBELL_TYPE_G_DBELL_CRIT        (0x03 << DBELL_TYPE_SHIFT)
 #define DBELL_TYPE_G_DBELL_MC          (0x04 << DBELL_TYPE_SHIFT)
 
-#define DBELL_BRDCAST                  (1 << 26)
+#define DBELL_TYPE_DBELL_SERVER        (0x05 << DBELL_TYPE_SHIFT)
+
+#define DBELL_BRDCAST                  PPC_BIT(37)
 #define DBELL_LPIDTAG_SHIFT            14
 #define DBELL_LPIDTAG_MASK             (0xfff << DBELL_LPIDTAG_SHIFT)
 #define DBELL_PIRTAG_MASK              0x3fff
+
+#define DBELL_PROCIDTAG_MASK           PPC_BITMASK(44, 63)
 
 /*****************************************************************************/
 /* Segment page size information, used by recent hash MMUs
@@ -1291,7 +1307,7 @@ void ppc_translate_init(void);
 int cpu_ppc_signal_handler (int host_signum, void *pinfo,
                             void *puc);
 #if defined(CONFIG_USER_ONLY)
-int ppc_cpu_handle_mmu_fault(CPUState *cpu, vaddr address, int rw,
+int ppc_cpu_handle_mmu_fault(CPUState *cpu, vaddr address, int size, int rw,
                              int mmu_idx);
 #endif
 
@@ -1359,10 +1375,9 @@ static inline uint64_t ppc_dump_gpr(CPUPPCState *env, int gprn)
 int ppc_dcr_read (ppc_dcr_t *dcr_env, int dcrn, uint32_t *valp);
 int ppc_dcr_write (ppc_dcr_t *dcr_env, int dcrn, uint32_t val);
 
-#define cpu_init(cpu_model) cpu_generic_init(TYPE_POWERPC_CPU, cpu_model)
-
 #define POWERPC_CPU_TYPE_SUFFIX "-" TYPE_POWERPC_CPU
 #define POWERPC_CPU_TYPE_NAME(model) model POWERPC_CPU_TYPE_SUFFIX
+#define CPU_RESOLVING_TYPE TYPE_POWERPC_CPU
 
 #define cpu_signal_handler cpu_ppc_signal_handler
 #define cpu_list ppc_cpu_list
@@ -1382,7 +1397,7 @@ void ppc_set_compat(PowerPCCPU *cpu, uint32_t compat_pvr, Error **errp);
 #if !defined(CONFIG_USER_ONLY)
 void ppc_set_compat_all(uint32_t compat_pvr, Error **errp);
 #endif
-int ppc_compat_max_threads(PowerPCCPU *cpu);
+int ppc_compat_max_vthreads(PowerPCCPU *cpu);
 void ppc_compat_add_property(Object *obj, const char *name,
                              uint32_t *compat_pvr, const char *basedesc,
                              Error **errp);
@@ -1999,6 +2014,7 @@ void ppc_compat_add_property(Object *obj, const char *name,
 #define HID0_DOZE           (1 << 23)           /* pre-2.06 */
 #define HID0_NAP            (1 << 22)           /* pre-2.06 */
 #define HID0_HILE           PPC_BIT(19) /* POWER8 */
+#define HID0_POWER9_HILE    PPC_BIT(4)
 
 /*****************************************************************************/
 /* PowerPC Instructions types definitions                                    */
@@ -2349,32 +2365,31 @@ enum {
 
 /* Processor Compatibility mask (PCR) */
 enum {
-    PCR_COMPAT_2_05     = 1ull << (63-62),
-    PCR_COMPAT_2_06     = 1ull << (63-61),
-    PCR_COMPAT_2_07     = 1ull << (63-60),
-    PCR_COMPAT_3_00     = 1ull << (63-59),
-    PCR_VEC_DIS         = 1ull << (63-0), /* Vec. disable (bit NA since POWER8) */
-    PCR_VSX_DIS         = 1ull << (63-1), /* VSX disable (bit NA since POWER8) */
-    PCR_TM_DIS          = 1ull << (63-2), /* Trans. memory disable (POWER8) */
+    PCR_COMPAT_2_05     = PPC_BIT(62),
+    PCR_COMPAT_2_06     = PPC_BIT(61),
+    PCR_COMPAT_2_07     = PPC_BIT(60),
+    PCR_COMPAT_3_00     = PPC_BIT(59),
+    PCR_VEC_DIS         = PPC_BIT(0), /* Vec. disable (bit NA since POWER8) */
+    PCR_VSX_DIS         = PPC_BIT(1), /* VSX disable (bit NA since POWER8) */
+    PCR_TM_DIS          = PPC_BIT(2), /* Trans. memory disable (POWER8) */
 };
 
 /* HMER/HMEER */
 enum {
-    HMER_MALFUNCTION_ALERT      = 1ull << (63 - 0),
-    HMER_PROC_RECV_DONE         = 1ull << (63 - 2),
-    HMER_PROC_RECV_ERROR_MASKED = 1ull << (63 - 3),
-    HMER_TFAC_ERROR             = 1ull << (63 - 4),
-    HMER_TFMR_PARITY_ERROR      = 1ull << (63 - 5),
-    HMER_XSCOM_FAIL             = 1ull << (63 - 8),
-    HMER_XSCOM_DONE             = 1ull << (63 - 9),
-    HMER_PROC_RECV_AGAIN        = 1ull << (63 - 11),
-    HMER_WARN_RISE              = 1ull << (63 - 14),
-    HMER_WARN_FALL              = 1ull << (63 - 15),
-    HMER_SCOM_FIR_HMI           = 1ull << (63 - 16),
-    HMER_TRIG_FIR_HMI           = 1ull << (63 - 17),
-    HMER_HYP_RESOURCE_ERR       = 1ull << (63 - 20),
-    HMER_XSCOM_STATUS_MASK      = 7ull << (63 - 23),
-    HMER_XSCOM_STATUS_LSH       = (63 - 23),
+    HMER_MALFUNCTION_ALERT      = PPC_BIT(0),
+    HMER_PROC_RECV_DONE         = PPC_BIT(2),
+    HMER_PROC_RECV_ERROR_MASKED = PPC_BIT(3),
+    HMER_TFAC_ERROR             = PPC_BIT(4),
+    HMER_TFMR_PARITY_ERROR      = PPC_BIT(5),
+    HMER_XSCOM_FAIL             = PPC_BIT(8),
+    HMER_XSCOM_DONE             = PPC_BIT(9),
+    HMER_PROC_RECV_AGAIN        = PPC_BIT(11),
+    HMER_WARN_RISE              = PPC_BIT(14),
+    HMER_WARN_FALL              = PPC_BIT(15),
+    HMER_SCOM_FIR_HMI           = PPC_BIT(16),
+    HMER_TRIG_FIR_HMI           = PPC_BIT(17),
+    HMER_HYP_RESOURCE_ERR       = PPC_BIT(20),
+    HMER_XSCOM_STATUS_MASK      = PPC_BITMASK(21, 23),
 };
 
 /* Alternate Interrupt Location (AIL) */

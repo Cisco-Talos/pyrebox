@@ -13,7 +13,6 @@
 #include "qapi/error.h"
 #include "qapi/visitor.h"
 #include "hw/qdev.h"
-#include "qemu/error-report.h"
 #include "qemu/bitops.h"
 #include "qemu/error-report.h"
 #include "exec/address-spaces.h"
@@ -440,7 +439,7 @@ static int s390_io_adapter_map(AdapterInfo *adapter, uint64_t map_addr,
                                bool do_map)
 {
     S390FLICState *fs = s390_get_flic();
-    S390FLICStateClass *fsc = S390_FLIC_COMMON_GET_CLASS(fs);
+    S390FLICStateClass *fsc = s390_get_flic_class(fs);
 
     return fsc->io_adapter_map(fs, adapter->adapter_id, map_addr, do_map);
 }
@@ -521,7 +520,7 @@ void css_register_io_adapters(CssIoAdapterType type, bool swap, bool maskable,
     int ret, isc;
     IoAdapter *adapter;
     S390FLICState *fs = s390_get_flic();
-    S390FLICStateClass *fsc = S390_FLIC_COMMON_GET_CLASS(fs);
+    S390FLICStateClass *fsc = s390_get_flic_class(fs);
 
     /*
      * Disallow multiple registrations for the same device type.
@@ -567,7 +566,7 @@ static void css_clear_io_interrupt(uint16_t subchannel_id,
     Error *err = NULL;
     static bool no_clear_irq;
     S390FLICState *fs = s390_get_flic();
-    S390FLICStateClass *fsc = S390_FLIC_COMMON_GET_CLASS(fs);
+    S390FLICStateClass *fsc = s390_get_flic_class(fs);
     int r;
 
     if (unlikely(no_clear_irq)) {
@@ -641,7 +640,7 @@ void css_conditional_io_interrupt(SubchDev *sch)
 int css_do_sic(CPUS390XState *env, uint8_t isc, uint16_t mode)
 {
     S390FLICState *fs = s390_get_flic();
-    S390FLICStateClass *fsc = S390_FLIC_COMMON_GET_CLASS(fs);
+    S390FLICStateClass *fsc = s390_get_flic_class(fs);
     int r;
 
     if (env->psw.mask & PSW_MASK_PSTATE) {
@@ -667,7 +666,7 @@ out:
 void css_adapter_interrupt(CssIoAdapterType type, uint8_t isc)
 {
     S390FLICState *fs = s390_get_flic();
-    S390FLICStateClass *fsc = S390_FLIC_COMMON_GET_CLASS(fs);
+    S390FLICStateClass *fsc = s390_get_flic_class(fs);
     uint32_t io_int_word = (isc << 27) | IO_INT_WORD_AI;
     IoAdapter *adapter = channel_subsys.io_adapters[type][isc];
 
@@ -1723,12 +1722,6 @@ void css_undo_stcrw(CRW *crw)
     QTAILQ_INSERT_HEAD(&channel_subsys.pending_crws, crw_cont, sibling);
 }
 
-int css_do_tpi(IOIntCode *int_code, int lowcore)
-{
-    /* No pending interrupts for !KVM. */
-    return 0;
- }
-
 int css_collect_chp_desc(int m, uint8_t cssid, uint8_t f_chpid, uint8_t l_chpid,
                          int rfmt, void *buf)
 {
@@ -2370,20 +2363,10 @@ const PropertyInfo css_devid_ro_propinfo = {
     .get = get_css_devid,
 };
 
-SubchDev *css_create_sch(CssDevId bus_id, bool is_virtual, bool squash_mcss,
-                         Error **errp)
+SubchDev *css_create_sch(CssDevId bus_id, bool squash_mcss, Error **errp)
 {
     uint16_t schid = 0;
     SubchDev *sch;
-
-    if (bus_id.valid) {
-        if (is_virtual != (bus_id.cssid == VIRTUAL_CSSID)) {
-            error_setg(errp, "cssid %hhx not valid for %s devices",
-                       bus_id.cssid,
-                       (is_virtual ? "virtual" : "non-virtual"));
-            return NULL;
-        }
-    }
 
     if (bus_id.valid) {
         if (squash_mcss) {
@@ -2396,19 +2379,8 @@ SubchDev *css_create_sch(CssDevId bus_id, bool is_virtual, bool squash_mcss,
                                            bus_id.devid, &schid, errp)) {
             return NULL;
         }
-    } else if (squash_mcss || is_virtual) {
-        bus_id.cssid = channel_subsys.default_cssid;
-
-        if (!css_find_free_subch_and_devno(bus_id.cssid, &bus_id.ssid,
-                                           &bus_id.devid, &schid, errp)) {
-            return NULL;
-        }
     } else {
-        for (bus_id.cssid = 0; bus_id.cssid < MAX_CSSID; ++bus_id.cssid) {
-            if (bus_id.cssid == VIRTUAL_CSSID) {
-                continue;
-            }
-
+        for (bus_id.cssid = channel_subsys.default_cssid;;) {
             if (!channel_subsys.css[bus_id.cssid]) {
                 css_create_css_image(bus_id.cssid, false);
             }
@@ -2418,7 +2390,8 @@ SubchDev *css_create_sch(CssDevId bus_id, bool is_virtual, bool squash_mcss,
                                                 NULL)) {
                 break;
             }
-            if (bus_id.cssid == MAX_CSSID) {
+            bus_id.cssid = (bus_id.cssid + 1) % MAX_CSSID;
+            if (bus_id.cssid == channel_subsys.default_cssid) {
                 error_setg(errp, "Virtual channel subsystem is full!");
                 return NULL;
             }

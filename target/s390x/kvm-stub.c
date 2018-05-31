@@ -12,10 +12,6 @@
 #include "cpu.h"
 #include "kvm_s390x.h"
 
-void kvm_s390_service_interrupt(uint32_t parm)
-{
-}
-
 void kvm_s390_access_exception(S390CPU *cpu, uint16_t code, uint64_t te_code)
 {
 }
@@ -27,15 +23,6 @@ int kvm_s390_mem_op(S390CPU *cpu, vaddr addr, uint8_t ar, void *hostbuf,
 }
 
 void kvm_s390_program_interrupt(S390CPU *cpu, uint16_t code)
-{
-}
-
-void kvm_s390_io_interrupt(uint16_t subchannel_id, uint16_t subchannel_nr,
-                           uint32_t io_int_parm, uint32_t io_int_word)
-{
-}
-
-void kvm_s390_crw_mchk(void)
 {
 }
 
@@ -95,11 +82,6 @@ int kvm_s390_assign_subch_ioeventfd(EventNotifier *notifier, uint32_t sch,
 
 void kvm_s390_cmma_reset(void)
 {
-}
-
-int kvm_s390_get_memslot_count(void)
-{
-  return MAX_AVAIL_SLOTS;
 }
 
 void kvm_s390_reset_vcpu(S390CPU *cpu)

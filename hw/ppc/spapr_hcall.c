@@ -13,7 +13,6 @@
 #include "trace.h"
 #include "kvm_ppc.h"
 #include "hw/ppc/spapr_ovec.h"
-#include "qemu/error-report.h"
 #include "mmu-book3s-v3.h"
 
 struct SPRSyncState {
@@ -732,11 +731,21 @@ static target_ulong h_resize_hpt_commit(PowerPCCPU *cpu,
         return H_AUTHORITY;
     }
 
+    if (!spapr->htab_shift) {
+        /* Radix guest, no HPT */
+        return H_NOT_AVAILABLE;
+    }
+
     trace_spapr_h_resize_hpt_commit(flags, shift);
 
     rc = kvmppc_resize_hpt_commit(cpu, flags, shift);
     if (rc != -ENOSYS) {
-        return resize_hpt_convert_rc(rc);
+        rc = resize_hpt_convert_rc(rc);
+        if (rc == H_SUCCESS) {
+            /* Need to set the new htab_shift in the machine state */
+            spapr->htab_shift = shift;
+        }
+        return rc;
     }
 
     if (flags != 0) {
@@ -1636,7 +1645,7 @@ static target_ulong h_client_architecture_support(PowerPCCPU *cpu,
     spapr->cas_legacy_guest_workaround = !spapr_ovec_test(ov1_guest,
                                                           OV1_PPC_3_00);
     if (!spapr->cas_reboot) {
-        /* If ppc_spapr_reset() did not set up a HPT but one is necessary
+        /* If spapr_machine_reset() did not set up a HPT but one is necessary
          * (because the guest isn't going to use radix) then set it up here. */
         if ((spapr->patb_entry & PATBE1_GR) && !guest_radix) {
             /* legacy hash or new hash: */
@@ -1696,7 +1705,10 @@ static target_ulong h_get_cpu_characteristics(PowerPCCPU *cpu,
     }
 
     switch (safe_indirect_branch) {
-    case SPAPR_CAP_FIXED:
+    case SPAPR_CAP_FIXED_CCD:
+        characteristics |= H_CPU_CHAR_CACHE_COUNT_DIS;
+        break;
+    case SPAPR_CAP_FIXED_IBS:
         characteristics |= H_CPU_CHAR_BCCTRL_SERIALISED;
         break;
     default: /* broken */
