@@ -1,11 +1,17 @@
 import SocketServer
+import threading
 import struct
+import string
 
 import api
+from utils import find_procs
 
 
 # Printer
 pyrebox_print = None
+
+# RAP server
+rs = None
 
 
 class BaseRapHandler(SocketServer.BaseRequestHandler):
@@ -14,10 +20,10 @@ class BaseRapHandler(SocketServer.BaseRequestHandler):
             try:
                 self.handle_packet()
             except EOFError:
-                pyrebox_print("Connection closed\n")
+                pyrebox_print("Client disconnected")
                 break
             except Exception as e:
-                pyrebox_print("Protocol error: {}\n".format(e))
+                pyrebox_print("Protocol error: {}".format(e))
                 break
 
     def handle_packet(self):
@@ -82,7 +88,7 @@ class BaseRapHandler(SocketServer.BaseRequestHandler):
             self.request.sendall(buf + ret)
 
         else:
-            raise "unknown RAP packet type"
+            raise Exception("unknown RAP packet type")
 
     def rap_open(self, name, flags):
         raise NotImplementedError
@@ -106,7 +112,7 @@ class BaseRapHandler(SocketServer.BaseRequestHandler):
         raise NotImplementedError
 
     def _request_read(self, sz, recvsz=1024):
-        buf = ''
+        buf = ""
 
         while len(buf) < sz:
             if recvsz > sz - len(buf):
@@ -139,8 +145,7 @@ class DefaultRapHandler(BaseRapHandler):
                 self.pname = proc["name"]
                 break
         else:
-            pyrebox_print("Process not found: {}\n".format(name))
-            return 0
+            raise Exception("Process not found: {}".format(name))
 
         module_list = api.get_module_list(self.pgd)
         for m in module_list:
@@ -149,7 +154,7 @@ class DefaultRapHandler(BaseRapHandler):
             self.base = m["base"]
             self.size = m["size"]
 
-        pyrebox_print("Selecting name={} pid={} base={:#x} size={}\n".format(
+        pyrebox_print("Selecting name={} pid={} base={:#x} size={}".format(
             self.pname, self.pid, self.base, self.size))
 
         return 0
@@ -158,7 +163,7 @@ class DefaultRapHandler(BaseRapHandler):
         try:
             data = api.r_va(self.pgd, self.curseek, size)
         except Exception:
-            pyrebox_print("Cannot read memory at {:#x}\n".format(self.curseek))
+            pyrebox_print("Cannot read memory at {:#x}".format(self.curseek))
             data = ""
 
         return data
@@ -168,7 +173,7 @@ class DefaultRapHandler(BaseRapHandler):
             api.w_va(self.pgd, self.curseek, data, len(data))
             size = len(data)
         except Exception:
-            pyrebox_print("Cannot write memory at {:#x}\n".format(self.curseek))
+            pyrebox_print("Cannot write memory at {:#x}".format(self.curseek))
             size = 0
 
         return size
@@ -192,12 +197,32 @@ class DefaultRapHandler(BaseRapHandler):
         self.curseek = 0
 
     def rap_system(self, cmd):
-        pyrebox_print("system not implemented\n")
+        pyrebox_print("RAP_SYSTEM not implemented")
         return ""
 
     def rap_cmd(self, cmd):
-        pyrebox_print("cmd not implemented\n")
+        cmd = cmd.strip(string.whitespace + "\x00")
+        if len(cmd) == 0:
+            pyrebox_print("RAP_CMD: malformed command")
+
+        argv = cmd.split(" ")
+        for element in dir(self):
+            if element == "_cmd_{}".format(argv[0]):
+                return getattr(self, element)(argv[1:])
+
+        pyrebox_print("RAP_CMD: cmd '{}' not implemented".format(argv[0]))
         return ""
+
+    def _cmd_lm(self, args):
+        ret = ""
+
+        try:
+            for m in sorted(api.get_module_list(self.pgd), key=lambda k: k['base']):
+                ret += "name={} base={:#x} size={:#x}\n".format(m["name"], m["base"], m["size"])
+        except Exception as e:
+            return "error: {}\n".format(e)
+
+        return ret
 
 
 class RapServer():
@@ -218,14 +243,69 @@ class RapServer():
 
 
     def __init__(self, host, port, handler_class=DefaultRapHandler):
+        self.host = host
+        self.port = port
         self.server = SocketServer.TCPServer((host, port), handler_class)
 
-    def serve_forever(self):
-        self.server.serve_forever()
+    def serve(self):
+        server_thread = threading.Thread(target=self.server.serve_forever)
+        server_thread.start()
 
     def shutdown(self):
         self.server.shutdown()
         self.server.server_close()
+
+
+def serve(host, port):
+    global rs
+
+    if rs:
+        pyrebox_print("RAP server already running on {}:{}".format(rs.host, rs.port))
+        return
+
+    try:
+        rs = RapServer(host, port)
+        rs.serve()
+        pyrebox_print("RAP server listening on {}:{}".format(host, port))
+    except Exception as ex:
+        pyrebox_print("RAP server error: {}".format(ex))
+
+
+def shutdown():
+    global rs
+
+    if not rs:
+        pyrebox_print("RAP server not running")
+        return
+
+    pyrebox_print("Closing RAP server (waiting for clients to disconnect)...")
+    rs.shutdown()
+    rs = None
+    pyrebox_print("RAP server closed")
+
+
+def do_rap(line):
+    '''Start a radare2 RAP server
+
+    Usage: custom rap :1234         - start a RAP server listening on localhost:1234
+           custom rap 0.0.0.0:1234  - start a RAP server listening on 0.0.0.0:1234
+           custom rap shutdown      - close the running RAP server
+    '''
+
+    elements = line.split(":")
+    if len(elements) == 1 and elements[0] == "shutdown":
+        # custom rap shutdown
+        shutdown()
+    elif len(elements) == 2:
+        # custom rap [hostname]:port
+        host = elements[0]
+        port = int(elements[1])
+        if host == "":
+            host = "localhost"
+        serve(host, port)
+    else:
+        # Unknown cmdline
+        pyrebox_print(do_rap.__doc__)
 
 
 def initialize_callbacks(module_hdl, printer):
@@ -234,34 +314,4 @@ def initialize_callbacks(module_hdl, printer):
 
 
 def clean():
-    pass
-
-
-def do_rap(line):
-    '''Start a radare2 RAP server
-
-       Usage: custom rap :1234         - start a RAP server listening on localhost:1234
-              custom rap 0.0.0.0:1234  - start a RAP server listening on 0.0.0.0:1234
-    '''
-
-    elements = line.split(":")
-    if len(elements) != 2:
-        pyrebox_print(do_rap.__doc__)
-        return
-
-    rap_host = elements[0]
-    rap_port = int(elements[1])
-
-    if rap_host == "":
-        rap_host = "localhost"
-
-    try:
-        rs = RapServer(rap_host, rap_port)
-
-        pyrebox_print("RAP server listening on {}:{}\n".format(rap_host, rap_port))
-        rs.serve_forever()
-    except KeyboardInterrupt:
-        pyrebox_print("Killing RAP server\n")
-        rs.shutdown()
-    except Exception as ex:
-        pyrebox_print("RAP server error: {}\n".format(ex))
+    shutdown()
