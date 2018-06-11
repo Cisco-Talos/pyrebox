@@ -8859,8 +8859,11 @@ static int i386_tr_init_disas_context(DisasContextBase *dcbase, CPUState *cpu,
     dc->code64 = (flags >> HF_CS64_SHIFT) & 1;
 #endif
     dc->flags = flags;
-    dc->jmp_opt = !(dc->tf || dc->base.singlestep_enabled ||
-                    (flags & HF_INHIBIT_IRQ_MASK));
+    // PyREBox: Disable block chaining to make sure
+    // we always instrument (insn_end, block_end, and opcode_range)
+    // at translacion block boundaries.
+    dc->jmp_opt = 0; //!(dc->tf || dc->base.singlestep_enabled ||
+                     //(flags & HF_INHIBIT_IRQ_MASK));
     /* Do not optimize repz jumps at all in icount mode, because
        rep movsS instructions are execured with different paths
        in !repz_opt and repz_opt modes. The first one was used
