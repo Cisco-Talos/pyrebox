@@ -941,7 +941,7 @@ void CallbackManager::deliver_callback(callback_type_t type, callback_params_t p
 #if TARGET_LONG_SIZE == 4
             kwarg =  Py_BuildValue("{s:I,s:I}",
 #elif TARGET_LONG_SIZE == 8
-            kwarg =  Py_BuildValue("{s:K,s:K)",
+            kwarg =  Py_BuildValue("{s:K,s:K}",
 #else
 #error TARGET_LONG_SIZE undefined
 #endif
