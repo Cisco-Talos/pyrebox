@@ -38,7 +38,7 @@ void helper_qemu_insn_begin_callback(CPUState* cpu);
 
 void helper_qemu_insn_end_callback(CPUState* cpu);
 
-void helper_qemu_opcode_range_callback(CPUState* cpu, target_ulong from, target_ulong to, uint32_t opcode);
+void helper_qemu_opcode_range_callback(CPUState* cpu, target_ulong from, target_ulong to, uint32_t opcode, target_ulong insn_size);
 
 void helper_qemu_trigger_cpu_loop_exit_if_needed(CPUState* cpu);
 

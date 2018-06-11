@@ -878,9 +878,9 @@ void CallbackManager::deliver_callback(callback_type_t type, callback_params_t p
             break;
        case OPCODE_RANGE_CB:
 #if TARGET_LONG_SIZE == 4
-            kwarg =  Py_BuildValue("{s:i,s:N,s:I,s:I}",
+            kwarg =  Py_BuildValue("{s:i,s:N,s:I,s:I,s:I}",
 #elif TARGET_LONG_SIZE == 8
-            kwarg =  Py_BuildValue("{s:i,s:N,s:K,s:K}",
+            kwarg =  Py_BuildValue("{s:i,s:N,s:K,s:K,s:K}",
 #else
 #error TARGET_LONG_SIZE undefined
 #endif
@@ -891,7 +891,9 @@ void CallbackManager::deliver_callback(callback_type_t type, callback_params_t p
                                       "cur_pc",
                                       params.opcode_range_params.cur_pc,
                                       "next_pc",
-                                      params.opcode_range_params.next_pc);
+                                      params.opcode_range_params.next_pc,
+                                      "insn_size",
+                                      params.opcode_range_params.insn_size);
             break;
        case TLB_EXEC_CB:
 #if TARGET_LONG_SIZE == 4

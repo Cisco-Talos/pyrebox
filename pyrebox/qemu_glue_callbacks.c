@@ -143,7 +143,7 @@ void helper_qemu_insn_end_callback(CPUState* cpu){
     insn_end_callback(params);
 }
 
-void helper_qemu_opcode_range_callback(CPUState* cpu, target_ulong from, target_ulong to, uint32_t opcode){
+void helper_qemu_opcode_range_callback(CPUState* cpu, target_ulong from, target_ulong to, uint32_t opcode, target_ulong insn_size){
     callback_params_t params;
 #if defined(TARGET_I386) || defined(TARGET_X86_64)
     CPUX86State* env = &(X86_CPU((CPUState*)cpu)->env);
@@ -157,6 +157,7 @@ void helper_qemu_opcode_range_callback(CPUState* cpu, target_ulong from, target_
     params.opcode_range_params.cur_pc = from;
     params.opcode_range_params.next_pc = to;
     params.opcode_range_params.opcode = opcode;
+    params.opcode_range_params.insn_size = insn_size;
 
     opcode_range_callback(params);
 }

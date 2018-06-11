@@ -38,7 +38,7 @@ from api_internal import remove_trigger
 from api_internal import set_trigger_uint32
 from api_internal import set_trigger_uint64
 from api_internal import set_trigger_str
-from api_internal import get_trigger_var
+from api_internal import get_trigger_var as internal_get_trigger_var
 from api_internal import call_trigger_function
 from api_internal import unregister_module_load_callback
 from api_internal import unregister_module_remove_callback
@@ -1122,7 +1122,7 @@ class CallbackManager:
                 "[!] CallbackManager: A callback with name %s does not exist, or it is a module callback (non-trigger compatible)\n" %
                 (name))
             return
-        return get_trigger_var(self.callbacks[name], var_name)
+        return internal_get_trigger_var(self.callbacks[name], var_name)
 
     def call_trigger_function(self, name, function_name):
         '''

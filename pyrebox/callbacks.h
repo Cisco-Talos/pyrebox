@@ -126,6 +126,7 @@ typedef struct opcode_range_params {
     pyrebox_target_ulong cur_pc;
     pyrebox_target_ulong next_pc;
     uint16_t opcode;
+    pyrebox_target_ulong insn_size;
 } opcode_range_params_t;
 
 typedef struct tlb_exec_params {

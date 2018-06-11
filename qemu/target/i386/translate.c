@@ -2209,6 +2209,7 @@ static inline bool use_goto_tb(DisasContext *s, target_ulong pc)
 static inline void gen_goto_tb(DisasContext *s, int tb_num, target_ulong eip)
 {
     target_ulong pc = s->cs_base + eip;
+    target_ulong insn_size = s->pc - s->pc_start;
 
     if (use_goto_tb(s, pc))  {
         /* jump to same page: we can use a direct jump */
@@ -2245,7 +2246,6 @@ static inline void gen_goto_tb(DisasContext *s, int tb_num, target_ulong eip)
         }
         //Pyrebox: opcode range
         //helper_qemu_opcode_range_callback(CPUState* cpu, target_ulong from, target_ulong to, uint16_t opcode)
-        
         if (is_opcode_range_callback_needed((target_ulong)s->saved_opcode,s->pgd)){
             //Update flags before callback
             gen_update_cc_op(s);
@@ -2255,13 +2255,18 @@ static inline void gen_goto_tb(DisasContext *s, int tb_num, target_ulong eip)
             TCGv tcg_next_pc = tcg_temp_new();
             tcg_gen_movi_tl(tcg_next_pc, pc);
             TCGv_i32 tcg_opcode = tcg_const_i32(s->saved_opcode);
-
+            TCGv tcg_insn_size = tcg_temp_new();
+            tcg_gen_movi_tl(tcg_insn_size, insn_size);
             TCGv_ptr tcg_cpu = tcg_const_ptr((tcg_target_ulong)s->cs);
-            gen_helper_qemu_opcode_range_callback(tcg_cpu, tcg_saved_pc, tcg_next_pc, tcg_opcode);
+
+            gen_helper_qemu_opcode_range_callback(tcg_cpu, tcg_saved_pc, tcg_next_pc, tcg_opcode, tcg_insn_size);
+
             tcg_temp_free(tcg_saved_pc);
             tcg_temp_free(tcg_next_pc);
+            tcg_temp_free(tcg_insn_size);
             tcg_temp_free_i32(tcg_opcode);
             tcg_temp_free_ptr(tcg_cpu);
+
         }
 
         tcg_gen_exit_tb((uintptr_t)s->base.tb + tb_num);
@@ -2545,6 +2550,9 @@ static void gen_exception(DisasContext *s, int trapno, target_ulong cur_eip)
    the instruction is known, but it isn't allowed in the current cpu mode.  */
 static void gen_illegal_opcode(DisasContext *s)
 {
+
+    target_ulong insn_size = s->pc - s->pc_start;
+
     //Call opcode range callback before exception for illegal opcode is generated
     if (is_opcode_range_callback_needed((target_ulong)s->saved_opcode,s->pgd)){
         //Update flags before callback
@@ -2554,14 +2562,18 @@ static void gen_illegal_opcode(DisasContext *s)
         tcg_gen_movi_tl(tcg_saved_pc, s->saved_pc);
         TCGv tcg_next_pc = tcg_const_tl(0);
         TCGv_i32 tcg_opcode = tcg_const_i32(s->saved_opcode);
+        TCGv tcg_insn_size = tcg_temp_new();
+        tcg_gen_movi_tl(tcg_insn_size, insn_size);
     
         TCGv_ptr tcg_cpu = tcg_const_ptr((tcg_target_ulong)s->cs);
         gen_helper_qemu_opcode_range_callback(tcg_cpu,
-        tcg_saved_pc, tcg_next_pc, tcg_opcode);
+        tcg_saved_pc, tcg_next_pc, tcg_opcode, tcg_insn_size);
         tcg_temp_free(tcg_saved_pc);
         tcg_temp_free(tcg_next_pc);
+        tcg_temp_free(tcg_insn_size);
         tcg_temp_free_i32(tcg_opcode);
         tcg_temp_free_ptr(tcg_cpu);
+
     }
     //Pyrebox: trigger cpu loop exit if needed
     //Update flags. In QEMU flags are only updated when needed (on block
@@ -2659,6 +2671,8 @@ static void gen_bnd_jmp(DisasContext *s)
 static void
 do_gen_eob_worker(DisasContext *s, bool inhibit, bool recheck_tf, bool jr, TCGv dest)
 {
+    target_ulong insn_size = s->pc - s->pc_start;
+
     gen_update_cc_op(s);
 
     /* If several instructions disable interrupts, only the first does it.  */
@@ -2709,7 +2723,6 @@ do_gen_eob_worker(DisasContext *s, bool inhibit, bool recheck_tf, bool jr, TCGv 
 
         //Pyrebox: opcode range
         //helper_qemu_opcode_range_callback(CPUState* cpu, target_ulong from, target_ulong to, uint16_t opcode)
-        
         if (is_opcode_range_callback_needed((target_ulong)s->saved_opcode, s->pgd)){
             //Update flags before callback
             gen_update_cc_op(s);
@@ -2717,12 +2730,16 @@ do_gen_eob_worker(DisasContext *s, bool inhibit, bool recheck_tf, bool jr, TCGv 
             TCGv tcg_saved_pc = tcg_temp_new();
             tcg_gen_movi_tl(tcg_saved_pc, s->saved_pc);
             TCGv_i32 tcg_opcode = tcg_const_i32(s->saved_opcode);
+            TCGv tcg_insn_size = tcg_temp_new();
+            tcg_gen_movi_tl(tcg_insn_size, insn_size);
 
             TCGv_ptr tcg_cpu = tcg_const_ptr((tcg_target_ulong)s->cs);
-            gen_helper_qemu_opcode_range_callback(tcg_cpu, tcg_saved_pc, dest, tcg_opcode);
+            gen_helper_qemu_opcode_range_callback(tcg_cpu, tcg_saved_pc, dest, tcg_opcode, tcg_insn_size);
             tcg_temp_free(tcg_saved_pc);
+            tcg_temp_free(tcg_insn_size);
             tcg_temp_free_i32(tcg_opcode);
             tcg_temp_free_ptr(tcg_cpu);
+
         }
 
         //Pyrebox: trigger cpu loop exit if needed
@@ -2765,7 +2782,6 @@ do_gen_eob_worker(DisasContext *s, bool inhibit, bool recheck_tf, bool jr, TCGv 
         }
         //Pyrebox: opcode range
         //helper_qemu_opcode_range_callback(CPUState* cpu, target_ulong from, target_ulong to, uint16_t opcode)
-        
         if (is_opcode_range_callback_needed((target_ulong)s->saved_opcode,s->pgd)){
             //Update flags before callback
             gen_update_cc_op(s);
@@ -2773,12 +2789,16 @@ do_gen_eob_worker(DisasContext *s, bool inhibit, bool recheck_tf, bool jr, TCGv 
             TCGv tcg_saved_pc = tcg_temp_new();
             tcg_gen_movi_tl(tcg_saved_pc, s->saved_pc);
             TCGv_i32 tcg_opcode = tcg_const_i32(s->saved_opcode);
+            TCGv tcg_insn_size = tcg_temp_new();
+            tcg_gen_movi_tl(tcg_insn_size, insn_size);
 
             TCGv_ptr tcg_cpu = tcg_const_ptr((tcg_target_ulong)s->cs);
-            gen_helper_qemu_opcode_range_callback(tcg_cpu, tcg_saved_pc, dest, tcg_opcode);
+            gen_helper_qemu_opcode_range_callback(tcg_cpu, tcg_saved_pc, dest, tcg_opcode, tcg_insn_size);
             tcg_temp_free(tcg_saved_pc);
+            tcg_temp_free(tcg_insn_size);
             tcg_temp_free_i32(tcg_opcode);
             tcg_temp_free_ptr(tcg_cpu);
+
         }
 
         tcg_gen_exit_tb(0);
@@ -7229,7 +7249,6 @@ static target_ulong disas_insn(DisasContext *s, CPUState *cpu)
         //XXX: Pyrebox - opcode_range. We need to put it BEFORE the instruction, at the time
         //of insn_begin, because the gen_interrupt will provoke to exit the cpu loop,
         //so whatever we insert after that will never be executed.
-        
         if (is_opcode_range_callback_needed((target_ulong)s->saved_opcode,s->pgd)){
             //Update flags before callback
             gen_update_cc_op(s);
@@ -7238,13 +7257,17 @@ static target_ulong disas_insn(DisasContext *s, CPUState *cpu)
             TCGv tcg_next_pc = tcg_temp_new();
             tcg_gen_movi_tl(tcg_next_pc, s->pc);
             TCGv_i32 tcg_opcode = tcg_const_i32(s->saved_opcode);
+            TCGv tcg_insn_size = tcg_temp_new();
+            tcg_gen_movi_tl(tcg_insn_size, s->pc - s->pc_start);
 
             TCGv_ptr tcg_cpu = tcg_const_ptr((tcg_target_ulong)s->cs);
-            gen_helper_qemu_opcode_range_callback(tcg_cpu, tcg_saved_pc, tcg_next_pc, tcg_opcode);
+            gen_helper_qemu_opcode_range_callback(tcg_cpu, tcg_saved_pc, tcg_next_pc, tcg_opcode, tcg_insn_size);
             tcg_temp_free(tcg_saved_pc);
             tcg_temp_free(tcg_next_pc);
+            tcg_temp_free(tcg_insn_size);
             tcg_temp_free_i32(tcg_opcode);
             tcg_temp_free_ptr(tcg_cpu);
+
         }
 
         //Pyrebox: trigger cpu loop exit if needed
@@ -7264,7 +7287,6 @@ static target_ulong disas_insn(DisasContext *s, CPUState *cpu)
         //XXX: Pyrebox - opcode_range. We need to put it BEFORE the instruction, at the time
         //of insn_begin, because the gen_interrupt will provoke to exit the cpu loop,
         //so whatever we insert after that will never be executed.
-        
         if (is_opcode_range_callback_needed((target_ulong)s->saved_opcode,s->pgd)){
             //Update flags before callback
             gen_update_cc_op(s);
@@ -7273,13 +7295,17 @@ static target_ulong disas_insn(DisasContext *s, CPUState *cpu)
             TCGv tcg_next_pc = tcg_temp_new();
             tcg_gen_movi_tl(tcg_next_pc, s->pc);
             TCGv_i32 tcg_opcode = tcg_const_i32(s->saved_opcode);
+            TCGv tcg_insn_size = tcg_temp_new();
+            tcg_gen_movi_tl(tcg_insn_size, s->pc - s->pc_start);
 
             TCGv_ptr tcg_cpu = tcg_const_ptr((tcg_target_ulong)s->cs);
-            gen_helper_qemu_opcode_range_callback(tcg_cpu, tcg_saved_pc, tcg_next_pc, tcg_opcode);
+            gen_helper_qemu_opcode_range_callback(tcg_cpu, tcg_saved_pc, tcg_next_pc, tcg_opcode, tcg_insn_size);
             tcg_temp_free(tcg_saved_pc);
             tcg_temp_free(tcg_next_pc);
+            tcg_temp_free(tcg_insn_size);
             tcg_temp_free_i32(tcg_opcode);
             tcg_temp_free_ptr(tcg_cpu);
+
         }
 
         //Pyrebox: trigger cpu loop exit if needed
@@ -8679,6 +8705,8 @@ static target_ulong disas_insn(DisasContext *s, CPUState *cpu)
         goto unknown_op;
     }
 
+    target_ulong insn_size = s->pc - s->pc_start;
+
     if (!s->base.is_jmp) {
         //Pyrebox: Generate a jump to the next instruction before we call
         //insn end and opcode range callback, so that the cpu context
@@ -8698,7 +8726,6 @@ static target_ulong disas_insn(DisasContext *s, CPUState *cpu)
         }
         //Pyrebox: opcode range
         //helper_qemu_opcode_range_callback(CPUState* cpu, target_ulong from, target_ulong to, uint16_t opcode)
-        
         if (is_opcode_range_callback_needed((target_ulong)s->saved_opcode,s->pgd)){
             //Update flags before callback
             gen_update_cc_op(s);
@@ -8707,11 +8734,14 @@ static target_ulong disas_insn(DisasContext *s, CPUState *cpu)
             TCGv tcg_next_pc = tcg_temp_new();
             tcg_gen_movi_tl(tcg_next_pc, s->pc);
             TCGv_i32 tcg_opcode = tcg_const_i32(s->saved_opcode);
+            TCGv tcg_insn_size = tcg_temp_new();
+            tcg_gen_movi_tl(tcg_insn_size, insn_size);
 
             TCGv_ptr tcg_cpu = tcg_const_ptr((tcg_target_ulong)s->cs);
-            gen_helper_qemu_opcode_range_callback(tcg_cpu, tcg_saved_pc, tcg_next_pc, tcg_opcode);
+            gen_helper_qemu_opcode_range_callback(tcg_cpu, tcg_saved_pc, tcg_next_pc, tcg_opcode, tcg_insn_size);
             tcg_temp_free(tcg_saved_pc);
             tcg_temp_free(tcg_next_pc);
+            tcg_temp_free(tcg_insn_size);
             tcg_temp_free_i32(tcg_opcode);
             tcg_temp_free_ptr(tcg_cpu);
 
