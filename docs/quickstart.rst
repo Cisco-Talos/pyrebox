@@ -13,6 +13,13 @@ Installing dependencies for Debian based distributions:
 ::
   apt-get install build-essential zlib1g-dev pkg-config libglib2.0-dev binutils-dev libboost-all-dev autoconf libtool libssl-dev libpixman-1-dev libpython-dev python-pip python-capstone virtualenv
 
+Installing dependencies for CentOS 7:
+::
+  yum groupinstall 'Development Tools'
+  yum install zlib-devel.x86_64 glib2-devel.x86_64 binutils-devel.x86_64 boost-devel.x86_64 autoconf.noarch libtool.x86_64 openssl-devel.x86_64 pixman-devel.x86_64 python-devel.x86_64 libfdt-devel
+  yum install epel-release
+  yum install python-virtualenv python34-pip.noarch python2-pip.noarch
+
 Required python packages (see the next paragraph for installation instructions):
 ::
   ipython>=5,<6 sphinx sphinx-autobuild prettytable pefile capstone distorm3 pycrypto pytz

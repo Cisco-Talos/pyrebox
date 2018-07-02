@@ -40,3 +40,9 @@
 [submodule "qemu/capstone"]
 	path = qemu/capstone
 	url = git://git.qemu.org/capstone.git
+[submodule "qemu/roms/seabios-hppa"]
+    path = qemu/roms/seabios-hppa
+    url = git://github.com/hdeller/seabios-hppa.git
+[submodule "qemu/roms/u-boot-sam460ex"]
+    path = qemu/roms/u-boot-sam460ex
+    url = git://git.qemu.org/u-boot-sam460ex.git

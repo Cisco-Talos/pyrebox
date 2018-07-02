@@ -22,8 +22,8 @@
 -------------------------------------------------------------------------------*/
 
 //System includes
-#include <sys/time.h>
 #include <Python.h>
+#include <sys/time.h>
 #include <dlfcn.h>
 #include <pthread.h>
 

@@ -21,8 +21,8 @@
    
 -------------------------------------------------------------------------------*/
 
-#include <inttypes.h>
 #include <Python.h>
+#include <inttypes.h>
 #include <limits.h>
 #include <list>
 #include <set>

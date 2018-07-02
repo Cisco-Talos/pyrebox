@@ -21,9 +21,9 @@
    
 -------------------------------------------------------------------------------*/
 
+#include <Python.h>
 #include <stdio.h>
 #include <inttypes.h>
-#include <Python.h>
 
 #include "qemu_glue.h"
 #include "utils.h"
