@@ -9,6 +9,7 @@
 .. _BUILD: BUILD.rst 
 .. _here: https://github.com/Cisco-Talos/pyrebox/issues
 .. _slides: https://github.com/Cisco-Talos/pyrebox/tree/master/docs/pyrebox_hitb_ams.pdf
+.. _available: https://github.com/Cisco-Talos/pyrebox/tree/master/docs/pyrebox_euskalhack.pdf
 .. _scripts: https://github.com/Cisco-Talos/pyrebox/tree/master/scripts
 .. _readthedocs.io: https://pyrebox.readthedocs.io/en/latest/
 .. _questions: https://github.com/Cisco-Talos/pyrebox/issues?utf8=%E2%9C%93&q=is%3Aissue%20label%3Aquestion%20
@@ -33,7 +34,8 @@ on keeping the design simple, and on the usability of the system for threat anal
 
 PyREBox won the Volatility Plugin Contest_ in 2017!
 
-Also, it was presented at HITB Amsterdam 2018. You can see the slides_, or watch the presentation_.
+This tool was presented at HITB Amsterdam 2018. You can see the slides_, or watch the presentation_. It
+was also presented at the third edition of EuskalHack Security Congress (slides available_).
 
 What's new
 ==========
@@ -43,6 +45,7 @@ active development and new cool features are yet to come! The master branch shou
 version, while the dev branches contain the latest, work-in progress features. The following announcement
 list refers to the master branch, and the date when the development changes were merged into master.
 
+- [Jul 26, 2018] Uploaded slides of EuskalHack 2018 presentation.
 - [Jul 02, 2018] Fixes to provide CentOS 7 support. 
 - [Jun 25, 2018] Added scripts presented at EuskalHack 2018.
 - [May 31, 2018] Upgraded to Qemu v2.12.0.
