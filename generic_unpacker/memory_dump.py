@@ -25,7 +25,7 @@ from __future__ import print_function
 import shutil
 import os
 
-def dump(pgd_list, path = "/tmp/"):
+def dump(pgd_list, pyrebox_print, path = "/tmp/"):
     '''
     Dump the process, modules, vads..., given a list of process address spaces and a path.
     '''
@@ -54,16 +54,16 @@ def dump(pgd_list, path = "/tmp/"):
             # Code adapted from procdump (volatility)
             task_space = task.get_process_address_space()
             if task_space is None:
-                print("Error: Cannot acquire process AS")
+                pyrebox_print("Error: Cannot acquire process AS")
                 return
             elif task.Peb is None:
                 # we must use m() here, because any other attempt to
                 # reference task.Peb will try to instantiate the _PEB
-                print(
+                pyrebox_print(
                     "Error: PEB at {0:#x} is unavailable (possibly due to paging)".format(task.m('Peb')))
                 return
             elif task_space.vtop(task.Peb.ImageBaseAddress) is None:
-                print(
+                pyrebox_print(
                     "Error: ImageBaseAddress at {0:#x} is unavailable" +
                     "(possibly due to paging)".format(task.Peb.ImageBaseAddress))
                 return
@@ -80,10 +80,10 @@ def dump(pgd_list, path = "/tmp/"):
                         of.seek(offset)
                         of.write(code)
                 except ValueError, ve:
-                    print("Error: {0}".format(ve))
+                    pyrebox_print("Error: {0}".format(ve))
                     return
                 except exceptions.SanityCheckException, ve:
-                    print("Error: {0} Try -u/--unsafe".format(ve))
+                    pyrebox_print("Error: {0} Try -u/--unsafe".format(ve))
                     return
                 finally:
                     of.close()
@@ -100,11 +100,11 @@ def dump(pgd_list, path = "/tmp/"):
                     mod_base = mod.DllBase.v()
                     mod_name = mod.BaseDllName
                     if not task_space.is_valid_address(mod_base):
-                        print(
+                        pyrebox_print(
                             "Error: DllBase is unavailable (possibly due to paging)")
                         continue
                     else:
-                        print("Dumping module %s for %x" %
+                        pyrebox_print("Dumping module %s for %x" %
                                       (mod_name, task.UniqueProcessId))
                         dump_file = os.path.join(
                             path, "PID_{0:x}.module.{1:x}.dll".format(task.UniqueProcessId, mod_base))
@@ -119,10 +119,10 @@ def dump(pgd_list, path = "/tmp/"):
                                 of.seek(offset)
                                 of.write(code)
                         except ValueError, ve:
-                            print("Error: {0}".format(ve))
+                            pyrebox_print("Error: {0}".format(ve))
                             return
                         except exceptions.SanityCheckException, ve:
-                            print(
+                            pyrebox_print(
                                 "Error: {0} Try -u/--unsafe".format(ve))
                             return
                         finally:
@@ -157,9 +157,9 @@ def dump(pgd_list, path = "/tmp/"):
                             offset += to_read
                         fh.close()
                     else:
-                        print(
+                        pyrebox_print(
                             "Cannot open {0} for writing".format(path))
                         continue
     except Exception as e:
-        print("Exception produced: %s" % str(e))
+        pyrebox_print("Exception produced: %s" % str(e))
         traceback.print_exc()

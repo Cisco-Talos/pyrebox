@@ -199,7 +199,7 @@ class GuestAgentPlugin(object):
             {"command": GuestAgentPlugin.__CMD_EXIT, "meta": {}})
         return True
 
-    def copy_file(self, source_path, destiny_path):
+    def copy_file(self, source_path, destiny_path, callback = None):
         """
             Copy file from host machine to guest VM
 
@@ -208,6 +208,11 @@ class GuestAgentPlugin(object):
 
             :param destiny_path: The path (on the guest) of the file to copy
             :type destinity_path: str
+
+            :param callback: A python function that will be called when
+                             the command is requested by the guest (just
+                             before it is executed). 
+            :type callback: func
         """
         # if self.__status != GuestAgentPlugin.__AGENT_RUNNING:
         #    raise Exception(
@@ -222,11 +227,13 @@ class GuestAgentPlugin(object):
                 "The size of the destiny path should not exceed %d bytes" % self.__agent_buffer_size)
 
         self.__commands.append(
-            {"command": GuestAgentPlugin.__CMD_COPY, "meta": {"source": source_path, "destiny": destiny_path}})
+            {"command": GuestAgentPlugin.__CMD_COPY, "meta": {"source": source_path, 
+                                                              "destiny": destiny_path,
+                                                              "callback": callback}})
 
         return True
 
-    def execute_file(self, path, args=[], env={}, exit_afterwards=False):
+    def execute_file(self, path, args=[], env={}, exit_afterwards=False, callback=None):
         """
             Execute file on the guest VM and terminate the agent
 
@@ -238,8 +245,13 @@ class GuestAgentPlugin(object):
 
             :param env: A dictionary with environment variables to set for the file to be executed.
             :type env: dict
+
+            :param callback: A python function that will be called when
+                             the command is requested by the guest (just
+                             before it is executed).
+            :type callback: func
         """
-        if type(path) is not str:
+        if type(path) is not str and type(path) is not unicode:
             raise ValueError("The path must be a string")
         if type(args) is not list:
             raise ValueError("Args must be provided as a python list")
@@ -256,10 +268,10 @@ class GuestAgentPlugin(object):
 
         if exit_afterwards:
             self.__commands.append({"command": GuestAgentPlugin.__CMD_EXEC_EXIT, "meta": {
-                                   "path": path, "args": args, "env": env}})
+                                   "path": path, "args": args, "env": env}, "callback": callback})
         else:
             self.__commands.append({"command": GuestAgentPlugin.__CMD_EXEC, "meta": {
-                                   "path": path, "args": args, "env": env}})
+                                   "path": path, "args": args, "env": env, "callback": callback}})
 
         return True
 
@@ -547,11 +559,17 @@ class GuestAgentPlugin(object):
             command = GuestAgentPlugin.__CMD_EXIT
         elif command == GuestAgentPlugin.__CMD_EXEC:
             self.__file_to_execute = meta
+            if "callback" in meta and meta["callback"] is not None:
+                meta["callback"]()
         elif command == GuestAgentPlugin.__CMD_COPY:
             self.__file_to_copy = meta
+            if "callback" in meta and meta["callback"] is not None:
+                meta["callback"]()
         elif command == GuestAgentPlugin.__CMD_EXEC_EXIT:
             command = GuestAgentPlugin.__CMD_EXEC
             self.__file_to_execute = meta
+            if "callback" in meta["callback"] is not None:
+                meta["callback"]()
             do_exit = True
 
         if isinstance(cpu, X86CPU):

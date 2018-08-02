@@ -26,17 +26,23 @@
 #                           ========================
 #
 #   USAGE:  Configure the following environment variables.
-#               UNPACKER_LOG_PATH=
-#               UNPACKER_DUMP_PATH=  // The path is appended with _1, _2, _3... 
-#                                    // for every layer number. Existing contents 
-#                                    // are deleted.
-#               UNPACKER_FILE_PATH=
+#               GENERIC_UNPACKER_CONF_PATH= // The path to the json config file
+#
+#           The json config file must contain the following values
+#               unpacker_log_path=""
+#               unpacker_dump_path=""  // The path is appended with _1, _2, _3... 
+#                                      // for every layer number. Existing contents 
+#                                      // are deleted.
+#
+#           This script uses the autorun.autorun module. See the module's 
+#           documentation for additional information.
+#           
 #
 # -------------------------------------------------------------------------------
 
-
 from __future__ import print_function
 import os
+import json
 
 # Determine TARGET_LONG_SIZE
 from api import get_os_bits
@@ -47,7 +53,7 @@ from vads import VADRegion, get_vads
 from memory_dump import dump
 
 # Script requirements
-requirements = ["plugins.guest_agent"]
+requirements = ["autorun.autorun"]
 
 # Global variables
 # Callback manager
@@ -66,19 +72,29 @@ page_status_x = {}
 # Global var for current layer status
 current_layer = 0
 
+# Configuration values
+UNPACKER_LOG_PATH = None
+UNPACKER_DUMP_PATH = None
+
 def init_log():
     '''
         Initialize log (remove file if it exists)
     '''
-    if os.path.isfile(os.environ["UNPACKER_LOG_PATH"]):
-        os.remove(os.environ["UNPACKER_LOG_PATH"])
+    global UNPACKER_LOG_PATH
+    global UNPACKER_DUMP_PATH
+
+    if os.path.isfile(UNPACKER_LOG_PATH):
+        os.remove(UNPACKER_LOG_PATH)
 
 
 def append_log(line):
     '''
         Append line to log file, add line feed if necessary.
     '''
-    f = open(os.environ["UNPACKER_LOG_PATH"], "a")
+    global UNPACKER_LOG_PATH
+    global UNPACKER_DUMP_PATH
+
+    f = open(UNPACKER_LOG_PATH, "a")
     if line[-1] != "\n":
         line += "\n"
     f.write(line)
@@ -92,6 +108,9 @@ def mem_write(params):
     global cm
     global page_status
     global current_layer
+    global UNPACKER_LOG_PATH
+    global UNPACKER_DUMP_PATH
+
     import api
     from cpus import X64CPU, X86CPU
 
@@ -128,6 +147,9 @@ def block_exec(params):
     global cm
     global page_status
     global current_layer
+    global UNPACKER_LOG_PATH
+    global UNPACKER_DUMP_PATH
+
     import api
 
     # Get parameters
@@ -168,10 +190,10 @@ def block_exec(params):
             cm.call_trigger_function("block_begin", "erase_vars")
 
             #Create dump
-            dump([pgd], path = os.path.join(os.environ["UNPACKER_DUMP_PATH"] + "_%d" % (current_layer)))
+            dump([pgd], pyrebox_print, path = os.path.join(UNPACKER_DUMP_PATH + "_%d" % (current_layer)))
     else:
         # Update page status (execution)
-        page_status_x[page] = current_layer 
+        page_status_x[page] = current_layer
 
 
 def module_entry_point(params):
@@ -180,15 +202,15 @@ def module_entry_point(params):
     '''
     global cm
     global entry_point_bp
+    global UNPACKER_LOG_PATH
+    global UNPACKER_DUMP_PATH
+
     from api import CallbackManager
     import api
 
     # Get pameters
     cpu_index = params["cpu_index"]
     cpu = params["cpu"]
-
-    # Disable the entrypoint
-    entry_point_bp.disable()
 
     # Get running process
     pgd = api.get_running_process(cpu_index)
@@ -218,73 +240,6 @@ def module_entry_point(params):
 
     pyrebox_print("Started monitoring process")
 
-def load_module(params):
-    '''
-        Callback trigger for every module loaded.
-    '''
-    global cm
-    global pyrebox_print
-    global entry_point_bp
-    global target_pgd
-    global target_procname
-    import pefile
-    import api
-    from api import BP
-
-    pid = params["pid"]
-    pgd = params["pgd"]
-    base = params["base"]
-    size = params["size"]
-    name = params["name"]
-    fullname = params["fullname"]
-
-    if pgd == target_pgd and target_procname.lower().startswith(name.lower()):
-        # Loaded main module, try to read EP
-        ep = None
-        try:
-            pe_data = api.r_va(pgd, base, 0x1000)
-            pe = pefile.PE(data=pe_data)
-            ep = base + pe.OPTIONAL_HEADER.AddressOfEntryPoint
-        except Exception as e:
-            print(e)
-            pyrebox_print("Could not read EP from module %s on load" % name)
-
-        # If we have the EP, put a breakpoint there
-        if ep is not None:
-            pyrebox_print("The entry point for %s is 0x%x\n" % (target_procname, ep))
-
-            cm.rm_callback("load_module")
-            # Set a breakpoint on the EP, that will start a shell
-            entry_point_bp = BP(ep, pgd, new_style = True, func = module_entry_point)
-            entry_point_bp.enable()
-
-def new_proc(params):
-    '''
-        Callback for new process creation.
-    '''
-    global cm
-    global target_procname
-    global target_pgd
-    global pyrebox_print
-    from api import CallbackManager
-    import api
-
-    # Get parameters
-    pid = params["pid"]
-    pgd = params["pgd"]
-    name = params["name"]
-
-    # Log process creation
-    pyrebox_print("Created process %s - PID: %016x - PGD: %016x" % (name, pid, pgd))
-
-    # Add module load callback
-    if target_procname is not None and target_procname in name.lower():
-        # Set target PGD
-        target_pgd = pgd
-        pyrebox_print("Adding module load callback on PGD %x" % pgd)
-        cm.add_callback(CallbackManager.LOADMODULE_CB, load_module, pgd = pgd, name="load_module")
-
-
 def clean():
     '''
     Clean up everything. At least you need to place this
@@ -293,7 +248,13 @@ def clean():
     '''
     global cm
     global pyrebox_print
+    global UNPACKER_LOG_PATH
+    global UNPACKER_DUMP_PATH
+
+    from autorun.autorun import remove_autorun_entry_point_callback
+
     pyrebox_print("[*]    Cleaning module")
+    remove_autorun_entry_point_callback(module_entry_point)
     cm.clean()
     pyrebox_print("[*]    Cleaned module")
 
@@ -306,37 +267,41 @@ def initialize_callbacks(module_hdl, printer):
     '''
     from api import CallbackManager
     from plugins.guest_agent import guest_agent
+    from autorun.autorun import register_autorun_entry_point_callback
 
     global cm
     global pyrebox_print
     global target_procname
+    global UNPACKER_LOG_PATH
+    global UNPACKER_DUMP_PATH
+
 
     pyrebox_print = printer
 
-    # Initialize log
-    init_log()
-    # Initialize process creation callback
-    pyrebox_print("[*]    Initializing callbacks")
-    cm = CallbackManager(module_hdl, new_style = True)
-    cm.add_callback(CallbackManager.CREATEPROC_CB, new_proc, name="vmi_new_proc")
-    pyrebox_print("[*]    Initialized callbacks")
-
-    # Copy target file to guest, and execute it
-    pyrebox_print("Copying host file to guest, using agent...")
-
-    # Copy the specified file to C:\\temp.exe in the guest
-    guest_agent.copy_file(os.environ["UNPACKER_FILE_PATH"], "C:\\temp.exe")
-    # Execute the file
-    guest_agent.execute_file("C:\\temp.exe")
-    # stop_agent() does not only kill the agent, but it also
-    # disables the agent plugin. Invalid opcodes
-    # are not treated as agent commands any more, so this call
-    # improves transparency.
-    guest_agent.stop_agent()
-
-    # Set target proc name:
-    target_procname = "temp.exe"
-    pyrebox_print("Waiting for process %s to start\n" % target_procname)
+    # Set configuration values
+    try:
+        f = open(os.environ["GENERIC_UNPACKER_CONF_PATH"], "r")
+        conf_data = json.load(f)
+        f.close()
+        UNPACKER_LOG_PATH = conf_data.get("unpacker_log_path", None)
+        UNPACKER_DUMP_PATH = conf_data.get("unpacker_dump_path", None)
+        if UNPACKER_LOG_PATH is None or UNPACKER_DUMP_PATH is None:
+            raise ValueError("The json configuration file is not well-formed: fields missing?")
+    except Exception as e:
+        pyrebox_print("Could not read or correctly process the configuration file: %s" % str(e))
+        return
+    
+    try:
+        # Initialize log
+        init_log()
+        # Initialize process creation callback
+        pyrebox_print("[*]    Initializing callbacks")
+        register_autorun_entry_point_callback(module_entry_point)
+        cm = CallbackManager(module_hdl, new_style = True)
+        pyrebox_print("[*]    Initialized callbacks")
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
 
 if __name__ == "__main__":
     print("[*] Loading python module %s" % (__file__))
