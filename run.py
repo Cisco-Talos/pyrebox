@@ -80,7 +80,6 @@ def log(s, std_log_file = None):
 
 def signal_handler(sig, frame):
     global p
-    print('You pressed Ctrl+C!')
     if p:
         print("Killing PyREBox process...")
         os.killpg(os.getpgid(p.pid), signal.SIGKILL)
@@ -98,6 +97,7 @@ def start_pyrebox(vm_image = VM_IMAGE,
     global p
 
     signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
 
     try:
         if vm_image is None or not os.path.isfile(vm_image):
@@ -106,7 +106,7 @@ def start_pyrebox(vm_image = VM_IMAGE,
             raise ValueError("The specified snapshot is not a valid string")
         if ram is None:
             raise ValueError("The specified value for RAM is not valid")
-        if pyrebox_path is None or not os.path.isfile(pyrebox_path):
+        if pyrebox_path is None or (not os.path.isfile(pyrebox_path) and not os.path.islink(pyrebox_path)):
             raise ValueError("The specified pyrebox path is not a valid file")
         if timeout_analysis is None or not isinstance(timeout_analysis, int):
             raise ValueError("The specified timeout is not a valid int value")
@@ -228,11 +228,14 @@ def start_pyrebox(vm_image = VM_IMAGE,
         if p:
             os.killpg(os.getpgid(p.pid), signal.SIGKILL)
             p = None
+
+        return True
     except Exception as e:
         log("Exception occurred while running PyREBox: %s" % str(e), std_log_file)
         if p:
             os.killpg(os.getpgid(p.pid), signal.SIGKILL)
             p = None
+        return False
 
 if __name__ == "__main__":
     #Parse arguments

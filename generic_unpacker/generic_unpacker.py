@@ -190,7 +190,7 @@ def block_exec(params):
             cm.call_trigger_function("block_begin", "erase_vars")
 
             #Create dump
-            dump([pgd], pyrebox_print, path = os.path.join(UNPACKER_DUMP_PATH + "_%d" % (current_layer)))
+            dump([pgd], pyrebox_print, path = os.path.join(UNPACKER_DUMP_PATH, "dump_%d" % (current_layer)))
     else:
         # Update page status (execution)
         page_status_x[page] = current_layer

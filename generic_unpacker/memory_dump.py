@@ -25,7 +25,7 @@ from __future__ import print_function
 import shutil
 import os
 
-def dump(pgd_list, pyrebox_print, path = "/tmp/"):
+def dump(pgd_list, pyrebox_print, path = "/tmp/unpacker_results"):
     '''
     Dump the process, modules, vads..., given a list of process address spaces and a path.
     '''

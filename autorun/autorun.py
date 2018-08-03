@@ -279,7 +279,7 @@ def initialize_callbacks(module_hdl, printer):
     f = open(os.environ["AUTORUN_CONF_PATH"], "r")
     conf = json.load(f)
     f.close()
-    kws = ["container_path", "main_executable_file", "extract_path", "temp_path"]
+    kws = ["container_path", "main_executable_file", "extract_path", "temp_path", "preserve_filenames"]
     for k in kws:
         if k not in conf:
             pyrebox_print("The configuration file does not contain the necessary keywords")
@@ -316,7 +316,11 @@ def initialize_callbacks(module_hdl, printer):
         # Copy files to the VM
         for fname, temp_fname in extracted_files.iteritems():
             # Copy the specified file to C:\\temp.exe in the guest
-            guest_agent.copy_file(temp_fname, conf["extract_path"] + fname)
+            if conf["preserve_filenames"]:
+                guest_agent.copy_file(temp_fname, conf["extract_path"] + fname)
+            else:
+                guest_agent.copy_file(temp_fname, conf["extract_path"] + "file.exe")
+                conf["main_executable_file"] = "file.exe"
 
     # Execute the file. We set a callback to signal this script that 
     # the files have already been copied and can be deleted
