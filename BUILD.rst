@@ -7,6 +7,10 @@ Building PyREBox
       
     ``apt-get install build-essential zlib1g-dev pkg-config libglib2.0-dev binutils-dev libboost-all-dev autoconf libtool libssl-dev libpixman-1-dev libpython-dev python-pip virtualenv python-capstone``
 
+  * For RHEL based distributions: 
+      
+    ``dnf install make automake gcc gcc-c++ kernel-devel zlib-devel pkgconf-pkg-config glib2-devel binutils-devel boost-devel autoconf libtool openssl-devel pixman-devel python2-devel python2-pip python2-virtualenv capstone-python``
+
   * Required python packages (see the next paragraph for installation instructions):
       
     ``ipython>=5,<6 sphinx sphinx-autobuild prettytable pefile capstone distorm3 pycrypto pytz``
