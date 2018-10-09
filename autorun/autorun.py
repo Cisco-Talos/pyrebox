@@ -42,6 +42,8 @@
 #               temp_path: "" (Temporary path where we can extract the tar.gz 
 #                              before copying it to the VM.)
 #
+#               preserve_filenames: ""
+#
 # -------------------------------------------------------------------------------
 
 from __future__ import print_function

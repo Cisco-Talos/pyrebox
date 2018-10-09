@@ -1039,15 +1039,20 @@ class CallbackManager:
         # Check if we have the plugin compiled for the correct architecture
         trigger_path = "%s-%s.so" % (trigger_path, conf_m.platform)
         p = subprocess.Popen(
-            "make %s" %
-            trigger_path,
+            ["make", trigger_path],
             shell=True,
             stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE)
+            stderr=subprocess.PIPE,
+            cwd=conf_m.pyre_root)
         p.wait()
+
         if os.path.isfile(trigger_path):
             # Trigger compiled correctly
             add_trigger(self.callbacks[name], trigger_path)
+        elif os.path.isfile(os.path.join(conf_m.pyre_root, trigger_path)):
+            #Trigger compiled correctly
+            #Fixup relative path
+            add_trigger(self.callbacks[name], os.path.join(conf_m.pyre_root, trigger_path))
         else:
             raise ValueError("Could not correctly compile trigger\n")
 

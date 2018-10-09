@@ -242,6 +242,7 @@ def init(platform, root_path, volatility_path, conf_name):
         conf_m.volatility_path = volatility_path
         conf_m.vol_profile = vol_profile
         conf_m.platform = platform
+        conf_m.pyre_root = root_path
         sys.path.append(volatility_path)
         sys.path.append(root_path)
         sys.path.append(os.getcwd())
