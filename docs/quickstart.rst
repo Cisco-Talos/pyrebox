@@ -20,6 +20,10 @@ Installing dependencies for CentOS 7:
   yum install epel-release
   yum install python-virtualenv python34-pip.noarch python2-pip.noarch
 
+For RHEL/Fedora:
+::
+  dnf install make automake gcc gcc-c++ kernel-devel zlib-devel pkgconf-pkg-config glib2-devel binutils-devel boost-devel autoconf libtool openssl-devel pixman-devel python2-devel python2-pip python2-virtualenv capstone-python
+
 Required python packages (see the next paragraph for installation instructions):
 ::
   ipython>=5,<6 sphinx sphinx-autobuild prettytable pefile capstone distorm3 pycrypto pytz
