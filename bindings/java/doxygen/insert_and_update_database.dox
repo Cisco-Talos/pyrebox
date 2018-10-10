@@ -1,0 +1,19 @@
+/*! \page insert_and_update_database_page Inserting Data
+
+\section types_of_databases_available Inserting Into the Database
+This page is for people who are developing Sleuth Kit code and need to place items into the database with SQL statements. If you are simply writing modules that read from the database (such as Autopsy ingest modules), there is nothing for you here. 
+
+The Sleuth Kit currently allows either SQLite or PostgreSQL as the back-end database system for a case. Any code you write could be used with either as the backend database, at the user's discretion. Be sure to test your work with both platforms.
+
+- For SQLite compatibility, use SQL statements supported by SQLite 3
+- For PostgreSQL compatibility, use SQL statements supported by PostgreSQL 9.4
+
+\section insert_pitfalls_to_avoid How to Avoid Pitfalls When INSERTing into the Database
+- Do not use INSERT OR REPLACE INTO. It does not exist in PostgreSQL.
+- Do not use INSERT OR IGNORE INTO. It does not exist in PostgreSQL.
+- Do not insert [NUL characters](http://en.wikipedia.org/wiki/Null_character) into the database as UTF-8 (NUL characters are not NULL fields). Translate NUL characters to the [SUB character](http://en.wikipedia.org/wiki/Substitute_character) with the following instead:
+\code{.java}
+private String replaceNulls(String text);
+\endcode
+
+*/
