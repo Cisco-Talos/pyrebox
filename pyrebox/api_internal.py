@@ -508,7 +508,6 @@ def set_trigger_str(handle, name, val):
     import c_api
     return c_api.set_trigger_str(handle, name, val)
 
-
 def get_trigger_var(handle, name):
     """ Retrieve a variable from a trigger.
 
@@ -538,3 +537,29 @@ def call_trigger_function(handle, function_name):
     """
     import c_api
     return c_api.call_trigger_function(handle, function_name)
+
+def x86_get_pte(pgd, addr):
+    """ Get the contents of the Page Table Entry, even for invalid
+        pages (Valid bit (bit 0) == 0). This is an internal function
+        that is used to deal with invalid memory pages.
+        
+        :param pgd: The PGD of the process
+        :type pgd: int
+
+        :pram addr: The address to resolve
+        :type addr: int
+
+        :return: The value of the PTE, or None 
+        :rtype: int
+    """
+    import c_api
+    return c_api.x86_get_pte(pgd, addr)
+
+def x86_is_pae():
+    """ Return True if PAE is enabled.
+
+        :return: Return True if PAE is enabled.
+        :rtype: bool 
+    """
+    import c_api
+    return c_api.x86_is_pae()

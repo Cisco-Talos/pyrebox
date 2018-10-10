@@ -133,11 +133,12 @@ def start_pyrebox(vm_image = VM_IMAGE,
             # Make sure we set environment variable
             pyrebox_env = os.environ.copy()
             pyrebox_env["AUTORUN_CONF_PATH"] = autorun_config
-
+            current_ld_library_path = os.getenv('LD_LIBRARY_PATH', '')
             p = subprocess.Popen(args=pyrebox_command,
                                  env=pyrebox_env,
                                  stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                  stderr=subprocess.PIPE, shell=True,
+                                 env={"LD_LIBRARY_PATH": "sleuthkit/tsk/.libs:%s" % (current_ld_library_path)}
                                  # Open the process on a new session
                                  preexec_fn=os.setsid)
 

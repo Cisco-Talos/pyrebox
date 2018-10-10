@@ -1,6 +1,6 @@
 /*-------------------------------------------------------------------------------
 
-   Copyright (C) 2017 Cisco Talos Security Intelligence and Research Group
+   Copyright (C) 2018 Cisco Talos Security Intelligence and Research Group
 
    PyREBox: Python scriptable Reverse Engineering Sandbox 
    Author: Xabier Ugarte-Pedrero 
@@ -21,13 +21,15 @@
    
 -------------------------------------------------------------------------------*/
 
-#ifndef PYREBOX_H
-#define PYREBOX_H
+#ifndef QEMU_GLUE_BLOCK_H
+#define QEMU_GLUE_BLOCK_H
 
-extern pthread_mutex_t pyrebox_mutex;
+#define PYREBOX_TSK_SECTOR_SIZE 512
 
-void clear_targets(void);
-int pyrebox_init(const char *pyrebox_conf_str);
-void pyrebox_init_blocks(void);
-int pyrebox_finalize(void);
+void pyrebox_blocks_init(void);
+void pyrebox_bdrv_open(void *opaque);
+int pyrebox_bdrv_pread(void *opaque, int64_t offset, void *buf, int count);
+
+void pyrebox_test_read_disk(void);
+
 #endif

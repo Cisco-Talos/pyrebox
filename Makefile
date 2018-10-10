@@ -62,7 +62,7 @@ LDFLAGS+=$(PYTHON_LIBS)
 	echo $(CPP) $@
 
 clean-triggers:
-	rm -f triggers/*.so triggers/*.o triggers/*.d
+	rm -f triggers/*.so triggers/*.o triggers/*.d exploit_detect/*.so exploit_detect/*.o exploit_detect/*.d
 
 documentation: 
 	$(MAKE) -C ./docs/ html 
@@ -71,8 +71,11 @@ documentation:
 all: 
 	@$(MAKE) -C ./qemu $@
 
-clean: clean-triggers	
+clean: clean-triggers clean-sleuthkit	
 	@$(MAKE) -C ./qemu $@
+
+clean-sleuthkit:
+	@$(MAKE) -C ./sleuthkit clean
 
 test_scripts:
 	flake8 ./scripts --count --select=E901,E999,F821,F822,F823 --show-source --statistics

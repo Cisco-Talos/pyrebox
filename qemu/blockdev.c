@@ -60,6 +60,9 @@
 #include "qemu/help_option.h"
 #include "qemu/throttle-options.h"
 
+#include "block/block_int.h"
+#include "pyrebox/qemu_glue_block.h"
+
 static QTAILQ_HEAD(, BlockDriverState) monitor_bdrv_states =
     QTAILQ_HEAD_INITIALIZER(monitor_bdrv_states);
 
@@ -4356,3 +4359,15 @@ QemuOptsList qemu_drive_opts = {
         { /* end of list */ }
     },
 };
+
+void pyrebox_blocks_init(void)
+{
+    BlockBackend *blk;
+    DriveInfo *dinfo;
+    for (blk = blk_next(NULL); blk; blk = blk_next(blk)) {
+        dinfo = blk_legacy_dinfo(blk);
+        if (dinfo->type == IF_DEFAULT || dinfo->type == IF_SCSI || dinfo->type == IF_IDE ) {
+            pyrebox_bdrv_open((void *)blk);
+        }
+    }
+}

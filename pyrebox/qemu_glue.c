@@ -898,6 +898,126 @@ void pyrebox_load_vm(char* name)
     hmp_loadvm(cur_mon,qdict);
 }
 
+#if defined(TARGET_I386) || defined(TARGET_X86_64)
+int x86_is_pae(void){
+    // Just get first cpu, for CR0, CR4 registers
+    X86CPU *cpu = X86_CPU(get_qemu_cpu(0));;
+    CPUX86State *env = &cpu->env;
+    return (env->cr[4] & CR4_PAE_MASK);
+}
+
+pyrebox_target_ulong x86_get_pte(pyrebox_target_ulong pgd, pyrebox_target_ulong addr)
+{
+    // Just get first cpu, for CR0, CR4 registers
+    X86CPU *cpu = X86_CPU(get_qemu_cpu(0));;
+    CPUX86State *env = &cpu->env;
+    target_ulong pde_addr, pte_addr;
+    uint64_t pte;
+    int32_t a20_mask;
+
+    a20_mask = x86_get_a20_mask(env);
+    if (!(env->cr[0] & CR0_PG_MASK)) {
+        //Paging not yet enabled
+        return (pyrebox_target_ulong)-1;
+    } else if (env->cr[4] & CR4_PAE_MASK) {
+        target_ulong pdpe_addr;
+        uint64_t pde, pdpe;
+
+#ifdef TARGET_X86_64
+        if (env->hflags & HF_LMA_MASK) {
+            bool la57 = env->cr[4] & CR4_LA57_MASK;
+            uint64_t pml5e_addr, pml5e;
+            uint64_t pml4e_addr, pml4e;
+            int32_t sext;
+
+            /* test virtual address sign extension */
+            sext = la57 ? (int64_t)addr >> 56 : (int64_t)addr >> 47;
+            if (sext != 0 && sext != -1) {
+                return (pyrebox_target_ulong)-1;
+            }
+
+            if (la57) {
+                pml5e_addr = ((pgd & ~0xfff) +
+                        (((addr >> 48) & 0x1ff) << 3)) & a20_mask;
+                pml5e = x86_ldq_phys(get_qemu_cpu(0), pml5e_addr);
+                if (!(pml5e & PG_PRESENT_MASK)) {
+                    return (pyrebox_target_ulong)-1;
+                }
+            } else {
+                pml5e = pgd;
+            }
+
+            pml4e_addr = ((pml5e & PG_ADDRESS_MASK) +
+                    (((addr >> 39) & 0x1ff) << 3)) & a20_mask;
+            pml4e = x86_ldq_phys(get_qemu_cpu(0), pml4e_addr);
+            if (!(pml4e & PG_PRESENT_MASK)) {
+                return (pyrebox_target_ulong)-1;
+            }
+            pdpe_addr = ((pml4e & PG_ADDRESS_MASK) +
+                         (((addr >> 30) & 0x1ff) << 3)) & a20_mask;
+            pdpe = x86_ldq_phys(get_qemu_cpu(0), pdpe_addr);
+            if (!(pdpe & PG_PRESENT_MASK)) {
+                return (pyrebox_target_ulong)-1;
+            }
+            if (pdpe & PG_PSE_MASK) {
+                //page_size = 1024 * 1024 * 1024;
+                pte = pdpe;
+                return pte;
+            }
+
+        } else
+#endif
+        {
+            pdpe_addr = ((pgd & ~0x1f) + ((addr >> 27) & 0x18)) &
+                a20_mask;
+            pdpe = x86_ldq_phys(get_qemu_cpu(0), pdpe_addr);
+            if (!(pdpe & PG_PRESENT_MASK))
+                return (pyrebox_target_ulong)-1;
+        }
+
+        pde_addr = ((pdpe & PG_ADDRESS_MASK) +
+                    (((addr >> 21) & 0x1ff) << 3)) & a20_mask;
+        pde = x86_ldq_phys(get_qemu_cpu(0), pde_addr);
+        if (!(pde & PG_PRESENT_MASK)) {
+            return (pyrebox_target_ulong)-1;
+        }
+        if (pde & PG_PSE_MASK) {
+            /* 2 MB page */
+            //page_size = 2048 * 1024;
+            pte = pde;
+        } else {
+            /* 4 KB page */
+            pte_addr = ((pde & PG_ADDRESS_MASK) +
+                        (((addr >> 12) & 0x1ff) << 3)) & a20_mask;
+            //page_size = 4096;
+            pte = x86_ldq_phys(get_qemu_cpu(0), pte_addr);
+        }
+    } else {
+        uint32_t pde;
+
+        /* page directory entry */
+        pde_addr = ((pgd & ~0xfff) + ((addr >> 20) & 0xffc)) & a20_mask;
+        pde = x86_ldl_phys(get_qemu_cpu(0), pde_addr);
+        if (!(pde & PG_PRESENT_MASK))
+            return (pyrebox_target_ulong)-1;
+        if ((pde & PG_PSE_MASK) && (env->cr[4] & CR4_PSE_MASK)) {
+            pte = pde | ((pde & 0x1fe000LL) << (32 - 13));
+            //page_size = 4096 * 1024;
+        } else {
+            /* page directory entry */
+            pte_addr = ((pde & ~0xfff) + ((addr >> 10) & 0xffc)) & a20_mask;
+            pte = x86_ldl_phys(get_qemu_cpu(0), pte_addr);
+            //page_size = 4096;
+        }
+    }
+    return pte;
+}
+#elif defined(TARGET_AARCH64)
+#error "Architecture not supported yet"
+#elif defined(TARGET_ARM) && !defined(TARGET_AARCH64)
+#error "Architecture not supported yet"
+#endif
+
 /* Extracted from Panda: memory-access.c. See third_party/panda/ */
 uint64_t
 connection_read_memory (uint64_t user_paddr, char *buf, uint64_t user_len)

@@ -4741,6 +4741,9 @@ int main(int argc, char **argv, char **envp)
 
     os_setup_post();
 
+    //Initialize block drives
+    pyrebox_init_blocks();
+
     main_loop();
 
     gdbserver_cleanup();

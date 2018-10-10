@@ -201,6 +201,8 @@ pyrebox_target_ulong get_gs_base(qemu_cpu_opaque_t cpu_opaque);
 pyrebox_target_ulong get_fs_base(qemu_cpu_opaque_t cpu_opaque);
 int get_qemu_cpu_protected_mode(qemu_cpu_opaque_t cpu_opaque);
 int qemu_is_kernel_running(int cpu_index);
+int x86_is_pae(void);
+pyrebox_target_ulong x86_get_pte(pyrebox_target_ulong pgd, pyrebox_target_ulong addr);
 #endif
 
 //CPU Query functions

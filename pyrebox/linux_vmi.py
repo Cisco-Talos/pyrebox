@@ -411,3 +411,6 @@ def linux_update_modules(pgd, update_symbols=False):
         clean_non_present_modules(task.pid.v(), phys_pgd)
 
     return list_entry_regions
+
+def linux_read_paged_out_memory(pgd, addr, size):
+    raise NotImplementedError() 

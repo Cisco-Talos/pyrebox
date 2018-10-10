@@ -47,6 +47,7 @@
 #include "callbacks.h"
 #include "pyrebox.h"
 #include "vmi.h"
+#include "qemu_glue_block.h"
 
 pthread_mutex_t pyrebox_mutex;
 
@@ -54,10 +55,15 @@ void clear_targets(void){
   clear_monitored_processes();
 }
 
+void pyrebox_init_blocks(void){
+  //Initialize block drives for sleuthkit access
+  pyrebox_blocks_init();
+}
+
 int pyrebox_init(const char *pyrebox_conf_str){
 
   //Initialize mutex to call python code, which may sometime be thread unsafe
-  if (pthread_mutex_init(&pyrebox_mutex, NULL) != 0){      
+  if (pthread_mutex_init(&pyrebox_mutex, NULL) != 0){
           perror("Python mutex could not be initialized\n");
           return 1;
   }

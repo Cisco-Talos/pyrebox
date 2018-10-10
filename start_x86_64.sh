@@ -22,4 +22,4 @@ else
 fi
 
 cp pyrebox.conf.Win7SP0x64 pyrebox.conf
-./pyrebox-x86_64 -monitor stdio -m 512 -usb -drive file=$1,index=0,media=disk,format=qcow2,cache=unsafe -vnc 127.0.0.1:0 ${snapshot} 
+LD_LIBRARY_PATH=sleuthkit/tsk/.libs:$LD_LIBRARY_PATH ./pyrebox-x86_64 -monitor stdio -m 512 -usb -drive file=$1,index=0,media=disk,format=qcow2,cache=unsafe -vnc 127.0.0.1:0 ${snapshot} 

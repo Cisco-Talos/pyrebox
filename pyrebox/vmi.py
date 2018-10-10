@@ -182,3 +182,14 @@ def clean_non_present_modules(pid, pgd):
 
         # Remove module
         del modules[(pid, pgd)][base]
+
+
+def read_paged_out_memory(pgd, addr, size):
+    global os_family
+    from windows_vmi import windows_read_paged_out_memory
+    from linux_vmi import linux_read_paged_out_memory
+    if os_family == OS_FAMILY_WIN:
+        return windows_read_paged_out_memory(pgd, addr, size)
+    elif os_family == OS_FAMILY_LINUX:
+        return linux_read_paged_out_memory(pgd, addr, size)
+

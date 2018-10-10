@@ -27,6 +27,7 @@ root_path=$(pwd)
 pyrebox_path=$root_path/pyrebox
 volatility_path=$root_path/volatility
 qemu_path=$root_path/qemu
+sleuthkit_path=$root_path/sleuthkit
 show_help="no"
 debug="no"
 rebuild_vol="no"
@@ -69,6 +70,21 @@ fi
 
 #----------------------- QEMU -----------------------
 if [ x"${reconfigure}" = xyes ] || [ ! -f ${qemu_path}/config-host.mak ]; then
+    echo -e "\n${GREEN}[*] Configuring The Sleuth Kit...${NC}\n"
+    cd ${sleuthkit_path}
+    ./bootstrap
+    if [ $? -ne 0 ]; then
+        echo -e "\n${RED}[!] Could not configure The Sleuth Kit!${NC}\n"
+        exit 1
+    fi
+    ./configure
+    if [ $? -ne 0 ]; then
+        echo -e "\n${RED}[!] Could not configure The Sleuth Kit!${NC}\n"
+        exit 1
+    fi
+    cd $root_path
+
+
     echo -e "\n${GREEN}[*] Configuring qemu...${NC}\n"
     git submodule deinit .
     git submodule init
@@ -99,6 +115,13 @@ if [ x"${reconfigure}" = xyes ] || [ ! -f ${qemu_path}/config-host.mak ]; then
 fi
 
 #----------------------- PYREBOX -----------------------
+echo -e "${GREEN}\n[*] Building The Sleuth Kit...${NC}\n"
+cd $sleuthkit_path
+make -j${jobs}
+if ! [ -f $sleuthkit_path/tsk/.libs/libtsk.so ]; then
+    echo -e "${RED}\n[!] Oops... build failed!${NC}\n"
+    exit 1
+fi
 
 echo -e "${GREEN}\n[*] Building pyrebox...${NC}\n"
 cd $root_path

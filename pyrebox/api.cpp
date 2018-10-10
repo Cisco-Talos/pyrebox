@@ -26,6 +26,7 @@
 #include <list>
 #include <string>
 #include <set>
+#include <vector>
 
 extern "C" {
     #include <stdlib.h>
@@ -39,6 +40,7 @@ extern "C" {
 
     #include "qemu_glue.h"
     #include "utils.h"
+    #include "qemu_glue_sleuthkit.h"
 }
 
 #include "callbacks.h"
@@ -48,6 +50,8 @@ extern "C" {
 #include "vmi.h"
 
 using namespace std;
+
+vector<QEMU_GLUE_TSK_PATH_INFO*> guest_path_handles;
 
 extern "C" {
 
@@ -1008,6 +1012,195 @@ PyObject* py_get_loaded_modules(PyObject *dummy, PyObject *args){
     }
 }
 
+PyObject* py_get_file_systems(PyObject *dummy, PyObject *args){
+    // No input arguments
+    PyObject *result = 0;
+    int number_of_fs = qemu_glue_tsk_get_number_filesystems();
+    result = PyList_New(number_of_fs);
+    for(int i = 0; i < number_of_fs; ++i)
+    {
+        QEMU_GLUE_TSK_FILESYSTEM* fs = qemu_glue_tsk_get_filesystem(i);
+        if (fs != NULL){
+            PyList_SetItem(result,i,Py_BuildValue("{sIsssK}","index",i,"type",fs->fs_type,"size",fs->size));
+            qemu_glue_tsk_free_filesystem(fs);
+        } else {
+            Py_DECREF(result);
+            Py_INCREF(Py_None);
+            return Py_None;
+        }
+    }
+    return result;
+}
+PyObject* py_open_guest_path(PyObject *dummy, PyObject *args){
+    int number_of_fs = qemu_glue_tsk_get_number_filesystems();
+    Py_ssize_t args_size = PyTuple_Size(args);
+    unsigned int fs_number;
+    char* str;
+    int size;
+    if (args_size == 2){
+       if (PyArg_ParseTuple(args, "Is#", &fs_number, &str, &size)){
+           if (fs_number >= (unsigned int) number_of_fs){
+               PyErr_SetString(PyExc_ValueError, "The file system number specified does not refer to a valid file system");
+               return 0;
+           } else {
+               QEMU_GLUE_TSK_PATH_INFO* pi = qemu_glue_tsk_ls(fs_number, str);
+               if (pi != NULL){
+                   if(pi->type == QEMU_GLUE_TSK_DIR){
+                       // It is a directory
+                       PyObject* result = PyList_New(pi->info.dir_info.number_of_filenames);
+                       for (unsigned int i = 0; i < pi->info.dir_info.number_of_filenames; ++i){
+                           PyList_SetItem(result,i,Py_BuildValue("s",pi->info.dir_info.filenames[i]));
+                       }
+                       //Free the structure
+                       qemu_glue_tsk_free_path_info(pi);
+                       return result;
+                   } else if (pi->type == QEMU_GLUE_TSK_FILE){
+                       // Save the path info, and return a handle
+                       // Find an empty space on the vector
+                       int space_found = 0;
+                       unsigned int handle;
+                       for(handle = 0; handle < guest_path_handles.size() && space_found == 0; ++handle){
+                           if (guest_path_handles[handle] == NULL){
+                               space_found = 1;
+                           }
+                       }
+                       if (space_found == 0){
+                            handle = guest_path_handles.size(); 
+                            guest_path_handles.push_back(pi);
+                       } else {
+                            guest_path_handles[handle] = pi;
+                       }
+                       
+                       PyObject* result = Py_BuildValue("{sIsKss}", "handle", handle, "size", pi->info.file_info.size, "filename", pi->info.file_info.filename);
+                       return result;
+                   } else {
+                       PyErr_SetString(PyExc_ValueError, "Unsupported PATH_INFO type");
+                       return 0;
+                   }
+               } else {
+                   PyErr_SetString(PyExc_ValueError, "The file or directory specified may not exist");
+                   return 0;
+               }
+           }
+       }
+       else{
+           PyErr_SetString(PyExc_ValueError, "This internal function accepts one int and one string argument");
+           return 0;
+       }
+    }
+    else{
+        PyErr_SetString(PyExc_ValueError, "This internal function accepts one int and one string argument");
+        return 0;
+    }
+    return 0;
+}
+PyObject* py_read_guest_file(PyObject *dummy, PyObject *args){
+    Py_ssize_t args_size = PyTuple_Size(args);
+    unsigned int handle;
+    uint64_t offset;
+    uint32_t size;
+    if (args_size == 3){
+       if (PyArg_ParseTuple(args, "IKI", &handle, &offset, &size)){
+           if (handle >= guest_path_handles.size() || guest_path_handles[handle] == NULL){
+               PyErr_SetString(PyExc_ValueError, "The path handle specified is either closed or invalid");
+               return 0;
+           } else {
+               char* buffer = (char*)malloc(size);
+               if (buffer != NULL){
+                   uint32_t bytes_read = qemu_glue_tsk_read_file(guest_path_handles[handle], offset, size, buffer);
+                   if (bytes_read == 0 || bytes_read > size){
+                       free(buffer);
+                       PyErr_SetString(PyExc_ValueError, "Error while reading data, could not read any bytes.");
+                       return 0;
+                   } else {
+                        return Py_BuildValue("s#", buffer, bytes_read);
+                   }
+               } else {
+                   PyErr_SetString(PyExc_ValueError, "Could not allocate buffer for reading data");
+                   return 0;
+               }
+           }
+     } else {
+           PyErr_SetString(PyExc_ValueError, "This internal function accepts a handle, an offset, and a size.");
+           return 0;
+     }
+     } else {
+           PyErr_SetString(PyExc_ValueError, "This internal function accepts a handle, an offset, and a size.");
+           return 0;
+     }
+}
+
+PyObject* py_close_guest_path(PyObject *dummy, PyObject *args){
+    Py_ssize_t args_size = PyTuple_Size(args);
+    unsigned int handle;
+    if (args_size == 1){
+       if (PyArg_ParseTuple(args, "I", &handle)){
+           if (handle >= guest_path_handles.size() || guest_path_handles[handle] == NULL){
+               PyErr_SetString(PyExc_ValueError, "The path handle specified is either closed or invalid");
+               return 0;
+           } else {
+               qemu_glue_tsk_free_path_info(guest_path_handles[handle]);
+               guest_path_handles[handle] = NULL;
+               Py_INCREF(Py_None);
+               return Py_None;
+           }
+     } else {
+           PyErr_SetString(PyExc_ValueError, "This internal function accepts one int argument");
+           return 0;
+     }
+     } else {
+           PyErr_SetString(PyExc_ValueError, "This internal function accepts one int argument");
+           return 0;
+     }
+}
+
+
+PyObject* py_x86_get_pte(PyObject *dummy, PyObject *args){
+    Py_ssize_t args_size = PyTuple_Size(args);
+    pyrebox_target_ulong pgd;
+    pyrebox_target_ulong addr;
+    if (args_size == 2){
+#if TARGET_LONG_SIZE == 4
+        if (PyArg_ParseTuple(args, "II",&pgd, &addr)){
+#elif TARGET_LONG_SIZE == 8
+        if (PyArg_ParseTuple(args, "KK",&pgd, &addr)){
+#else
+#error TARGET_LONG_SIZE undefined
+#endif
+           pyrebox_target_ulong pte = x86_get_pte(pgd, addr);
+           if (pte == (pyrebox_target_ulong)-1){
+               Py_INCREF(Py_None);
+               return Py_None;
+           } else {
+#if TARGET_LONG_SIZE == 4
+               return Py_BuildValue("I", pte);
+#elif TARGET_LONG_SIZE == 8
+               return Py_BuildValue("K", pte);
+#else
+#error TARGET_LONG_SIZE undefined
+#endif
+           }
+         } else {
+               PyErr_SetString(PyExc_ValueError, "This internal function accepts 2 arguments: pgd and address");
+               return 0;
+         }
+     } else {
+           PyErr_SetString(PyExc_ValueError, "This internal function accepts 2 arguments: pgd and address");
+           return 0;
+     }
+}
+
+PyObject* py_x86_is_pae(PyObject *dummy, PyObject *args){
+   int is_pae = x86_is_pae();
+   if (is_pae){
+        Py_INCREF(Py_True);
+        return Py_True;
+   } else {
+        Py_INCREF(Py_False);
+        return Py_False;
+   }
+}
+
 
 PyMethodDef api_methods[] = {
       {"register_callback", register_callback, METH_VARARGS, "register_callback"}, 
@@ -1046,7 +1239,13 @@ PyMethodDef api_methods[] = {
       {"import_module",py_import_module,METH_VARARGS,"import_module"},
       {"unload_module",py_unload_module,METH_VARARGS,"unload_module"},
       {"reload_module",py_reload_module,METH_VARARGS,"reload_module"},
-      {"get_loaded_modules",py_get_loaded_modules,METH_VARARGS,"get_loaded_modules"},
+      {"get_loaded_modules",py_get_loaded_modules, METH_VARARGS, "get_loaded_modules"},
+      {"get_file_systems", py_get_file_systems, METH_VARARGS, "get_file_systems"},
+      {"open_guest_path", py_open_guest_path, METH_VARARGS, "open_guest_path"},
+      {"read_guest_file", py_read_guest_file, METH_VARARGS, "read_guest_file"},
+      {"close_guest_path", py_close_guest_path, METH_VARARGS, "close_guest_path"},
+      {"x86_get_pte", py_x86_get_pte, METH_VARARGS, "x86_get_pte"},
+      {"x86_is_pae", py_x86_is_pae, METH_VARARGS, "x86_is_pae"},
       { NULL, NULL, 0, NULL }
     };
 

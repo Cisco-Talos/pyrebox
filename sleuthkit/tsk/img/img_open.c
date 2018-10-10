@@ -250,6 +250,11 @@ tsk_img_open(int num_img,
         break;
 #endif
 
+    /* PyREBox: This code was taken from DECAF: https://github.com/sycurelab/DECAF */
+    case QEMU_IMG:
+        img_info =  qemu_image_open((void*) *images, a_ssize);
+        break;
+
     default:
         tsk_error_reset();
         tsk_error_set_errno(TSK_ERR_IMG_UNSUPTYPE);

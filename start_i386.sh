@@ -22,4 +22,4 @@ else
 fi
 
 cp pyrebox.conf.WinXPSP3x86 pyrebox.conf
-./pyrebox-i386 -monitor stdio -m 256 -usb -usbdevice tablet -drive file=$1,index=0,media=disk,format=qcow2,cache=unsafe -vnc 127.0.0.1:0 ${snapshot}
+LD_LIBRARY_PATH=sleuthkit/tsk/.libs:$LD_LIBRARY_PATH ./pyrebox-i386 -monitor stdio -net none -m 256 -usb -usbdevice tablet -drive file=$1,index=0,media=disk,format=qcow2,cache=unsafe -vnc 127.0.0.1:0 ${snapshot}

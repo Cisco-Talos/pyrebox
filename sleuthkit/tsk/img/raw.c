@@ -17,6 +17,7 @@
 
 #include "tsk_img_i.h"
 #include "raw.h"
+#include "../../../pyrebox/qemu_glue_block.h"
 
 #ifdef __APPLE__
 #include <sys/disk.h>
@@ -781,4 +782,70 @@ tsk_img_free(void *a_ptr)
     TSK_IMG_INFO *imgInfo = (TSK_IMG_INFO *) a_ptr;
     imgInfo->tag = 0;
     free(imgInfo);
+}
+
+/* PyREBox: This code was taken from DECAF (and modified): https://github.com/sycurelab/DECAF */
+// Global function pointer which will be initialized in PyREBox
+// This will be used to read data from the disk image
+
+qemu_pread_t qemu_pread = NULL;
+
+/* Return the size read and -1 if error */
+/* prototype for bdrv_pread(..), int bdrv_read(BlockBackend *blk, int64_t offset,
+              void *buf, int nb_sectors) */
+static ssize_t
+qemu_read(TSK_IMG_INFO *img_info, TSK_OFF_T off, char *buf, size_t len)
+{
+	IMG_QEMU_INFO *qemu_info = (IMG_QEMU_INFO *)img_info;
+	if(qemu_pread) return qemu_pread(qemu_info->opaque, off, buf, len);
+	return -1;
+}
+
+void
+qemu_imgstat(TSK_IMG_INFO * img_info, FILE * hFile)
+{
+    tsk_fprintf(hFile, "IMAGE FILE INFORMATION\n");
+    tsk_fprintf(hFile, "--------------------------------------------\n");
+    tsk_fprintf(hFile, "Image Type: qemu image\n");
+    tsk_fprintf(hFile, "\nSize in bytes: %lu \n", img_info->size);
+    return;
+}
+
+void
+qemu_close(TSK_IMG_INFO * img_info)
+{
+}
+
+
+
+TSK_IMG_INFO *
+qemu_image_open(void *opaque, unsigned int a_ssize)
+{
+    IMG_QEMU_INFO *qemu_info;
+    TSK_IMG_INFO  *img_info;
+
+    if ((qemu_info =
+	    (IMG_QEMU_INFO *) tsk_img_malloc(sizeof(IMG_QEMU_INFO))) == NULL)
+	return NULL;
+
+    memset((void *) qemu_info, 0, sizeof(IMG_QEMU_INFO));
+
+    img_info = (TSK_IMG_INFO *) qemu_info;
+
+    img_info->itype = QEMU_IMG;
+
+    img_info->read = qemu_read;
+    img_info->close = qemu_close;
+    img_info->imgstat = qemu_imgstat;
+
+    img_info->sector_size = PYREBOX_TSK_SECTOR_SIZE;
+
+    //This is BlockBackend associated with the image
+    qemu_info->opaque = (void*) opaque;
+    
+    // This does not matter here, as the size is reset again
+    // to the correct size, for proper functionality of the read function
+    img_info->size = 17179869184; 
+ 
+    return img_info;
 }

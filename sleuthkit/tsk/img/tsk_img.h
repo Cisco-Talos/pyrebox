@@ -68,6 +68,7 @@ extern "C" {
         TSK_IMG_TYPE_VMDK_VMDK = 0x0080, ///< VMDK version
         TSK_IMG_TYPE_VHD_VHD = 0x0100,   ///< VHD version
         TSK_IMG_TYPE_EXTERNAL = 0x1000,  ///< external defined format which at least implements TSK_IMG_INFO, used by pytsk
+        QEMU_IMG             = 0x0200,   // QEMU image format support
 
         TSK_IMG_TYPE_UNSUPP = 0xffff   ///< Unsupported disk image type
     } TSK_IMG_TYPE_ENUM;
@@ -103,6 +104,11 @@ extern "C" {
         void (*close) (TSK_IMG_INFO *); ///< \internal Progs should call tsk_img_close()
         void (*imgstat) (TSK_IMG_INFO *, FILE *);       ///< Pointer to file type specific function
     };
+
+    /* PyREBox: This code was taken from DECAF: https://github.com/sycurelab/DECAF */ 
+    //qemu read functon pointer. This will be initialized in PyREBox
+    typedef int (*qemu_pread_t)(void *blk, int64_t offset, void *buf1, int count1);
+    extern qemu_pread_t qemu_pread;
 
     // open and close functions
     extern TSK_IMG_INFO *tsk_img_open_sing(const TSK_TCHAR * a_image,

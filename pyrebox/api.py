@@ -39,7 +39,7 @@ from api_internal import set_trigger_uint32
 from api_internal import set_trigger_uint64
 from api_internal import set_trigger_str
 from api_internal import get_trigger_var as internal_get_trigger_var
-from api_internal import call_trigger_function
+from api_internal import call_trigger_function as internal_call_trigger_function
 from api_internal import unregister_module_load_callback
 from api_internal import unregister_module_remove_callback
 from api_internal import register_module_load_callback
@@ -93,7 +93,7 @@ def r_pa(addr, length):
     return ret_buffer
 
 
-def r_va(pgd, addr, length):
+def r_va(pgd, addr, length, use_filesystem=False):
     """Read virtual address
 
         :param pgd: The PGD (address space) to read from
@@ -105,18 +105,41 @@ def r_va(pgd, addr, length):
         :param length: The length to read
         :type length: int
 
+        :param use_filesystem: Optional. Default: False. If set to True, PyREBox will use The Sleuthkit to inspect the
+                               file system and obtain this data from the file backing the memory page: The referenced 
+                               file if it is memory mapped, or the pagefile.sys in case it has been paged out.
+        :type use_filesystem: bool
+
         :return: The read content
         :rtype: str
     """
     import c_api
+    from vmi import read_paged_out_memory
     # If this function call fails, it will raise an exception.
     # Given that the exception is self explanatory, we just let it propagate
     # upwards
     offset = addr
     ret_buffer = ""
     while offset < (addr + length):
-        read_length = 0x2000 if (addr + length - offset) > 0x2000 else (addr + length - offset)
-        ret_buffer += c_api.r_va(pgd, offset, read_length)
+        # Read page by page, until the next page's boundary. In this way,
+        # we make sure we never read memory from more than one page, 
+        # dealing individually with paged-out memory
+        boundary = offset + 0x1000 
+        boundary -= (offset & 0xFFF)
+        read_length = boundary - offset 
+        if (offset + read_length) > (addr + length):
+            read_length = (addr + length) - offset
+        try:
+            ret_buffer += c_api.r_va(pgd, offset, read_length)
+        except RuntimeError as e:
+            # The memory is likely paged out, so we cannot read it
+            if use_filesystem:
+                new_buf = read_paged_out_memory(pgd, offset, read_length)
+                if new_buf is not None:
+                    ret_buffer += new_buf
+                else:
+                    raise e
+            # Traverse the VAD tree to find corresponding VAD
         offset += read_length
     return ret_buffer
 
@@ -509,7 +532,6 @@ def get_os_bits():
 
 # Rest of API functions
 
-
 def get_module_list(pgd):
     """ Return list of modules for a given PGD
 
@@ -804,6 +826,8 @@ def function_wrapper_new(f, *args, **kwargs):
 
 def wrap_new(f, callback_type):
     return lambda *args, **kwargs: function_wrapper_new(f, *args, **kwargs)
+
+# ================================================== CLASSES ==============
 
 class CallbackManager:
     '''
@@ -1147,7 +1171,7 @@ class CallbackManager:
                 "[!] CallbackManager: A callback with name %s does not exist, or it is a module callback (non-trigger compatible)\n" %
                 (name))
             return
-        return call_trigger_function(self.callbacks[name], function_name)
+        return internal_call_trigger_function(self.callbacks[name], function_name)
 
     def clean(self):
         """ Clean all the inserted callbacks.
@@ -1166,10 +1190,6 @@ class CallbackManager:
         names = self.remove_module_callbacks.keys()
         for name in names:
             self.rm_callback(name)
-
-
-# ================================================== CLASSES ==============
-
 
 class BP:
     '''
@@ -1393,3 +1413,128 @@ class BP:
                 BP.__active_bps[self.pgd] -= 1
                 if BP.__active_bps[self.pgd] == 0:
                     stop_monitoring_process(self.pgd)
+
+
+def get_filesystems():
+    '''
+        Returns a list of filesystems to open.
+
+        :return: A list of dictionaries, each dictionary containing the keys: "index", "type" and "size", and their
+                 respective values.
+        :rtype: list
+    '''
+    import c_api
+    return c_api.get_file_systems()
+
+def open_guest_path(filesystem_index, path):
+    '''
+        Open a file or directory in a given file system.
+
+        :param filesystem_index: The index of the filesystem to open
+        :type filesystem_index: int
+
+        :param path: The path to open (either a file or directory).
+        :type path: str
+
+        :return: A list of files (if the path is a directory), an instance of GuestFile (if the path is a file), or None
+        :rtype: list, GuestFile, or None
+    '''
+    import c_api
+    # Check the filesystem_index is within the limits
+    filesystems = get_filesystems()
+    found = False
+    for fs in filesystems:
+        if filesystem_index == fs["index"]:
+            found = True
+    if not found:
+        raise ValueError("The specified file system index does not correspond to a valid file system")
+
+    res = c_api.open_guest_path(filesystem_index, path)
+    if res is not None and isinstance(res, list):
+        return res
+    elif res is not None and isinstance(res, dict):
+        return GuestFile(filesystem_index, res["handle"], res["size"], res["filename"])
+    else:
+        return None
+
+class GuestFile:
+    '''Class used to manage guest files residing on the guest file system'''
+    def __init__(self, filesystem_index, file_handle, size, name):
+        self.__file_handle = file_handle
+        self.__filesystem_index = filesystem_index
+        self.__size = size
+        self.__name = name
+        self.__offset = 0
+
+    def get_size(self):
+        ''' Returns the file size 
+            
+            :return: The file size
+            :rtype: int
+        '''
+        return self.__size
+
+    def get_name(self):
+        ''' Returns the name of the file 
+
+            :return: The name of the file
+            :rtype: str or unicode
+        '''
+        return self.__name
+
+    def get_offset(self):
+        ''' Returns the current offset 
+
+            :return: The offset of the file
+            :rtype: int 
+        '''
+        return self.__offset
+
+    def seek(self, offset):
+        ''' Sets the offset to read the file
+
+            :param offset: The offset to set
+            :type offset: int
+
+            :return: None
+            :rtype: None
+        '''
+        if offset < self.__size:
+            self.__offset = offset
+        else:
+            raise ValueError("The specified offset cannot be greater than the file size")
+
+    def read(self, size = None, offset = None):
+        ''' Reads data at the current offset, or the specified offset.
+
+            :param size: The size to read
+            :type size: int
+
+            :param offset: Optional. The offset to read at. It will not change the current file pointer.
+            :type offset: int
+
+            :return: The data read
+            :rtype: str
+        '''
+        import c_api
+        if offset is None:
+            o = self.__offset
+        else:
+            if offset >= self.__size:
+                raise ValueError("The specified offset cannot be greater than the file size")
+            else:
+                o = offset
+        # If the size is not specified, we want to read from the offset to the end of the file.
+        if size is None:
+            size = self.__size - o
+        # Truncate size if we are trying to read above the limit
+        if o + size > self.__size:
+            size -= (o + size) - self.__size
+        if size == 0:
+            return ""
+        res = c_api.read_guest_file(self.__file_handle, o, size)
+        # Advance offset, only if we did not specify an offset when reading
+        if offset is None:
+            self.__offset += size
+        return res
+

@@ -322,6 +322,7 @@ def windows_update_modules(pgd, update_symbols=False):
 
     return None 
 
+
 def windows_kdbgscan_fast(dtb):
     global last_kdbg
     from utils import ConfigurationManager as conf_m
@@ -374,3 +375,403 @@ def windows_kdbgscan_fast(dtb):
         return 0L
     except BaseException:
         traceback.print_exc()
+
+
+def windows_read_memory_mapped(pgd, addr, size, pte, is_pae, bitness):
+    # Step 1: Traverse the VAD tree for the process with PGD,
+    #         and get the VAD that overlaps addr (if any)
+    # Step 2: Check if the VAD has a ControlArea and a FilePointer, 
+    #         and get the file path.
+    # Step 3: Get Segment (pointed to by ControlArea), and get the pointer
+    #         to the first PrototypePTE.
+    # Step 4: Compute offset of address with respect to the beginning
+    #         of the VAD, and compute which PrototypePTE corresponds to the address
+    #         No need to consider if the PTE points to the Prototype PTE here.
+    # Step 6: Compute the offset in file for such PrototypePTE by looking at the
+    #         subsections pointed by the ControlArea.
+    # Step 7: Finally, open the file, read the contents, and return them.
+    import volatility.obj as obj
+    import volatility.win32.tasks as tasks
+    import volatility.plugins.vadinfo as vadinfo
+    from utils import get_addr_space
+
+    addr_space = get_addr_space(pgd)
+
+    eprocs = [t for t in tasks.pslist(
+        addr_space) if t.Pcb.DirectoryTableBase.v() == pgd]
+
+    if len(eprocs) != 1:
+        return None
+
+    task = eprocs[0]
+    vad = None
+    # File name and offset
+    for vad in task.VadRoot.traverse():
+        if addr >= vad.Start and addr < vad.End:
+            break
+    if vad is None:
+        return None
+    
+    filename = None
+    if vad.ControlArea is not None and vad.FileObject is not None:
+        filename = str(vad.ControlArea.FileObject.FileName)
+
+    if vad.ControlArea.Segment is None:
+        return None
+
+    # Compute page offset with respect to Start of the VAD,
+    # and the corresponding prototype Page Table Entry pointed
+    # by the Segment
+    offset_on_vad = addr - vad.Start
+    page_offset_on_vad = (offset_on_vad - (offset_on_vad & 0xFFF))
+    # Consider 4 KiB pages
+    ppte_index = page_offset_on_vad / 0x1000
+    
+    if ppte_index >= vad.ControlArea.Segment.TotalNumberOfPtes.v():
+        return None
+
+    if bitness == 32 and is_pae:
+        ppte_addr = vad.ControlArea.Segment.PrototypePte.v() + (ppte_index * 8)
+    else:
+        ppte_addr = vad.ControlArea.Segment.PrototypePte.v() + (ppte_index * addr_space.profile.vtypes["_MMPTE_PROTOTYPE"][0])
+
+    # Read Subsections pointed by ControlArea
+    visited_subsections = {}
+    if "Subsection" in vad.members:
+        subsect = vad.Subsection
+    # There is no Subsection pointer in VAD
+    # structure, so we just read after the ControlArea
+    else:
+        subsect = obj.Object("_SUBSECTION", offset=(vad.ControlArea.v() + addr_space.profile.vtypes["_CONTROL_AREA"][0]), vm=addr_space)
+
+    file_offset_to_read = None
+    while file_offset_to_read is None and subsect is not None or subsect.v() != 0 and subsect.v() not in visited_subsections:
+        visited_subsections.append(subsect.v())
+        # Get the PPTE address where the Subsection starts,
+        # and compute the virtual address that it corresponds 
+        # to.
+        ppte_addr = subsect.SubsectionBase.v()
+        if bitness == 32 and is_pae:
+            ppte_index = (subsect.SubsectionBase.v() - vad.ControlArea.Segment.PrototypePte.v()) / 8
+        else:
+            ppte_index = (subsect.SubsectionBase.v() - vad.ControlArea.Segment.PrototypePte.v()) / addr_space.profile.vtypes["_MMPTE_PROTOTYPE"][0]
+
+        subsection_base = vad.Start + (ppte_index * 0x1000)
+        subsection_size = subsect.PtesInSubsection.v() * 0x1000
+        subsection_file_offset = subsect.StartingSector.v() * 512
+        subsection_file_size = vad.Subsection.NumberOfFullSectors.v() * 512 
+
+        visited_subsections[subsect.v()] = (subsection_base, 
+                                            subsection_size, 
+                                            subsection_file_offset,
+                                            subsection_file_size)
+
+        if (addr >= subsection_base) and (addr < (subsection_base + subsection_size)):
+            file_offset_to_read = (addr - subsection_base) + subsection_file_offset
+
+        subsect = subsect.NextSubsection
+
+    f = None
+    for fs in api.get_filesystems():
+        try:
+            f = api.open_guest_path(fs["index"], filename)
+            break
+        except:
+            # The file cannot be open on such filesystem
+            pass
+    if not f:
+        raise RuntimeError("Could not read memory from pagefile: file not found")
+
+    print("Reading file %s at offset %x - Size: %x" % (filename, file_offset_to_read, size))
+    f.seek(file_offset_to_read)
+    data = f.read(size = size)
+    f.close()
+
+
+def windows_get_prototype_pte_address_range(pgd, address):
+    import volatility.obj as obj
+    import volatility.win32.tasks as tasks
+    import volatility.plugins.vadinfo as vadinfo
+    from utils import get_addr_space
+
+    addr_space = get_addr_space(pgd)
+
+    eprocs = [t for t in tasks.pslist(
+        addr_space) if t.Pcb.DirectoryTableBase.v() == pgd]
+
+    if len(eprocs) != 1:
+        return None
+
+    task = eprocs[0]
+    vad = None
+    # File name and offset
+    for vad in task.VadRoot.traverse():
+        if address >= vad.Start and address < vad.End:
+            break
+
+    if vad is None:
+        return None
+
+    if vad.ControlArea is not None and vad.ControlArea.Segment is not None:
+        start = vad.ControlArea.Segment.PrototypePte.v()
+        end = start + (vad.ControlArea.Segment.TotalNumberOfPtes.v() * addr_space.profile.vtypes["_MMPTE_SOFTWARE"][0])
+        return (start,end)
+    else:
+        return None
+
+
+def windows_read_paged_file(pgd, addr, size, page_file_offset, page_file_number):
+    import api
+    # Step 1: Select the page file
+    pagefile_filename = "pagefile.sys"
+    # Step 2: Read the page file at the given offset
+    f = None
+    for fs in api.get_filesystems():
+        try:
+            f = api.open_guest_path(fs["index"], pagefile_filename)
+            break
+        except:
+            # The file cannot be open on such filesystem
+            pass
+    if not f:
+        raise RuntimeError("Could not read memory from pagefile: file not found")
+
+    f.seek(page_file_offset)
+    data = f.read(size = size)
+    f.close()
+    # Step 3: Return the data
+    return data
+
+
+def generate_mask(start_bit, end_bit):
+    mask = 0x0
+    i = start_bit
+    while i < end_bit:
+        mask |= 0x1 << i
+        i += 1
+    return mask
+
+
+def windows_read_paged_out_memory(pgd, addr, size):
+    import api
+    import api_internal
+    import struct
+    from utils import get_addr_space
+    
+    VALID_BIT = 0x1
+    PROTOTYPE_BIT = 0x1 << 10
+    TRANSITION_BIT = 0x1 << 11
+
+    PPTE_VALID_BIT = 0x1
+    PPTE_TRANSITION_BIT = 0x1 << 11
+    PPTE_DIRTY_BIT = 0x1 << 6
+    PPTE_P_BIT = 0x1 << 10 # Thit bit means it is a... 
+    #...memory mapped file,  instead of "prototype"
+
+    # Get PTE and 'mode'
+    pte = api_internal.x86_get_pte(pgd, addr)
+    is_pae = api_internal.x86_is_pae()
+    bitness = api.get_os_bits()
+
+    addr_space = get_addr_space(pgd)
+
+    # if PTE is None, it could mean that the page directory has not been created.
+    # if PTE is 0, it could mean the pte has not been yet created.
+    # In these cases, we still check the VAD to see if it corresponds to a 
+    # memory mapped file, and if so, read that file at the correct offset
+    if pte is None or pte == 0:
+        return windows_read_memory_mapped(pgd, addr, size, pte, is_pae, bitness)
+
+    # Make sure the page is invalid and we cannot read it:
+    if (pte & VALID_BIT) == 1:
+        return api.r_va(pgd, addr, size)
+
+    # The PTE is INVALID. First, we check it doesn't point to a 
+    # prototype page table entry (PPTE).
+    if (pte & PROTOTYPE_BIT) == 0:
+        # The page is in the pagefile, or is demand zero, or memory mapped
+        if (pte & TRANSITION_BIT) == 0:
+            number_bits_offset = 0 
+            number_bits_number = 0
+            page_file_offset = 0
+            page_file_number = 0
+            if (bitness == 32 and not is_pae) or bitness == 64:
+                offset_mask = generate_mask(addr_space.profile.vtypes["_MMPTE_SOFTWARE"][1]["PageFileHigh"][1][1]["start_bit"],
+                                            addr_space.profile.vtypes["_MMPTE_SOFTWARE"][1]["PageFileHigh"][1][1]["end_bit"])
+                number_mask = generate_mask(addr_space.profile.vtypes["_MMPTE_SOFTWARE"][1]["PageFileLow"][1][1]["start_bit"],
+                                            addr_space.profile.vtypes["_MMPTE_SOFTWARE"][1]["PageFileLow"][1][1]["end_bit"])
+                number_bits_offset = addr_space.profile.vtypes["_MMPTE_SOFTWARE"][1]["PageFileHigh"][1][1]["end_bit"] - \
+                                     addr_space.profile.vtypes["_MMPTE_SOFTWARE"][1]["PageFileHigh"][1][1]["start_bit"]
+                number_bits_number = addr_space.profile.vtypes["_MMPTE_SOFTWARE"][1]["PageFileLow"][1][1]["end_bit"] - \
+                                     addr_space.profile.vtypes["_MMPTE_SOFTWARE"][1]["PageFileLow"][1][1]["start_bit"]
+                page_file_offset = (pte & offset_mask) >> addr_space.profile.vtypes["_MMPTE_SOFTWARE"][1]["PageFileHigh"][1][1]["start_bit"]
+                page_file_number = (pte & number_mask) >> addr_space.profile.vtypes["_MMPTE_SOFTWARE"][1]["PageFileLow"][1][1]["start_bit"]
+            elif bitness == 32 and is_pae:
+                # See Intel manual, consider 24 bits of address for the 4KiB page offset
+                # Page file offset should correspond to the same 24 bits
+                offset_mask = generate_mask(12, 12 + 24)
+                # Reuse the same as for 32/64 bits
+                number_mask = generate_mask(addr_space.profile.vtypes["_MMPTE_SOFTWARE"][1]["PageFileLow"][1][1]["start_bit"],
+                                            addr_space.profile.vtypes["_MMPTE_SOFTWARE"][1]["PageFileLow"][1][1]["end_bit"])
+                number_bits_offset = 24 
+                number_bits_number = addr_space.profile.vtypes["_MMPTE_SOFTWARE"][1]["PageFileLow"][1][1]["end_bit"] - \
+                                     addr_space.profile.vtypes["_MMPTE_SOFTWARE"][1]["PageFileLow"][1][1]["start_bit"]
+                page_file_offset = (pte & offset_mask) >> 12
+                page_file_number = (pte & number_mask) >> addr_space.profile.vtypes["_MMPTE_SOFTWARE"][1]["PageFileLow"][1][1]["start_bit"]
+
+            else:
+                raise NotImplementedError()
+
+            #Demand zero
+            if page_file_offset == 0x0:
+                return "\x00" * size
+            #Check VAD (memory mapped file) (all 1's)
+            elif page_file_offset == generate_mask(0, number_bits_offset):
+                return windows_read_memory_mapped(pgd, addr, size, pte, is_pae, bitness)
+            # Page file
+            else:
+                return windows_read_paged_file(pgd, addr, size, page_file_offset, page_file_number)
+        # Transition page -> Can be read normally from memory, 
+        # so proceed with the read even if valid bit is 0.
+        else:
+            # Get the offset from the PTE, and compute ourselves the physical address
+            page_offset = 0
+            if (bitness == 32 and not is_pae) or bitness == 64:
+                offset_mask = generate_mask(addr_space.profile.vtypes["_MMPTE_HARDWARE"][1]["PageFrameNumber"][1][1]["start_bit"],
+                                            addr_space.profile.vtypes["_MMPTE_HARDWARE"][1]["PageFrameNumber"][1][1]["end_bit"])
+                page_offset = (pte & offset_mask)
+            elif bitness == 32 and is_pae:
+                # See Intel manual, consider 24 bits of address for the 4KiB page offset
+                # Page file offset should correspond to the same 24 bits
+                offset_mask = generate_mask(12, 12 + 24)
+                # Reuse the same as for 32/64 bits
+                page_offset = (pte & offset_mask)
+            else:
+                raise NotImplementedError()
+            # Read physical address, always 12 bits for a 4KiB page.
+            # XXX: Here, we should should also consider 4Mb pages.
+            return api.r_pa(page_offset | (addr & generate_mask(0, 12)), size)
+    # The page points to a prototype PTE
+    else:
+        # We read the PPTE
+        ppte_addr = 0 
+        ppte_size = 0
+        if bitness == 32 and not is_pae:
+            # In this case, the PPTE pointer is not a pointer, but an index, so it 
+            # needs some additional computation
+            index_low_mask = generate_mask(addr_space.profile.vtypes["_MMPTE_PROTOTYPE"][1]["ProtoAddressLow"][1][1]["start_bit"],
+                                        addr_space.profile.vtypes["_MMPTE_PROTOTYPE"][1]["ProtoAddressLow"][1][1]["end_bit"])
+            index_low = (pte & index_low_mask) >> addr_space.profile.vtypes["_MMPTE_PROTOTYPE"][1]["ProtoAddressLow"][1][1]["start_bit"]
+
+            index_high_mask = generate_mask(addr_space.profile.vtypes["_MMPTE_PROTOTYPE"][1]["ProtoAddressHigh"][1][1]["start_bit"],
+                                        addr_space.profile.vtypes["_MMPTE_PROTOTYPE"][1]["ProtoAddressHigh"][1][1]["end_bit"])
+            index_high = (pte & index_high_mask) >> addr_space.profile.vtypes["_MMPTE_PROTOTYPE"][1]["ProtoAddressHigh"][1][1]["start_bit"]
+
+            number_bits_index_low = addr_space.profile.vtypes["_MMPTE_PROTOTYPE"][1]["ProtoAddressLow"][1][1]["end_bit"]- \
+                                        addr_space.profile.vtypes["_MMPTE_PROTOTYPE"][1]["ProtoAddressLow"][1][1]["start_bit"]
+
+            ppte_size = addr_space.profile.vtypes["_MMPTE"][0]
+
+            # Formula to compute the index
+            index = ((index_high << number_bits_index_low) | index_low) << 2
+
+            # The index is an address relative to the base of a paged pool.
+            # By debugging several systems, these bases where fixed (on 32 bit systems)
+            # to 0x80000000 or 0xe1000000 (windows 7 and windows xp respectively).
+            # This address points to one of the PrototypePTEs that are part of the Segment, 
+            # pointed out by the ControlArea of the corresponding VAD. Therefore, we should
+            # be able to bruteforce the first 8 bits of the address to find the correct base.
+            # First, get the Segment, and the first prototype PTE, as well as the number of
+            # prototype PTEs for that Segment.
+            res = windows_get_prototype_pte_address_range(pgd, addr)
+            found = False
+            if res is not None:
+                start, end = res
+                for i in range(0, 255):
+                    ppte_addr = (i << 24) | index
+                    if ppte_addr >= start and ppte_addr <= end:
+                        found = True
+                        break
+                if not found:
+                    raise RuntimeError("Could not read memory on second chance (using filesystem)")
+            else:
+                raise RuntimeError("Could not read memory on second chance (using filesystem)")
+
+        elif bitness == 32 and is_pae:
+            # According to paper: "Windows Operating Systems Agnostic Memory Analysis"
+            offset_mask = generate_mask(32, 64)
+            ppte_addr = (pte & offset_mask) >> 32 
+            ppte_size = 64
+
+        elif bitness == 64:
+            offset_mask = generate_mask(addr_space.profile.vtypes["_MMPTE_PROTOTYPE"][1]["ProtoAddress"][1][1]["start_bit"],
+                                        addr_space.profile.vtypes["_MMPTE_PROTOTYPE"][1]["ProtoAddress"][1][1]["end_bit"])
+            ppte_addr = (pte & offset_mask) >> addr_space.profile.vtypes["_MMPTE_PROTOTYPE"][1]["ProtoAddress"][1][1]["start_bit"]
+            ppte_size = addr_space.profile.vtypes["_MMPTE"][0]
+
+        else:
+            raise NotImplementedError()
+
+        # Now, read the PPTE given its address. The PPTE address is a virtual address!!!! (on a paged pool)
+        if ppte_size == 4:
+            ppte = struct.unpack("<I", api.r_va(pgd, ppte_addr, 4))[0]
+        elif ppte_size == 8:
+            ppte = struct.unpack("<K", api.r_va(pgd, ppte_addr, 8))[0]
+        else:
+            raise NotImplementedError()
+
+        if (ppte & PPTE_VALID_BIT == 1) or (ppte & PPTE_TRANSITION_BIT == 1):
+            # State: Active/Valid - Transision - Modified-no-write
+            # The PPTE contains a valid entry, so we can
+            # just use the info in it to translate the page.
+            # Get the offset from the PTE, and compute ourselves the physical address
+            page_offset = 0
+            if (bitness == 32 and not is_pae) or bitness == 64:
+                offset_mask = generate_mask(addr_space.profile.vtypes["_MMPTE_HARDWARE"][1]["PageFrameNumber"][1][1]["start_bit"],
+                                            addr_space.profile.vtypes["_MMPTE_HARDWARE"][1]["PageFrameNumber"][1][1]["end_bit"])
+                page_offset = (ppte & offset_mask)
+            elif bitness == 32 and is_pae:
+                # See Intel manual, consider 24 bits of address for the 4KiB page offset
+                # Page file offset should correspond to the same 24 bits
+                offset_mask = generate_mask(12, 12 + 24)
+                # Reuse the same as for 32/64 bits
+                page_offset = (ppte & offset_mask)
+            else:
+                raise NotImplementedError()
+
+            # Read physical address, always 12 bits for a 4KiB page.
+            # XXX: Here, we should should also consider 4Mb pages.
+            return api.r_pa(page_offset | (addr & generate_mask(0, 12)), size)
+        elif (ppte & (PPTE_VALID_BIT | PPTE_TRANSITION_BIT | PPTE_P_BIT)) == 0:
+            # Demand zero or pagefile
+            #Read page_file_offset and page_file_number
+            page_file_offset = 0
+            page_file_number = 0
+            if (bitness == 32 and not is_pae) or bitness == 64:
+                offset_mask = generate_mask(addr_space.profile.vtypes["_MMPTE_SOFTWARE"][1]["PageFileHigh"][1][1]["start_bit"],
+                                            addr_space.profile.vtypes["_MMPTE_SOFTWARE"][1]["PageFileHigh"][1][1]["end_bit"])
+                number_mask = generate_mask(addr_space.profile.vtypes["_MMPTE_SOFTWARE"][1]["PageFileLow"][1][1]["start_bit"],
+                                            addr_space.profile.vtypes["_MMPTE_SOFTWARE"][1]["PageFileLow"][1][1]["end_bit"])
+                page_file_offset = (pte & offset_mask) >> addr_space.profile.vtypes["_MMPTE_SOFTWARE"][1]["PageFileHigh"][1][1]["start_bit"]
+                page_file_number = (pte & number_mask) >> addr_space.profile.vtypes["_MMPTE_SOFTWARE"][1]["PageFileLow"][1][1]["start_bit"]
+            elif bitness == 32 and is_pae:
+                # See Intel manual, consider 24 bits of address for the 4KiB page offset
+                # Page file offset should correspond to the same 24 bits
+                offset_mask = generate_mask(12, 12 + 24)
+                # Reuse the same as for 32/64 bits
+                number_mask = generate_mask(addr_space.profile.vtypes["_MMPTE_SOFTWARE"][1]["PageFileLow"][1][1]["start_bit"],
+                                            addr_space.profile.vtypes["_MMPTE_SOFTWARE"][1]["PageFileLow"][1][1]["end_bit"])
+                page_file_offset = (pte & offset_mask) >> 12
+                page_file_number = (pte & number_mask) >> addr_space.profile.vtypes["_MMPTE_SOFTWARE"][1]["PageFileLow"][1][1]["start_bit"]
+            else:
+                raise NotImplementedError()
+
+            if page_file_offset == 0 and page_file_number == 0:
+                #Demand zero
+                return "\x00" * size
+            else:
+                # PageFile
+                return windows_read_paged_file(pgd, addr, size, page_file_offset, page_file_number)
+        elif (ppte & PPTE_P_BIT) == 1:
+            # Memory mapped file
+            return windows_read_memory_mapped(pgd, addr, size, ppte, is_pae, bitness)

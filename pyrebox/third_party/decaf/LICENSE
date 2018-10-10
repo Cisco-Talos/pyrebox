@@ -1,0 +1,12 @@
+PROJECT
+
+    DECAF. Dynamic Executable Code Analysis Framework.
+    https://github.com/sycurelab/DECAF
+
+LICENSE
+
+    GPLv2
+
+AFFECTED FILES
+
+    Some concepts/approaches throught the code, sleuthkit integration...
