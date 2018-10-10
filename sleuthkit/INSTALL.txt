@@ -1,0 +1,130 @@
+                        The Sleuth Kit
+                http://www.sleuthkit.org/sleuthkit
+
+                    Installation Instructions
+
+                     Last Modified: Oct 2012
+
+
+REQUIREMENTS
+=============================================================================
+Tested Platform:
+- FreeBSD 2-6.*
+- Linux 2.*
+- OpenBSD 2-3.*
+- Mac OS X
+- SunOS 4-5.*
+- Windows
+
+Build System (to compile from a source distribution):
+- C/C++ compiler
+- GNU Make
+- Java compiler / JDK (if you want the java bindings)
+
+Development System (to extend TSK or compile from the repository):
+- GNU autoconf, automake, and libtool
+- Plus the build system requirements
+
+Optional Programs:
+- Autopsy: Provides a graphical HTML-based interface to The
+Sleuth Kit (which makes it much easier to use).  Install this AFTER
+installing The Sleuth Kit.
+    Available at: http://www.sleuthkit.org/autopsy
+
+Optional Libraries:
+There are optional features that TSK can use if you have installed
+them before you build and install TSK. 
+
+- AFFLIB: Allows you to process disk images that are stored in the
+AFF format. Version 3.3.6 has been tested to compile and work with this
+release. 
+    Available at: http://www.afflib.org
+
+- LibEWF: Allows you to process disk images that are stored in the
+Expert Witness format (EnCase Format).  Version 20130128 has been
+tested to compile and work with this release.   It is the last 
+stable release of libewf and therefore the only one that we 
+currently support.  You can download it from:
+
+    https://github.com/sleuthkit/libewf_64bit
+
+    The official repository is available here, but there is not
+    a package of the last stable release:
+
+    https://github.com/libyal/libewf
+    Available at: http://sourceforge.net/projects/libewf/
+
+
+
+INSTALLATION
+=============================================================================
+
+Refer to the README_win32.txt file for details on Windows.
+
+The Sleuth Kit uses the GNU autotools for building and installation.
+There are a few steps to this process.  First, run the 'configure'
+script in the root TSK directory.  See the CONFIGURE OPTIONS section
+for useful arguments that can be given to 'configure.
+
+    $ ./configure
+
+If there were no errors, then run 'make'.  If you do not have a
+'configure' script, then it is probably because you cloned the
+source code repository. If so, you will need to have automake,
+autoconf, and libtool installed and you can create the configure
+script using the 'bootstrap' script in the root directory. 
+
+    $ make
+
+The 'make' process will take a while and will build the TSK tools.
+When this process is complete, the libraries and executables will
+be located in the TSK sub-directories.  To install them, type
+'make install'.
+
+    $ make install
+
+By default, this will copy everything in to the /usr/local/ structure.
+So, the executables will be in '/usr/local/bin'.  This directory will
+need to be in your PATH if you want to run the TSK commands without 
+specifying '/usr/local/bin' everytime.
+
+
+If you get an error like:
+
+  libtool: Version mismatch error.  This is libtool 2.2.10, but the
+  libtool: definition of this LT_INIT comes from libtool 2.2.4.
+  libtool: You should recreate aclocal.m4 with macros from libtool 2.2.10
+  libtool: and run autoconf again.
+
+Run:
+    ./bootstrap 
+
+and then go back to running configure and make.  To run 'bootstrap',
+you'll need to have the autotools installed (see the list at the
+top of this page).
+
+
+CONFIGURE OPTIONS
+-----------------------------------------------------------------------------
+There are some arguments to 'configure' that you can supply to
+customize the setup. Currently, they focus on the optional disk
+image format libraries.
+
+--without-afflib: Supply this if you want TSK to ignore AFFLIB even
+if it is installed.
+
+--with-afflib=dir: Supply this if you want TSK to look in 'dir' for
+the AFFLIB installation (the directory should have 'lib' and 'include'
+directories in it).
+
+--without-ewf: Supply this if you want TSK to ignore libewf even
+if it is installed.
+
+--with-libewf=dir: Supply this if you want TSK to look in 'dir' for
+the libewf installation (the directory should have 'lib' and 'include'
+directories in it).
+
+-----------------------------------------------------------------------------
+
+Brian Carrier
+carrier <at> sleuthkit <dot> org
