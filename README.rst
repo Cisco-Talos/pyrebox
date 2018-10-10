@@ -45,6 +45,9 @@ active development and new cool features are yet to come! The master branch shou
 version, while the dev branches contain the latest, work-in progress features. The following announcement
 list refers to the master branch, and the date when the development changes were merged into master.
 
+- [Oct 10, 2018] Added experimental support to fetch non-mapped memory pages.
+- [0ct 10, 2018] Added The Sleuth Kit integration
+- [Aug 02, 2018] Added autorun scripts.
 - [Jul 26, 2018] Uploaded slides of EuskalHack 2018 presentation.
 - [Jul 02, 2018] Fixes to provide CentOS 7 support. 
 - [Jun 25, 2018] Added scripts presented at EuskalHack 2018.
