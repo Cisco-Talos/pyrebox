@@ -69,7 +69,7 @@ exit 1
 fi
 
 #----------------------- QEMU -----------------------
-if [ x"${reconfigure}" = xyes ] || [ ! -f ${qemu_path}/config-host.mak ]; then
+if [ x"${reconfigure}" = xyes ] || [ ! -f ${qemu_path}/config-host.mak ] || [ ! -f ${sleuthkit_path}/Makefile ]; then
     echo -e "\n${GREEN}[*] Configuring The Sleuth Kit...${NC}\n"
     cd ${sleuthkit_path}
     ./bootstrap

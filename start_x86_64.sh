@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 #This script is provided as an example of a possible QEMU / Pyrebox configuration
 #for a Windows 7 SP 0 64 bit analysis target.
@@ -21,5 +21,6 @@ else
     snapshot="-loadvm $2"
 fi
 
-cp pyrebox.conf.Win7SP0x64 pyrebox.conf
-LD_LIBRARY_PATH=sleuthkit/tsk/.libs:$LD_LIBRARY_PATH ./pyrebox-x86_64 -monitor stdio -m 512 -usb -drive file=$1,index=0,media=disk,format=qcow2,cache=unsafe -vnc 127.0.0.1:0 ${snapshot} 
+BASEDIR=$(dirname "$0")
+cp $BASEDIR/pyrebox.conf.Win7SP0x64 $BASEDIR/pyrebox.conf
+$BASEDIR/pyrebox-x86_64 -monitor stdio -net none -m 512 -usb -drive file=$1,index=0,media=disk,format=qcow2,cache=unsafe -vnc 127.0.0.1:0 ${snapshot} 

@@ -69,13 +69,14 @@ documentation:
 
 #We place these 2 rules so that we can compile more comfortably from this directory
 all: 
+	@[ ! -f ./sleuthkit/Makefile ] && ./build.sh --reconfigure || true
 	@$(MAKE) -C ./qemu $@
 
 clean: clean-triggers clean-sleuthkit	
 	@$(MAKE) -C ./qemu $@
 
 clean-sleuthkit:
-	@$(MAKE) -C ./sleuthkit clean
+	@[ -f ./sleuthkit/Makefile ] && $(MAKE) -C ./sleuthkit clean || true
 
 test_scripts:
 	flake8 ./scripts --count --select=E901,E999,F821,F822,F823 --show-source --statistics
