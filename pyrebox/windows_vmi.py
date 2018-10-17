@@ -26,13 +26,20 @@ import volatility.obj as obj
 # import volatility.plugins.kdbgscan as kdbg
 import volatility.utils as utils
 import traceback
+import hashlib
+
+from utils import pp_print
+from utils import pp_debug
+from utils import pp_warning
+from utils import pp_error
 
 last_kdbg = None
 
-# Keep a list of those modules for which we were not able to
-# find symbols. If we find in the future, or in the context
-# of a different process, we can update them
-mods_pending = {}
+# To store the sleuthkit filesystem
+filesystem = None
+
+# To mark whether or not we need to save the cache
+symbol_cache_must_be_saved = False
 
 def windows_insert_module_internal(
         p_pid,
@@ -42,91 +49,92 @@ def windows_insert_module_internal(
         fullname,
         basename,
         checksum,
-        nt_header,
         update_symbols):
 
     from utils import get_addr_space
     from vmi import modules
     from vmi import symbols
     from vmi import Module
-    from vmi import PseudoLDRDATA
     from api_internal import dispatch_module_load_callback
     from api_internal import dispatch_module_remove_callback
+    import pefile
+    import api
+
+    global filesystem
+    global symbol_cache_must_be_saved
+
+    if fullname.startswith("\\??\\"):
+        fullname = fullname[4:]
+    if fullname.upper().startswith("C:\\"):
+        fullname = fullname[3:]
+    if fullname.upper().startswith("\\SYSTEMROOT"):
+        fullname = "\WINDOWS" + fullname[11:]
+
+    fullname = fullname.replace("\\", "/")
+
+    if fullname[-4:].upper() == ".SYS" and not "/" in fullname:
+        fullname = "/WINDOWS/system32/DRIVERS/" + fullname
+
+    fullname = fullname.lower()
 
     mod = Module(base, size, p_pid, p_pgd, checksum, basename, fullname)
 
-    if p_pgd != 0:
-        addr_space = get_addr_space(p_pgd)
-    else:
-        addr_space = get_addr_space()
-
     # First, we try to get the symbols from the cache 
-    if (checksum, fullname) in symbols:
-        mod.set_symbols(symbols[(checksum, fullname)])
+    if fullname != "" and fullname in symbols.keys():
+        mod.set_symbols(symbols[fullname])
 
     # If we are updating symbols (a simple module retrieval would
-    # not require symbol extraction), and, either we dont have any
-    # symbols on the cache, or we have an empty list (symbols could
-    # not be retrieved for some reason, such as a missing memory page,
-    # we try symbol resolution
-    if update_symbols and ((checksum, fullname) not in symbols or len(symbols[(checksum, fullname)]) == 0):
+    # not require symbol extraction), and we don't have any
+    # symbols on the cache:
+    elif fullname != "" and update_symbols:
+        unnamed_function_counter = 0
         syms = {}
-        export_dir = nt_header.OptionalHeader.DataDirectory[0]
+    
+        # Here, fetch the file using the sleuthkit, and use 
+        # PE file to process it
+        
+        # First select the file system if not selected already
+        if filesystem is None:
+            for fs in api.get_filesystems():
+                file_list = api.open_guest_path(fs["index"], "")
+                if isinstance(file_list, list) and len(file_list) > 0:
+                    if "windows" in [f.lower() for f in file_list]:
+                        filesystem = fs
 
-        if export_dir:
-            expdir = obj.Object(
-                '_IMAGE_EXPORT_DIRECTORY',
-                offset=base +
-                export_dir.VirtualAddress,
-                vm=addr_space,
-                parent=PseudoLDRDATA(
-                    base,
-                    basename,
-                    export_dir))
-            if expdir.valid(nt_header):
-                # Ordinal, Function RVA, and Name Object
-                for o, f, n in expdir._exported_functions():
-                    if not isinstance(o, obj.NoneObject) and \
-                       not isinstance(f, obj.NoneObject) and \
-                       not isinstance(n, obj.NoneObject):
-                        syms[str(n)] = f.v()
+        if filesystem is not None:
+            # Try to read the file
+            f = None
+            try:
+                f = api.open_guest_path(filesystem["index"], fullname)
+            except Exception as e:
+                pp_error("%s - %s\n" % (str(e), fullname))
 
-                # If we managed to parse export table, update symbols,
-                # no matter if it is empty
-                if (checksum, fullname) not in symbols or len(syms) > len(symbols[(checksum, fullname)]):
-                    symbols[(checksum, fullname)] = syms
+            if f is not None:
+                data = f.read()
+        
+                pe = pefile.PE(data=data)
+
+                if hasattr(pe, "DIRECTORY_ENTRY_EXPORT"):
+                    for exp in pe.DIRECTORY_ENTRY_EXPORT.symbols:
+                        if exp.name is not None:
+                            syms[exp.name] = exp.address
+                        else:
+                            syms["unnamed_funcion_%d" % unnamed_function_counter] = exp.address
+                            unnamed_function_counter += 1
+
+                # If we managed to parse the export table, update the symbols
+                # except if it is empty
+                if fullname not in symbols.keys():
+                    symbols[fullname] = syms
                     # Even if it is empty, the module symbols are set
                     # to an empty list, and thus are 'resolved'.
                     # Anyway, in future updates, they could be resolved,
                     # as we allow this in the first condition.
-                    mod.set_symbols(symbols[(checksum, fullname)])
-                    # Add module to mods_pending, or
-                    # Update modules that may we might not have been 
-                    # able to resolve symbols in the past
-                    if len(syms) == 0:
-                        if (checksum, fullname) not in mods_pending:
-                            mods_pending[(checksum, fullname)] = []
-                        mods_pending[(checksum, fullname)].append(mod)
-                    else:
-                        if (checksum, fullname) in mods_pending and len(mods_pending[(checksum, fullname)]) > 0:
-                            for mod in mods_pending[(checksum, fullname)]:
-                                mod.set_symbols(syms)
-                            del mods_pending[(checksum, fullname)]
-
-        else:
-            # Since there is no export dir, we assume that it does
-            # not have any symbols
-            if (checksum, fullname) not in symbols:
-                symbols[(checksum, fullname)] = []
-                # Even if it is empty, the module symbols are set
-                # to an empty list, and thus are 'resolved'.
-                # Anyway, in future updates, they could be resolved, 
-                # as we allow this in the first condition.
-                mod.set_symbols(symbols[(checksum, fullname)])
-                # Add module to mods_pending, or
-                if (checksum, fullname) not in mods_pending:
-                    mods_pending[(checksum, fullname)] = []
-                mods_pending[(checksum, fullname)].append(mod)
+                    mod.set_symbols(symbols[fullname])
+                    symbol_cache_must_be_saved = True
+            else:
+                symbols[fullname] = {}
+                mod.set_symbols(symbols[fullname])
  
     #Module load/del notification
     if base in modules[(p_pid, p_pgd)]:
@@ -172,15 +180,9 @@ def windows_insert_module(p_pid, p_pgd, module, update_symbols):
     basename = module.BaseDllName.v()
     if isinstance(basename, obj.NoneObject):
         basename = "Unknown"
-
-    # checksum
-    nt_header = module._nt_header()
-    if not isinstance(nt_header, obj.NoneObject):
-        checksum = nt_header.OptionalHeader.CheckSum.v()
-        if isinstance(checksum, obj.NoneObject):
-            checksum = 0
-    else:
-        checksum = 0
+    checksum = module.CheckSum.v()
+    if isinstance(checksum, obj.NoneObject):
+        checksum = ""
 
     windows_insert_module_internal(
         p_pid,
@@ -190,7 +192,6 @@ def windows_insert_module(p_pid, p_pgd, module, update_symbols):
         fullname,
         basename,
         checksum,
-        nt_header,
         update_symbols)
 
 
@@ -200,6 +201,7 @@ def windows_update_modules(pgd, update_symbols=False):
         update the cache accordingly
     '''
     global last_kdbg
+    global symbol_cache_must_be_saved
 
     import api
     from utils import get_addr_space
@@ -252,6 +254,11 @@ def windows_update_modules(pgd, update_symbols=False):
         # Remove all the modules that are not marked as present
         clean_non_present_modules(0, 0)
   
+        if symbol_cache_must_be_saved:
+            from vmi import save_symbols_to_cache_file
+            save_symbols_to_cache_file()
+            symbol_cache_must_be_saved = False
+
         return list_entry_regions
 
     for proc in procs:
@@ -272,9 +279,22 @@ def windows_update_modules(pgd, update_symbols=False):
             if task.Peb is None or not task.Peb.is_valid():
                 if isinstance(task.Peb.obj_offset, int):
                     list_entry_regions.append((task.obj_offset, task.Peb.obj_offset, task.Peb.size()))
+
+                if symbol_cache_must_be_saved:
+                    from vmi import save_symbols_to_cache_file
+                    save_symbols_to_cache_file()
+                    symbol_cache_must_be_saved = False
+
                 return list_entry_regions
+
             if task.Peb.Ldr is None or not task.Peb.Ldr.is_valid():
                 list_entry_regions.append((task.Peb.v(), task.Peb.Ldr.obj_offset, task.Peb.Ldr.size()))
+
+                if symbol_cache_must_be_saved:
+                    from vmi import save_symbols_to_cache_file
+                    save_symbols_to_cache_file()
+                    symbol_cache_must_be_saved = False
+
                 return list_entry_regions
 
             # Add the initial list pointer as a list entry if we already have a PEB and LDR
@@ -317,6 +337,11 @@ def windows_update_modules(pgd, update_symbols=False):
 
             # Remove all the modules that are not marked as present
             clean_non_present_modules(p_pid, p_pgd)
+
+            if symbol_cache_must_be_saved:
+                from vmi import save_symbols_to_cache_file
+                save_symbols_to_cache_file()
+                symbol_cache_must_be_saved = False
 
             return list_entry_regions
 

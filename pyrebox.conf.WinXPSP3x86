@@ -30,3 +30,6 @@ profile: WinXPSP3x86
 [AGENT]
 name: win_agent_32.exe
 conf: win_agent_32.exe.conf 
+
+[SYMBOL_CACHE]
+path: symbols.WinXPSP3x86

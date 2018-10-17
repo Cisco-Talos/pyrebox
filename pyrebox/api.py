@@ -538,7 +538,7 @@ def get_module_list(pgd):
         :param pgd: The PGD of the process for which we want to extract the modules, or 0 to extract kernel modules
         :type pgd: int
 
-        :return: List of modules, each element is a dictionary with keys: "name", "base", "size", and "symbols_resolved"
+        :return: List of modules, each element is a dictionary with keys: "name", "fullname", base", "size", and "symbols_resolved"
         :rtype: list
     """
     import vmi
@@ -562,6 +562,7 @@ def get_module_list(pgd):
         if (proc_pid, proc_pgd) in vmi.modules:
             for mod in vmi.modules[(proc_pid, proc_pgd)].values():
                 mods.append({"name": mod.get_name(),
+                             "fullname": mod.get_fullname(),
                              "base": mod.get_base(),
                              "size": mod.get_size(),
                              "symbols_resolved" : mod.are_symbols_resolved()})
@@ -576,7 +577,7 @@ def get_symbol_list(pgd = None):
         :param pgd: The pgd to obtain the symbols from. 0 to get kernel symbols
         :type pgd: int
 
-        :return: List of symbols, each element is a dictionary with keys: "mod", "name", and "addr"
+        :return: List of symbols, each element is a dictionary with keys: "mod", "mod_fullname", "name", and "addr"
         :rtype: list
     """
     import vmi
@@ -593,22 +594,16 @@ def get_symbol_list(pgd = None):
                 vmi.update_modules(proc_pgd, update_symbols=True)
                 if (proc_pid, proc_pgd) in vmi.modules:
                     for module in vmi.modules[proc_pid, proc_pgd].values():
-                        c = module.get_checksum()
                         n = module.get_fullname()
-                        if (c, n) not in diff_modules:
-                            diff_modules[(c, n)] = [module]
-                        else:
-                            diff_modules[(c, n)].append(module)
+                        if n not in diff_modules:
+                            diff_modules[n] = module
         # Include kernel modules too
         vmi.update_modules(0, update_symbols=True)
         if (0, 0) in vmi.modules:
             for module in vmi.modules[0, 0].values():
-                c = module.get_checksum()
                 n = module.get_fullname()
-                if (c, n) not in diff_modules:
-                    diff_modules[(c, n)] = [module]
-                else:
-                    diff_modules[(c, n)].append(module)
+                if n not in diff_modules:
+                    diff_modules[n] = module
 
     else:
         pp_print("[*] Updating symbol list for one process... Be patient, this may take a while\n")
@@ -616,21 +611,14 @@ def get_symbol_list(pgd = None):
         for proc_pid, proc_pgd in vmi.modules:
             if proc_pgd == pgd:
                 for module in vmi.modules[proc_pid, proc_pgd].values():
-                    c = module.get_checksum()
                     n = module.get_fullname()
-                    if (c, n) not in diff_modules:
-                        diff_modules[(c, n)] = [module]
-                    else:
-                        diff_modules[(c, n)].append(module)
+                    if n not in diff_modules:
+                        diff_modules[n] = module
 
-    for mod_list in diff_modules.values():
-        added_names = []
-        for mod in mod_list:
-            syms = mod.get_symbols()
-            for name in syms:
-                if name not in added_names:
-                    res_syms.append({"mod": mod.get_name(), "name": name, "addr": syms[name]})
-                    added_names.append(name)
+    for mod in diff_modules.values():
+        syms = mod.get_symbols()
+        for name in syms:
+            res_syms.append({"mod": mod.get_name(), "mod_fullname": mod.get_fullname(), "name": name, "addr": syms[name]})
     return res_syms
 
 

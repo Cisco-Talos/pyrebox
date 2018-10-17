@@ -21,8 +21,18 @@
 #
 # -------------------------------------------------------------------------
 
+import os
+import json
+
+from utils import pp_print
+from utils import pp_debug
+from utils import pp_warning
+from utils import pp_error
+
 # symbol cache
 symbols = {}
+
+symbol_cache_path = None
 
 modules = {}  # List of modules for each process, index is pgd
 
@@ -31,6 +41,31 @@ OS_FAMILY_LINUX = 1
 
 os_family = None
 
+def set_symbol_cache_path(path):
+    global symbol_cache_path
+    symbol_cache_path = path
+
+# Function to load symbols from a file cache
+def load_symbols_from_cache_file():
+    global symbols
+    global symbol_cache_path
+    if symbol_cache_path is not None and os.path.isfile(symbol_cache_path):
+        try:
+            f = open(symbol_cache_path, "r")
+            symbols = json.loads(f.read())
+            f.close()
+        except Exception as e:
+            pp_error("Error while reading symbols from %s: %s\n" % (symbol_cache_path, str(e)))
+
+
+# Function to save symbols to a file cache
+def save_symbols_to_cache_file():
+    global symbols
+    global symbol_cache_path
+    if symbol_cache_path is not None:
+        f = open(symbol_cache_path, "w")
+        f.write(json.dumps(symbols))
+        f.close()
 
 class Module:
     def __init__(self, base, size, pid, pgd, checksum, name, fullname):
@@ -107,20 +142,6 @@ class Module:
 
     def set_present(self, present = True):
         self.__is_present = present
-
-class PseudoLDRDATA:
-    '''
-        Used to trick volatility to let it parse the export table
-    '''
-
-    def __init__(self, base, name, export_directory):
-        self.DllBase = base
-        self.BaseDllName = name
-        self.export_directory = export_directory
-
-    def export_dir(self):
-        return self.export_directory
-
 
 def set_os_family_win():
     global os_family

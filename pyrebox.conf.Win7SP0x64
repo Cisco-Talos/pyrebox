@@ -30,3 +30,6 @@ profile: Win7SP0x64
 [AGENT]
 name: win_agent_64.exe
 conf: win_agent_64.exe.conf 
+
+[SYMBOL_CACHE]
+path: symbols.Win7SP0x64

@@ -194,12 +194,7 @@ QEMU_GLUE_TSK_PATH_INFO* qemu_glue_tsk_ls(unsigned int fs_number, char* path){
             return NULL;
         } else if (tsk_error_get_errno() == TSK_ERR_FS_ATTR_NOTFOUND){
             // If it is not a directory, but a file
-            TSK_FS_FILE* fs_file = (TSK_FS_FILE*)malloc(sizeof(TSK_FS_FILE));
-            if(fs_file == NULL){
-                utils_print_error("[!] Could not allocate structure TSK_FS_FILE\n");
-                return NULL;
-            }
-            fs_file = tsk_fs_file_open(disk_info_internal[fs_number].fs, fs_file, path);
+            TSK_FS_FILE* fs_file = tsk_fs_file_open(disk_info_internal[fs_number].fs, 0, path);
             if (fs_file == NULL){
                 if (tsk_error_get_errno() == TSK_ERR_FS_ARG){
                     // File or directory does not exist

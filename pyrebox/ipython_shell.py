@@ -77,9 +77,28 @@ __proc_prompt = None
 __local_ns = None
 __added_commands = {}
 
+__symbols = None
+
 # Counter for the last BP inserted
 last_bp = -1
 
+def update_symbols():
+    global __symbols
+    import api
+    __symbols = api.get_symbol_list()
+    return __symbols
+
+def set_symbols(symbols):
+    global __symbols
+    __symbols = symbols
+
+def clear_symbols():
+    global __symbols
+    __symbols = None
+
+def get_symbols():
+    global __symbols
+    return __symbols
 
 class Proc:
     '''
@@ -206,7 +225,6 @@ class ShellMagics(Magics):
     def initialize(self):
         self.update_conf()
         self.proc_context = None
-        self.symbols = None
         if conf_m.platform == "i386-softmmu":
             cpu = X86CPU()
         elif conf_m.platform == "x86_64-softmmu":
@@ -233,29 +251,30 @@ class ShellMagics(Magics):
         '''
         Return symbols that match the given parameter (by module or function name), case insensitive.
         '''
-        if self.symbols is None:
-            try:
-                self.symbols = api.get_symbol_list()
-            except BaseException:
-                traceback.print_exc()
-                return []
+        try:
+            if get_symbols() is None:
+                update_symbols()
+        except BaseException:
+            traceback.print_exc()
+            return []
         pp_debug("[*] Searching for symbols with name %s\n" % str(name))
         found = []
         if name == "":
-            found = self.symbols
+            found = get_symbols()
         elif "!" in name:
             toks = name.split("!")
             m = toks[0]
             f = toks[1]
-            for d in self.symbols:
-                mod_name = d["mod"]
+            for d in get_symbols():
+                mod_name_short = d["mod"]
+                mod_name = d["mod_fullname"]
                 f_name = d["name"]
                 addr = d["addr"]
                 if (m.lower() in mod_name.lower() or fnmatch.fnmatch(mod_name.lower(), m.lower())) and (
                         f.lower() in f_name.lower() or fnmatch.fnmatch(f_name.lower(), f.lower())):
                     found.append((mod_name, f_name, addr))
         else:
-            for d in self.symbols:
+            for d in get_symbols():
                 mod_name = d["mod"]
                 f_name = d["name"]
                 addr = d["addr"]
@@ -292,7 +311,7 @@ class ShellMagics(Magics):
                     # modules:
                     if self.proc_context is not None:
                         for m in api.get_module_list(self.proc_context.get_pgd()):
-                            mods[m["name"].lower()] = m["base"]
+                            mods[m["fullname"].lower()] = m["base"]
                     # Try to resolve symbol
                     found = []
                     for sym in self.find_syms(param):
@@ -308,8 +327,8 @@ class ShellMagics(Magics):
                             (param))
                     else:
                         sym = found[0]
-                        val = (sym["addr"] if sym["mod"].lower(
-                        ) not in mods else sym["addr"] + mods[sym["mod"].lower()])
+                        val = (sym["addr"] if sym["mod_fullname"].lower(
+                        ) not in mods else sym["addr"] + mods[sym["mod_fullname"].lower()])
             except BaseException:
                 val = None
                 pass
@@ -326,7 +345,7 @@ class ShellMagics(Magics):
         # If process is set, get the base address for all the modules:
         if self.proc_context is not None:
             for m in api.get_module_list(self.proc_context.get_pgd()):
-                mods[m["name"].lower()] = m["base"]
+                mods[m["fullname"].lower()] = m["base"]
 
         # Read symbols near the address given:
         nearest_low = None
@@ -335,7 +354,8 @@ class ShellMagics(Magics):
         start_addr = addr - 0x1000
         end_addr = addr + 0x1000
         for d in self.find_syms(""):
-            mod_name = d["mod"]
+            mod_name = d["mod_fullname"]
+            mod_name_short = d["mod"]
             f_name = d["name"]
             saddr = d["addr"]
             if mod_name.lower() in mods:
@@ -343,10 +363,10 @@ class ShellMagics(Magics):
             if saddr >= start_addr and saddr <= end_addr:
                 if saddr <= addr and (
                         nearest_low is None or saddr > nearest_low[2]):
-                    nearest_low = (mod_name, f_name, saddr)
+                    nearest_low = (mod_name_short, f_name, saddr)
                 if saddr >= addr and (
                         nearest_high is None or saddr < nearest_high[2]):
-                    nearest_high = (mod_name, f_name, saddr)
+                    nearest_high = (mod_name_short, f_name, saddr)
 
         return (nearest_low, nearest_high)
 
@@ -756,17 +776,17 @@ class ShellMagics(Magics):
 
         # Get the base address for all the kernel modules
         for m in api.get_module_list(0):
-            mods[m["name"].lower()] = m["base"]
+            mods[m["fullname"].lower()] = m["base"]
 
         # If process is set, get the base address for all the modules:
         if self.proc_context is not None:
             for m in api.get_module_list(self.proc_context.get_pgd()):
-                mods[m["name"].lower()] = m["base"]
+                mods[m["fullname"].lower()] = m["base"]
         t = PrettyTable(["Module", "Function", "Address"])
         t.align["Address"] = "r"
         for sym in self.find_syms(param):
-            t.add_row([sym["mod"], sym["name"], "%016x" % (sym["addr"] if sym["mod"].lower(
-            ) not in mods else sym["addr"] + mods[sym["mod"].lower()])])
+            t.add_row([sym["mod"], sym["name"], "%016x" % (sym["addr"] if sym["mod_fullname"].lower(
+            ) not in mods else sym["addr"] + mods[sym["mod_fullname"].lower()])])
         pp_print(str(t) + "\n")
 
     @line_magic
@@ -1823,12 +1843,16 @@ def start_shell(cpu_index=0):
     global __local_ns
     global __cfg
     global __proc_prompt
+
     from plugins.guest_agent import guest_agent as agent
     fd = sys.stdin.fileno()
     old = termios.tcgetattr(fd)
     new = termios.tcgetattr(fd)
     new[3] = new[3] | termios.ECHO
     finished = False
+
+    # Every time we start the shell, we clear the symbols
+    clear_symbols()
 
     if __shell is not None:
         while not finished:

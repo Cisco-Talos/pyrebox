@@ -253,6 +253,13 @@ def init(platform, root_path, volatility_path, conf_name):
         from ipython_shell import initialize_shell
         initialize_shell()
 
+        # Initialize the symbol cache from the file
+        if config.has_option('SYMBOL_CACHE', 'path'):
+            from vmi import load_symbols_from_cache_file
+            from vmi import set_symbol_cache_path
+            set_symbol_cache_path(config.get('SYMBOL_CACHE', 'path'))
+            load_symbols_from_cache_file()
+
         return vol_profile
     except Exception as e:
         # Do this to make sure we print the stack trace to help trouble-shooting
