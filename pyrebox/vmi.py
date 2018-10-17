@@ -214,3 +214,11 @@ def read_paged_out_memory(pgd, addr, size):
     elif os_family == OS_FAMILY_LINUX:
         return linux_read_paged_out_memory(pgd, addr, size)
 
+
+def get_system_time():
+    global os_family
+    from windows_vmi import get_system_time as win_get_system_time
+    if os_family == OS_FAMILY_WIN:
+        return win_get_system_time()
+    elif os_family == OS_FAMILY_LINUX:
+        raise NotImplementedError("get_system_time not implemented on Linux guests")

@@ -800,3 +800,10 @@ def windows_read_paged_out_memory(pgd, addr, size):
         elif (ppte & PPTE_P_BIT) == 1:
             # Memory mapped file
             return windows_read_memory_mapped(pgd, addr, size, ppte, is_pae, bitness)
+
+def get_system_time():
+    from volatility import obj
+    from utils import get_addr_space
+    addr_space = get_addr_space()
+    k = obj.Object("_KUSER_SHARED_DATA", offset = obj.VolMagic(addr_space).KUSER_SHARED_DATA.v(), vm = addr_space)
+    return k.SystemTime.as_datetime()

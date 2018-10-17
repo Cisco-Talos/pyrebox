@@ -1565,3 +1565,13 @@ class GuestFile:
             self.__offset += size
         return res
 
+
+def get_system_time():
+    '''
+        Retrieve the system time for the running guest.
+
+        :returns: The system time for the running system.
+        :rtype: datetime.datetime 
+    '''
+    from vmi import get_system_time
+    return get_system_time()
