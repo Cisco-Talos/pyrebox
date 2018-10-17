@@ -1195,7 +1195,10 @@ class BP:
     def __init__(self, addr, pgd, size=0, typ=0, func=None, new_style = False):
         """ Constructor for a BreakPoint
 
-            :param addr: The (start) address where we want to put the breakpoint
+            :param addr: The (start) address where we want to put the breakpoint. If a str is provided, it
+                         will search for a symbol and put the breakpoint there. The syntax is module!symbol,
+                         and it does not require to specify the full module or symbol name as long as there
+                         is no ambiguity.
             :type addr: int
 
             :param pgd: The PGD or address space where we want to put the breakpoint. Irrelevant for physical address
@@ -1237,8 +1240,44 @@ class BP:
             typ_str = "wp"
         self.__bp_repr = "BP%s_%d" % (typ_str, BP.__bp_num)
         BP.__bp_num += 1
-        self.addr = addr
         self.pgd = pgd
+        if isinstance(addr, int):
+            self.addr = addr
+        elif isinstance(addr, str) or isinstance(addr, unicode):
+            # Try symbol resolution
+            self.addr = None
+            symbols = get_symbol_list(pgd)
+
+            if "!" in addr:
+                splitted = addr.split("!")
+                addr_mod = splitted[0]
+                addr_name = splitted[1]
+            else:
+                addr_mod = ""
+                addr_name = addr
+
+            candidates = []
+            for sym in symbols:
+                if addr_name.lower() in sym["name"].lower() and addr_mod.lower() in sym["mod"].lower():
+                    candidates.append(sym)
+
+            if len(candidates) == 0:
+                raise ValueError("No candidate symbols found")
+            if len(candidates) > 1:
+                raise ValueError("Found more than one candidate symbol, please be more specific")
+
+            mods = get_module_list(pgd)
+            
+            for mod in mods:
+                if candidates[0]["mod_fullname"] == mod["fullname"]:
+                    self.addr = mod["base"] + candidates[0]["addr"]
+                    break
+
+            if self.addr is None:
+                raise ValueError("Could not obtain absolute address for the symbol")
+        else:
+            raise ValueError("The addr parameter has an invalid type, must be int, str or unicode")
+
         self.en = False
         if (typ > self.EXECUTION) and size == 0:
             self.size = 1
