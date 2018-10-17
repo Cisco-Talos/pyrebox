@@ -193,11 +193,25 @@ PyREBox will first read its configuration file (pyrebox.conf).
     [VOL]
     profile: WinXPSP3x86
 
+    [AGENT]
+    name: win_agent_32.exe
+    conf: win_agent_32.exe.conf 
+
+    [SYMBOL_CACHE]
+    path: symbols.WinXPSP3x86
+
 The [MODULES] section contains a list of python modules (packages and subpackages can be specified using standard python
 notation (using dots)). You can enable or disable scripts on demand. These scripts will be automatically loaded.
 
 The [VOL] section contains the volatility configuration. You will need to adjust the profile according to your
 operating system version.
+
+The [AGENT] section allows you to configure the name of the agent binary (see documentation related to the agent), 
+and the configuration file for that binary.
+
+The [SYMBOL_CACHE] section, allows you to speficy the path for a json file that will be used by PyREBox to preserve
+resolved symbols between different sessions. This path should be unique for each qemu image you have, and improves
+significantly the performance once it is loaded with data on the first execution of the system.
 
 There are PyREBox commands that will allow you to load/unload scripts:
 
