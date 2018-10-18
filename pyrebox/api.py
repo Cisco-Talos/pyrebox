@@ -586,7 +586,6 @@ def get_symbol_list(pgd = None):
     diff_modules = {}
     if pgd is None: 
         proc_list = get_process_list()
-        pp_print("[*] Updating symbol list... Be patient, this may take a while\n")
         for proc in proc_list:
             proc_pid = proc["pid"]
             proc_pgd = proc["pgd"]
@@ -606,7 +605,6 @@ def get_symbol_list(pgd = None):
                     diff_modules[n] = module
 
     else:
-        pp_print("[*] Updating symbol list for one process... Be patient, this may take a while\n")
         vmi.update_modules(pgd, update_symbols=True)
         for proc_pid, proc_pgd in vmi.modules:
             if proc_pgd == pgd:
@@ -1051,7 +1049,7 @@ class CallbackManager:
         # Check if we have the plugin compiled for the correct architecture
         trigger_path = "%s-%s.so" % (trigger_path, conf_m.platform)
         p = subprocess.Popen(
-            ["make", trigger_path],
+            ["make " + trigger_path],
             shell=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -1066,7 +1064,7 @@ class CallbackManager:
             #Fixup relative path
             add_trigger(self.callbacks[name], os.path.join(conf_m.pyre_root, trigger_path))
         else:
-            raise ValueError("Could not correctly compile trigger\n")
+            raise ValueError("Could not correctly compile trigger %s - cwd: %s\n" % (trigger_path, conf_m.pyre_root))
 
     def rm_trigger(self, name):
         ''' Remove the trigger from the callback specified as parameter
@@ -1241,7 +1239,7 @@ class BP:
         self.__bp_repr = "BP%s_%d" % (typ_str, BP.__bp_num)
         BP.__bp_num += 1
         self.pgd = pgd
-        if isinstance(addr, int):
+        if isinstance(addr, int) or isinstance(addr, long):
             self.addr = addr
         elif isinstance(addr, str) or isinstance(addr, unicode):
             # Try symbol resolution
@@ -1258,7 +1256,7 @@ class BP:
 
             candidates = []
             for sym in symbols:
-                if addr_name.lower() in sym["name"].lower() and addr_mod.lower() in sym["mod"].lower():
+                if addr_name.lower() == sym["name"].lower() and addr_mod.lower() == sym["mod"].lower():
                     candidates.append(sym)
 
             if len(candidates) == 0:

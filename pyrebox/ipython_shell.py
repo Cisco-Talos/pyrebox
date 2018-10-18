@@ -85,6 +85,7 @@ last_bp = -1
 def update_symbols():
     global __symbols
     import api
+    pp_debug("[*] Updating symbol list, be patient, this may take a while...\n")
     __symbols = api.get_symbol_list()
     return __symbols
 
