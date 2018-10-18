@@ -212,13 +212,18 @@ def LinuxProfileFactory(profpkg):
             # change the name to catch any code referencing the old hash table
             self.sys_map = {}
             self.sym_addr_cache = {}
-            self.shift_address = 0
+            self.dentry_cache = {}
+            self.physical_shift = 0
+            self.virtual_shift = 0
             obj.Profile.__init__(self, *args, **kwargs)
 
         def clear(self):
             """Clear out the system map, and everything else"""
             self.sys_map = {}
-            self.shift_address = 0
+            self.sym_addr_cache = {}
+            self.dentry_cache = {}
+            self.physical_shift = 0
+            self.virtual_shift = 0
             obj.Profile.clear(self)
 
         def reset(self):
@@ -285,8 +290,8 @@ def LinuxProfileFactory(profpkg):
 
                 for (name, addrs) in mod.items():
                     addr = addrs[0][0]
-                    if self.shift_address and addr:
-                        addr = addr + self.shift_address
+                    if self.virtual_shift and addr:
+                        addr = addr + self.virtual_shift
 
                     ret.append((name, addr))
             else:
@@ -317,7 +322,7 @@ def LinuxProfileFactory(profpkg):
             for (name, addrs) in mod.items():
 
                 for (addr, addr_type) in addrs:
-                    if sym_address == addr + self.shift_address:
+                    if sym_address == addr + self.virtual_shift:
                         ret = name
                         break
 
@@ -419,7 +424,7 @@ def LinuxProfileFactory(profpkg):
                 debug.info("Requested module {0:s} not found in symbol table\n".format(module))
 
             if ret:
-                ret = ret + self.shift_address
+                ret = ret + self.virtual_shift
 
             return ret
 
@@ -855,6 +860,24 @@ class module_struct(obj.CType):
 
         return ret
  
+    @property
+    def init_text_size(self):
+        if hasattr(self, "init_layout"):
+            ret = self.m("init_layout").m("text_size")
+        else:
+            ret = self.m("init_text_size")
+
+        return ret
+ 
+    @property 
+    def core_text_size(self):
+        if hasattr(self, "core_layout"):
+            ret = self.m("core_layout").m("text_size")
+        else:
+            ret = self.m("core_text_size")
+
+        return ret
+    
     @property 
     def core_size(self):
         if hasattr(self, "core_layout"):
@@ -863,7 +886,8 @@ class module_struct(obj.CType):
             ret = self.m("core_size")
 
         return ret
-        
+   
+
     def _get_sect_count(self, grp):
         arr = obj.Object(theType = 'Array', offset = grp.attrs, vm = self.obj_vm, targetType = 'Pointer', count = 25)
 
@@ -923,14 +947,14 @@ class module_struct(obj.CType):
                 val = val + str(mret or '')
 
         elif getfn == self.obj_vm.profile.get_symbol("param_get_string"):
-            val = param.str.dereference_as("String", length = param.str.maxlen)
+            val = str(param.str.dereference_as("String", length = param.str.maxlen))
 
         elif getfn == self.obj_vm.profile.get_symbol("param_get_charp"):
             addr = obj.Object("Pointer", offset = param.arg, vm = self.obj_vm)
             if addr == 0:
                 val = "(null)"
             else:
-                val = addr.dereference_as("String", length = 256)
+                val = str(addr.dereference_as("String", length = 256))
 
         elif getfn.v() in ints:
             val = obj.Object(ints[getfn.v()], offset = param.arg, vm = self.obj_vm)
@@ -941,11 +965,13 @@ class module_struct(obj.CType):
                 else:
                     val = 'N'
 
-            if getfn == self.obj_vm.profile.get_symbol("param_get_invbool"):
+            elif getfn == self.obj_vm.profile.get_symbol("param_get_invbool"):
                 if val:
                     val = 'N'
                 else:
                     val = 'Y'
+            else:
+                val = int(val)
 
         else:
             return None
@@ -1064,6 +1090,23 @@ class module_struct(obj.CType):
         return valid
 
 class vm_area_struct(obj.CType):
+    def is_valid(self):
+        start = self.vm_start.v()
+        end   = self.vm_end.v()
+        pgoff = self.vm_pgoff.v()
+
+        valid = True
+
+        if  (start > end) or \
+            (end - start > 100000000000) or \
+            (start > 0xff00000000000000) or \
+            (end > 0xff00000000000000) or \
+            (pgoff > 100000000000):
+
+            valid = False
+
+        return valid           
+
     def vm_name(self, task):
         if self.vm_file:
             fname = linux_common.get_path(task, self.vm_file)
@@ -1150,10 +1193,14 @@ class vm_area_struct(obj.CType):
 
     def info(self, task):
         if self.vm_file:
-            inode = self.vm_file.dentry.d_inode
-            major, minor = inode.i_sb.major, inode.i_sb.minor
-            ino = inode.i_ino
             pgoff = self.vm_pgoff << 12
+            
+            inode = self.vm_file.dentry.d_inode
+            if inode and inode.is_valid():
+                major, minor = inode.i_sb.major, inode.i_sb.minor
+                ino = inode.i_ino
+            else:
+                major, minor, ino = [0] * 3
         else:
             (major, minor, ino, pgoff) = [0] * 4
 
@@ -1163,6 +1210,16 @@ class vm_area_struct(obj.CType):
             fname = ""
 
         return fname, major, minor, ino, pgoff 
+
+class kobject(obj.CType):
+    def reference_count(self):
+        refcnt = self.kref.refcount
+        if hasattr(refcnt, "counter"):
+            ret = refcnt.counter
+        else:
+            ret = refcnt.refs.counter
+
+        return ret
 
 class task_struct(obj.CType):
     def is_valid_task(self):
@@ -1222,6 +1279,9 @@ class task_struct(obj.CType):
 
             real_size = end - start
 
+            if real_size < 0 or real_size > 100000000:
+                continue
+
             sects[start] = real_size
  
         last_end = -1
@@ -1252,6 +1312,9 @@ class task_struct(obj.CType):
         if type(ret) in [obj.CType, obj.NativeType]:
             ret = ret.v()
 
+        if ret > 1000000:
+            ret = -1
+
         return ret
 
     @property
@@ -1270,6 +1333,9 @@ class task_struct(obj.CType):
 
         if type(ret) == obj.CType:
             ret = ret.v()
+
+        if ret > 1000000:
+            ret = -1
 
         return ret
 
@@ -1593,50 +1659,36 @@ class task_struct(obj.CType):
         for hist in sorted(history_entries, key = attrgetter('time_as_integer')):
             yield hist              
 
-    def psenv(self):
-        env = ""
-
-        if self.mm:
-            # set the as with our new dtb so we can read from userland
-            proc_as = self.get_process_address_space()
-            if proc_as == None:
-                env = ""
-            else:
-                # read argv from userland
-                start = self.mm.env_start.v()
-
-                env = proc_as.read(start, self.mm.env_end - self.mm.env_start + 10)
-                
-        if env:
-            ents = env.split("\x00")
-            for varstr in ents:
-                eqidx = varstr.find("=")
-
-                if eqidx == -1:
-                    continue
-
-                key = varstr[:eqidx]
-                val = varstr[eqidx+1:]
-
-                yield (key, val) 
-
     def _dynamic_env(self, proc_as, pack_format, addr_sz):
+        # preload address 0
+        addr_cache = {0 : 1}
+
         for vma in self.get_proc_maps():
             if not (vma.vm_file and str(vma.vm_flags) == "rw-"):
                 continue
             
             fname = vma.info(self)[0]
 
-            if fname.find("ld") == -1 and fname != "/bin/bash":
+            if fname.find("ld") == -1 and (not fname.endswith(("/bin/bash", "/bin/dash", "/bin/sh"))):
                 continue
 
             env_start = 0
-            for off in range(vma.vm_start, vma.vm_end):
+       
+            vma_start = int(vma.vm_start)
+            vma_end = int(vma.vm_end)
+            vma_len = vma_end - vma_start
+            vma_data = proc_as.zread(vma_start, vma_len)
+
+            for off in range(0, vma_len - addr_sz, 4):
                 # check the first index
-                addrstr = proc_as.read(off, addr_sz)
-                if not addrstr or len(addrstr) != addr_sz:
-                    continue
+                addrstr = vma_data[off:off+addr_sz]
                 addr = struct.unpack(pack_format, addrstr)[0]
+
+                if addr in addr_cache:
+                    continue
+
+                addr_cache[addr] = 1
+
                 # check first idx...
                 if addr:
                     firstaddrstr = proc_as.read(addr, addr_sz)
@@ -1687,12 +1739,17 @@ class task_struct(obj.CType):
                         break
 
     def _shell_variables(self, proc_as, pack_format, addr_sz):
+        # preload cache with address 0
+        ptr_cache = {0 : 1}
+            
+        nbuckets_offset = self.obj_vm.profile.get_obj_offset("_bash_hash_table", "nbuckets") 
+
         bash_was_last = False
         for vma in self.get_proc_maps():
             if vma.vm_file:
                 fname = vma.info(self)[0]
        
-                if fname.endswith("/bin/bash"):
+                if fname.endswith(("/bin/bash", "/bin/dash", "/bin/sh")):
                     bash_was_last = True
                 else:
                     bash_was_last = False
@@ -1705,15 +1762,20 @@ class task_struct(obj.CType):
             if bash_was_last == False:
                 continue
         
-            nbuckets_offset = self.obj_vm.profile.get_obj_offset("_bash_hash_table", "nbuckets") 
+            vma_start = int(vma.vm_start)
+            vma_end = int(vma.vm_end)
+            vma_len = vma_end - vma_start
+            vma_data = proc_as.zread(vma_start, vma_len)
 
-            for off in range(vma.vm_start, vma.vm_end, 4):
-                ptr_test = proc_as.read(off, addr_sz)
-                if not ptr_test:
+            for off in range(0, vma_len - addr_sz, 4):
+                ptr_test = vma_data[off:off+addr_sz]
+                
+                ptr = struct.unpack(pack_format, ptr_test)[0]
+                if ptr in ptr_cache:
                     continue
 
-                ptr = struct.unpack(pack_format, ptr_test)[0]
-                
+                ptr_cache[ptr] = 1
+
                 ptr_test2 = proc_as.read(ptr + 20, addr_sz)
                 if not ptr_test2:
                     continue
@@ -1738,6 +1800,9 @@ class task_struct(obj.CType):
         proc_as = self.get_process_address_space()
         # In cases when mm is an invalid pointer 
         if not proc_as:
+            return
+        
+        if str(self.comm) not in ["sh", "dash", "bash"]:
             return
 
         # Are we dealing with 32 or 64-bit pointers
@@ -1877,14 +1942,17 @@ class task_struct(obj.CType):
         return threads
 
     def get_proc_maps(self):
-        if not self.mm:
+        if not self.mm or self.get_process_address_space() == None:
             return
         seen = {}
         for vma in linux_common.walk_internal_list("vm_area_struct", "vm_next", self.mm.mmap):
             val = vma.v()
             if val in seen:
                 break
-
+           
+            if not vma.is_valid():
+                break
+ 
             yield vma
 
             seen[val] = 1
@@ -2038,62 +2106,9 @@ class task_struct(obj.CType):
 
         return self.SH_DIV(1000000 * 1000, self.ACTHZ(CLOCK_TICK_RATE, HZ), 8)
 
-    def get_time_vars(self):
-        '''
-        Sometime in 3.[3-5], Linux switched to a global timekeeper structure
-        This just figures out which is in use and returns the correct variables
-        '''
-
-        wall_addr       = self.obj_vm.profile.get_symbol("wall_to_monotonic")
-        sleep_addr      = self.obj_vm.profile.get_symbol("total_sleep_time")
-        timekeeper_addr = self.obj_vm.profile.get_symbol("timekeeper")
-        tkcore_addr     = self.obj_vm.profile.get_symbol("tk_core") 
-
-        # old way
-        if wall_addr and sleep_addr:
-            wall = obj.Object("timespec", offset = wall_addr, vm = self.obj_vm)
-            timeo = obj.Object("timespec", offset = sleep_addr, vm = self.obj_vm)
-
-        elif wall_addr:
-            wall  = obj.Object("timespec", offset = wall_addr, vm = self.obj_vm)
-            timeo = linux_common.vol_timespec(0, 0)
-    
-        # timekeeper way
-        elif timekeeper_addr:
-            timekeeper = obj.Object("timekeeper", offset = timekeeper_addr, vm = self.obj_vm)
-            wall = timekeeper.wall_to_monotonic
-            timeo = timekeeper.total_sleep_time
-
-        # 3.17(ish) - 3.19(ish) way
-        elif tkcore_addr and hasattr("timekeeper", "total_sleep_time"):
-            # skip seqcount
-            timekeeper = obj.Object("timekeeper", offset = tkcore_addr + 4, vm = self.obj_vm)
-            wall = timekeeper.wall_to_monotonic
-            timeo = timekeeper.total_sleep_time
-
-        # 3.19(ish)+
-        # getboottime from 3.19.x
-        elif tkcore_addr:
-            # skip seqcount
-            timekeeper = obj.Object("timekeeper", offset = tkcore_addr + 8, vm = self.obj_vm)
-            wall = timekeeper.wall_to_monotonic
-
-            oreal = timekeeper.offs_real
-            oboot = timekeeper.offs_boot
- 
-            tv64 = (oreal.tv64 & 0xffffffff) - (oboot.tv64 & 0xffffffff)
-
-            if tv64:
-                tv64 = (tv64 / 100000000) * -1
-                timeo = linux_common.vol_timespec(tv64, 0) 
-            else:
-                timeo = None
-
-        return (wall, timeo)
-
     # based on 2.6.35 getboottime
     def get_boot_time(self):
-        (wall, timeo) = self.get_time_vars()
+        (wall, timeo) = linux_common.get_time_vars(self.obj_vm)
 
         if wall == None or timeo == None:
             return -1
@@ -2146,27 +2161,31 @@ class task_struct(obj.CType):
         
         return dt
 
-    def get_environment(self):
+    def psenv(self): 
         if self.mm:
             # set the as with our new dtb so we can read from userland
             proc_as = self.get_process_address_space()
             if proc_as == None:
-                return ""
+                return
 
-            # read argv from userland
             start = self.mm.env_start.v()
 
-            argv = proc_as.read(start, self.mm.env_end - self.mm.env_start + 10)
-            
-            if argv:
-                # split the \x00 buffer into args
-                env = " ".join(argv.split("\x00"))
+            size_to_read = self.mm.env_end.v() - start + 10 
 
-            else:
-                env = ""
-        else:
-            # kernel thread
-            env = ""
+            if 4 < size_to_read < 4096:
+                args = proc_as.read(start, size_to_read)
+                if args:
+                    for vals in args.split("\x00"): 
+                        ents = vals.split("=")
+
+                        if len(ents) == 2:
+                            yield ents[0], ents[1]        
+
+    def get_environment(self):
+        env = ""
+
+        for key, value in self.psenv():
+            env = env + "%s=%s " % (key, value)
 
         if len(env) > 1 and env[-1] == " ":
             env = env[:-1]
@@ -2183,13 +2202,18 @@ class task_struct(obj.CType):
             # read argv from userland
             start = self.mm.arg_start.v()
 
-            argv = proc_as.read(start, self.mm.arg_end - self.mm.arg_start)
+            size_to_read = self.mm.arg_end - self.mm.arg_start
 
-            if argv:
-                # split the \x00 buffer into args
-                name = " ".join(argv.split("\x00"))
-            else:
+            if size_to_read < 1 or size_to_read > 4096:
                 name = ""
+            else:
+                argv = proc_as.read(start, size_to_read)
+
+                if argv:
+                    # split the \x00 buffer into args
+                    name = " ".join(argv.split("\x00"))
+                else:
+                    name = ""
         else:
             # kernel thread
             name = "[" + self.comm + "]"
@@ -2313,67 +2337,113 @@ class VolatilityDTB(obj.VolatilityMagic):
     def generate_suggestions(self):
         """Tries to locate the DTB."""
         profile = self.obj_vm.profile
+        config = self.obj_vm.get_config()
+        tbl    = self.obj_vm.profile.sys_map["kernel"]
         
         if profile.metadata.get('memory_model', '32bit') == "32bit":
-            sym   = "swapper_pg_dir"
-            shifts = [0xc0000000]
+            sym     = "swapper_pg_dir"
+            shifts  = [0xc0000000]
+            read_sz = 4
+            fmt     = "<I"
         else:
-            sym   = "init_level4_pgt"
-            shifts = [0xffffffff80000000, 0xffffffff80000000 - 0x1000000, 0xffffffff7fe00000]       
-        
-        config         = self.obj_vm.get_config()
-        tbl = self.obj_vm.profile.sys_map["kernel"]
-        
-        if config.SHIFT:
-            shift_address = config.SHIFT
+            sym     = "init_level4_pgt"
+            # >= 4.13 
+            if not sym in tbl:
+                sym = "init_top_pgt"
+                
+            shifts  = [0xffffffff80000000, 0xffffffff80000000 - 0x1000000, 0xffffffff7fe00000]       
+            read_sz = 8
+            fmt     = "<Q"
+       
+        if config.PHYSICAL_SHIFT and not config.VIRTUAL_SHIFT:
+            debug.error("You must specifiy both the virtual and physical shift.") 
+        elif not config.PHYSICAL_SHIFT and config.VIRTUAL_SHIFT:
+            debug.error("You must specifiy both the virtual and physical shift.") 
+        elif config.PHYSICAL_SHIFT and config.VIRTUAL_SHIFT:
+            physical_shift_address = config.PHYSICAL_SHIFT
+            virtual_shift_address = config.VIRTUAL_SHIFT
         else:
-            shift_address = self.obj_vm.profile.shift_address
+            physical_shift_address = self.obj_vm.profile.physical_shift
+            virtual_shift_address  = self.obj_vm.profile.virtual_shift    
 
         good_dtb = -1
             
-        init_task_addr = tbl["init_task"][0][0] + shift_address
-        dtb_sym_addr   = tbl[sym][0][0] + shift_address
-        
-        comm_offset    = profile.get_obj_offset("task_struct", "comm")
-        pid_offset     = self.obj_vm.profile.get_obj_offset("task_struct", "pid")
-        pas            = self.obj_vm
-        
-        for shift in shifts:
-            sym_addr = dtb_sym_addr - shift
+        init_task_addr = tbl["init_task"][0][0] + virtual_shift_address
+        dtb_sym_addr   = tbl[sym][0][0] + virtual_shift_address
+        files_sym_addr = tbl["init_files"][0][0] + virtual_shift_address
        
-            read_addr = init_task_addr - shift + comm_offset
+        comm_offset   = profile.get_obj_offset("task_struct", "comm")
+        pid_offset    = profile.get_obj_offset("task_struct", "pid")
+        state_offset  = profile.get_obj_offset("task_struct", "state")
+        files_offset  = profile.get_obj_offset("task_struct", "files") 
+        mm_offset     = profile.get_obj_offset("task_struct", "active_mm")
+        
+        # this appeared around 2.6.24, which we only need it for samples with KASLR, which came much later
+        try:
+            sched_class_offset = profile.get_obj_offset("task_struct", "sched_class")
+            idle_class_addr    = tbl["idle_sched_class"][0][0] + virtual_shift_address
+        except KeyError:
+            sched_class_offset = -1
+            idle_class_addr    = -1
 
-            buf = pas.read(read_addr, 12)        
-          
-            if buf:
-                idx = buf.find("swapper")
-                if idx == 0:
-                    good_dtb = sym_addr
-                    break
+        pas           = self.obj_vm
 
-        # check for relocated kernel
-        if good_dtb == -1 and shift_address == 0:
+        if physical_shift_address != 0 and virtual_shift_address != 0:
+            good_dtb = (dtb_sym_addr - shifts[0] - virtual_shift_address) + physical_shift_address
+            self.obj_vm.profile.physical_shift = physical_shift_address 
+            self.obj_vm.profile.virtual_shift  = virtual_shift_address
+
+        if good_dtb == -1:
+            for shift in shifts:
+                sym_addr = dtb_sym_addr - shift
+           
+                read_addr = init_task_addr - shift + comm_offset
+
+                buf = pas.read(read_addr, 12)        
+                if buf:
+                    idx = buf.find("swapper")
+                    if idx == 0:
+                        good_dtb = sym_addr
+                        break
+
+        # check for relocated or physical aslr kernel
+        if good_dtb == -1:
             scanner = swapperScan(needles = ["swapper/0\x00\x00\x00\x00\x00\x00"])
+            ctr = 0
             for swapper_offset in scanner.scan(self.obj_vm):
                 swapper_address = swapper_offset - comm_offset
 
-                if pas.read(swapper_address, 4) != "\x00\x00\x00\x00":
+                if pas.read(swapper_address + state_offset, 4) != "\x00\x00\x00\x00":
                     continue
 
                 if pas.read(swapper_address + pid_offset, 4) != "\x00\x00\x00\x00":
                     continue
 
-                tmp_shift_address = swapper_address - (init_task_addr - shifts[0])
-
-                if tmp_shift_address & 0xfff != 0x000:
+                tmp_physical_shift = swapper_address - (init_task_addr - shifts[0]) 
+                if tmp_physical_shift & 0xfff != 0x000:
                     continue
-                
-                shift_address = tmp_shift_address
-                good_dtb = dtb_sym_addr - shifts[0] + shift_address
-                break
 
-        if shift_address != 0:   
-            self.obj_vm.profile.shift_address = shift_address
+                good_dtb = (dtb_sym_addr - shifts[0] + 0) + tmp_physical_shift 
+
+                if pas.zread(good_dtb, 8) != "\x00\x00\x00\x00\x00\x00\x00\x00":
+                    continue
+
+                if sched_class_offset != -1:
+                    sched_class_val = pas.read(swapper_address + sched_class_offset, read_sz)
+                    sched_class_addr = struct.unpack(fmt, sched_class_val)[0]
+ 
+                    if (sched_class_addr & 0xfff) != (idle_class_addr & 0xfff):
+                        continue
+
+                files_buf  = pas.read(swapper_address + files_offset, read_sz)
+                files_addr = struct.unpack(fmt, files_buf)[0]
+
+                tmp_virtual_shift = files_addr - files_sym_addr
+
+                self.obj_vm.profile.physical_shift = tmp_physical_shift
+                self.obj_vm.profile.virtual_shift  = tmp_virtual_shift
+ 
+                break
 
         yield good_dtb
 
@@ -2384,18 +2454,19 @@ class VolatilityLinuxIntelValidAS(obj.VolatilityMagic):
     def generate_suggestions(self):
 
         init_task_addr = self.obj_vm.profile.get_symbol("init_task")
-
         if self.obj_vm.profile.metadata.get('memory_model', '32bit') == "32bit":
             shifts = [0xc0000000]
         else:
             shifts = [0xffffffff80000000, 0xffffffff80000000 - 0x1000000, 0xffffffff7fe00000]       
 
         ret = False
+           
+        phys  = self.obj_vm.vtop(init_task_addr)
+        if phys == None:
+            return
 
         for shift in shifts:
-            phys  = self.obj_vm.vtop(init_task_addr)
-            check = init_task_addr - shift
-           
+            check = init_task_addr - shift + self.obj_vm.profile.physical_shift - self.obj_vm.profile.virtual_shift
             if phys == check:
                 ret = True
                 break
@@ -2444,6 +2515,7 @@ class LinuxObjectClasses(obj.ProfileModification):
             'hlist_node': hlist_node,
             'files_struct': files_struct,
             'task_struct': task_struct,
+            'kobject'    : kobject,
             'vm_area_struct': vm_area_struct,
             'module' : module_struct,
             'hlist_bl_node' : hlist_bl_node,
@@ -2499,14 +2571,18 @@ class page(obj.CType):
             mem_map_ptr = obj.Object("Pointer", offset = mem_map_addr, vm = self.obj_vm, parent = self.obj_parent)
 
         elif mem_section_addr:
-            # this is hardcoded in the kernel - VMEMMAPSTART, usually 64 bit kernels
-            mem_map_ptr = 0xffffea0000000000
-
+            mem_map_ptr_addr = self.obj_vm.profile.get_symbol("vmemmap_base")
+            if mem_map_ptr_addr:
+                # (later) ASLR kernels
+                mem_map_ptr = obj.Object("unsigned long", offset = mem_map_ptr_addr, vm = self.obj_vm)
+            else:
+                # this is hardcoded in the kernel - VMEMMAPSTART, usually 64 bit kernels
+                mem_map_ptr = 0xffffea0000000000
         else:
             debug.error("phys_addr_of_page: Unable to determine physical address of page. NUMA is not supported at this time.\n")
-
+        
         phys_offset = (self.obj_offset - mem_map_ptr) / self.obj_vm.profile.get_obj_size("page")
-
+        
         phys_offset = phys_offset << 12
 
         return phys_offset

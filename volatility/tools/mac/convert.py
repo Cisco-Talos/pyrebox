@@ -32,6 +32,7 @@ class DWARFParser(object):
         'signed char': 'signed char',
         'unsigned char': 'unsigned char',
         'unsigned int': 'unsigned int',
+        'unsigned __int128' : 'unsigned char', ### not sure if Vol 2 can represent 128-bit values natively??
     }
 
     def __init__(self):
@@ -46,12 +47,13 @@ class DWARFParser(object):
         self.all_local_vars = []
         self.local_vars = []
         self.anons = 0
+        self.typedefs = {}
 
     def resolve(self, memb):
         """Lookup anonymouse member and replace it with a well known one."""
         # Reference to another type
+        
         if isinstance(memb, str) and memb.startswith('<'):
-
             try:
                 resolved = self.id_to_name[memb[1:]]
             except:
@@ -66,6 +68,22 @@ class DWARFParser(object):
             ret = memb
 
         return ret
+
+    def fix_typedefs(self):
+        tmp_types = self.vtypes.copy()
+        
+        for vname,vdata in tmp_types.items():
+            if vname.startswith("__unnamed_"):
+                statement_id = vname.split("_")[3]
+                
+                if statement_id in self.typedefs:
+                    tmp_types[self.typedefs[statement_id]] = vdata
+                else:
+                    tmp_types[vname] = vdata
+            else:
+                tmp_types[vname] = vdata
+
+        return tmp_types
 
     def resolve_refs(self):
         """Replace references with types."""
@@ -132,6 +150,19 @@ class DWARFParser(object):
                 self.process_statement(**parsed)
         #else:
         #    print "line %s does not match" % line.strip()
+
+    def get_offset(self, data):
+        if 'AT_data_member_location' in data:
+            loc = data['AT_data_member_location']
+            if loc[0] == "x":
+                off = int(loc[1:], 16)
+            else:
+                off = int(loc)
+        else:
+            off = 0
+
+
+        return off
 
     def process_statement(self, kind, level, data, statement_id):
         """Process a single parsed statement."""
@@ -228,6 +259,7 @@ class DWARFParser(object):
         elif kind == 'TAG_typedef':
             try:
                 self.id_to_name[statement_id] = data['AT_type']
+                self.typedefs[data['AT_type'].replace("<","").replace(">","")] = data['AT_name']
             except:
                 self.id_to_name[statement_id] = ['void']
 
@@ -235,11 +267,9 @@ class DWARFParser(object):
             self.id_to_name[statement_id] = ['void']         # Don't need these
 
         elif kind == 'TAG_variable' and level == '1':
-            if 'AT_location' in data:
-                split = data['AT_location'].split()
-                if len(split) > 1:
-                    loc = int(split[1], 0)
-                    self.vars[data['AT_name']] = [loc, data['AT_type']]
+            loc = self.get_offset(data)
+            if loc != None:
+                self.vars[data['AT_name']] = [loc, data['AT_type']]
 
         elif kind == 'TAG_subprogram':
             # IDEK
@@ -247,16 +277,29 @@ class DWARFParser(object):
 
         elif kind == 'TAG_member' and parent_kind == 'TAG_structure_type':
             name = data.get('AT_name', "__unnamed_%s" % statement_id)
-            off = int(data['AT_data_member_location'])
+            
+            off = self.get_offset(data)
 
-            if 'AT_bit_size' in data and 'AT_bit_offset' in data:
-                full_size = int(data['AT_byte_size'])*8
-                stbit = int(data['AT_bit_offset'])
-                edbit = stbit + int(data['AT_bit_size'])
-                stbit = full_size - stbit
-                edbit = full_size - edbit
-                stbit, edbit = edbit, stbit
-                assert stbit < edbit
+            if 'AT_bit_size' in data and ('AT_bit_offset' in data or 'AT_data_bit_offset' in data):
+               
+                if 'AT_bit_offset' in data:
+                    stbit = int(data['AT_bit_offset'])
+                    edbit = stbit + int(data['AT_bit_size'])
+                    full_size = int(data['AT_byte_size'])*8
+                    stbit = full_size - stbit
+                    edbit = full_size - edbit
+                    stbit, edbit = edbit, stbit
+                    assert stbit < edbit
+                 
+                # high sierra + 
+                else:
+                    stbit = int(data['AT_data_bit_offset'], 16) 
+              
+                    off = stbit / 8
+                    stbit = stbit % 8
+
+                    edbit = stbit + int(data['AT_bit_size'], 16)
+
                 memb_tp = ['BitField', dict(start_bit = stbit, end_bit = edbit)]
             else:
                 memb_tp = data['AT_type']
@@ -266,19 +309,28 @@ class DWARFParser(object):
         elif kind == 'TAG_member' and parent_kind == 'TAG_class_type':
             name = data.get('AT_name', "__unnamed_%s" % statement_id)
 
-            try:
-                off = int(data['AT_data_member_location'])
-            except:
-                off = 0
+            off = self.get_offset(data)
 
-            if 'AT_bit_size' in data and 'AT_bit_offset' in data:
-                full_size = int(data['AT_byte_size'])*8
-                stbit = int(data['AT_bit_offset'])
-                edbit = stbit + int(data['AT_bit_size'])
-                stbit = full_size - stbit
-                edbit = full_size - edbit
-                stbit, edbit = edbit, stbit
-                assert stbit < edbit
+            if 'AT_bit_size' in data and ('AT_bit_offset' in data or 'AT_data_bit_offset' in data):
+            
+                if 'AT_bit_offset' in data:
+                    stbit = int(data['AT_bit_offset'])
+                    edbit = stbit + int(data['AT_bit_size'])
+                    full_size = int(data['AT_byte_size'])*8
+                    stbit = full_size - stbit
+                    edbit = full_size - edbit
+                    stbit, edbit = edbit, stbit
+                    assert stbit < edbit
+                 
+                # high sierra + 
+                else:
+                    stbit = int(data['AT_data_bit_offset'], 16) 
+                 
+                    off = stbit / 8
+                    stbit = stbit % 8
+                 
+                    edbit = stbit + int(data['AT_bit_size'], 16) 
+               
                 memb_tp = ['BitField', dict(start_bit = stbit, end_bit = edbit)]
             else:
                 memb_tp = data['AT_type']
@@ -333,6 +385,7 @@ class DWARFParser(object):
     def finalize(self):
         """Finalize the output."""
         if self.vtypes:
+            self.vtypes = self.fix_typedefs()
             self.vtypes = self.resolve_refs()
             self.all_vtypes.update(self.vtypes)
         if self.vars:
@@ -528,9 +581,11 @@ def convert_file(mac_file, outfile):
                     val = "%d" % int(val, 16)
 
                 if name == "AT_data_member_location":
-                    # skip +
-                    val = val[1:]
-            
+                    if val.startswith("+"):
+                        val = int(val, 10)
+                    else:
+                        val = int(val, 16)
+
                 if name == "AT_type":
                     # convert {0x00000550} ( queue_chain_t )
                     # to      decimal of int

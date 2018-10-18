@@ -307,13 +307,16 @@ class elf_hdr(elf):
 
         tname = "elf_phdr"
         
+        if self.e_phoff < 0 or self.e_phoff > 1000000:
+            return
+
         # the buffer of headers
         arr_start = self.obj_offset + self.e_phoff
 
         if self.e_phnum > 128:
-            phnum = self.e_phnum
-        else:
             phnum = 128
+        else:
+            phnum = self.e_phnum
 
         for i in range(phnum):
             # use the real size
@@ -562,6 +565,9 @@ class elf_phdr(elf):
     def __init__(self, theType, offset, vm, name = None, **kwargs):
         elf.__init__(self, 0, "elf32_phdr", "elf64_phdr", theType, offset, vm, name, **kwargs)    
 
+    def is_valid(self):
+        return self.p_filesz > 0 and self.p_memsz > 0
+
     @property
     def p_vaddr(self):
         ret = self.__getattr__("p_vaddr")
@@ -574,7 +580,6 @@ class elf_phdr(elf):
     def dynamic_sections(self):
         # sanity check
         if str(self.p_type) != 'PT_DYNAMIC':
-            print "failed sanity check"
             return
 
         rtname = self._get_typename("dyn")
@@ -687,16 +692,27 @@ class elf_link_map(elf):
         tname = "elf_link_map"
         return obj.Object(tname, offset = naddr, vm = self.obj_vm, parent = self)
 
-    def __iter__(self):
-        cur = self
+    def _walk_map_list(self, access_func):
+        seen = []
+        cur  = self
         while cur:
-            yield cur
-            cur = cur.l_next
+            if cur.obj_offset in seen:
+                break
 
-        cur = self
-        while cur:
             yield cur
-            cur = cur.l_prev
+
+            seen.append(cur.obj_offset)
+
+            # check for signs of infinite looping
+            if len(seen) > 1024:
+                break
+
+            cur = access_func(cur)
+
+    def __iter__(self):        
+        for member in [lambda x: x.l_next, lambda x: x.l_prev]:
+            for mapinfo in self._walk_map_list(member):
+                yield mapinfo
 
 class elf32_link_map(obj.CType):
     def __init__(self, theType, offset, vm, name = None, **kwargs):

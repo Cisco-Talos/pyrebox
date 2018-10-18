@@ -56,6 +56,7 @@ class DllList(common.AbstractWindowsCommand, cache.Testable):
                        ("Base", Address),
                        ("Size", Hex),
                        ("LoadCount", Hex),
+                       ("LoadTime", str),
                        ("Path", str)],
                         self.generator(data))
 
@@ -65,9 +66,9 @@ class DllList(common.AbstractWindowsCommand, cache.Testable):
 
             if task.Peb:
                 for m in task.get_load_modules():
-                    yield (0, [int(pid), Address(m.DllBase), Hex(m.SizeOfImage), Hex(m.LoadCount), str(m.FullDllName or '')])
+                    yield (0, [int(pid), Address(m.DllBase), Hex(m.SizeOfImage), Hex(m.LoadCount), str(m.load_time()), str(m.FullDllName or '')])
             else:
-                yield (0, [int(pid), Address(0), Hex(0), Hex(0), "Error reading PEB for pid"])
+                yield (0, [int(pid), Address(0), Hex(0), Hex(0), "", "Error reading PEB for pid"])
 
     def render_text(self, outfd, data):
         for task in data:
@@ -79,18 +80,17 @@ class DllList(common.AbstractWindowsCommand, cache.Testable):
             if task.Peb:
                 ## REMOVE this after 2.4, since we have the cmdline plugin now
                 outfd.write("Command line : {0}\n".format(str(task.Peb.ProcessParameters.CommandLine or '')))
-                if task.IsWow64:
-                    outfd.write("Note: use ldrmodules for listing DLLs in Wow64 processes\n")
                 outfd.write("{0}\n".format(str(task.Peb.CSDVersion or '')))
                 outfd.write("\n")
                 self.table_header(outfd,
                                   [("Base", "[addrpad]"),
                                    ("Size", "[addr]"),
                                    ("LoadCount", "[addr]"),
+                                   ("LoadTime", "<30"),
                                    ("Path", ""),
                                    ])
                 for m in task.get_load_modules():
-                    self.table_row(outfd, m.DllBase, m.SizeOfImage, m.LoadCount, str(m.FullDllName or ''))
+                    self.table_row(outfd, m.DllBase, m.SizeOfImage, m.LoadCount, str(m.load_time()), str(m.FullDllName or ''))
             else:
                 outfd.write("Unable to read PEB for task.\n")
 

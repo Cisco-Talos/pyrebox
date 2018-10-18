@@ -42,6 +42,9 @@ class vol_timespec:
         self.tv_nsec = nsecs
 
 def set_plugin_members(obj_ref):
+    if obj_ref._config.SHIFT:
+        debug.error("Linux uses --virtual_shift and --physical_shift. Please run linux_aslr_shift to obtain the values.")
+
     obj_ref.addr_space = utils.load_as(obj_ref._config)
 
     if not obj_ref.is_valid_profile(obj_ref.addr_space.profile):
@@ -66,6 +69,11 @@ class AbstractLinuxCommand(commands.Command):
     @staticmethod
     def is_valid_profile(profile):
         return profile.metadata.get('os', 'Unknown').lower() == 'linux'
+
+    @staticmethod
+    def register_options(config):
+        config.add_option("PHYSICAL_SHIFT", type = 'int', default = 0, help = "Linux kernel physical shift address")
+        config.add_option("VIRTUAL_SHIFT", type = 'int', default = 0, help = "Linux kernel virtual shift address")
 
     def is_known_address(self, addr, modules):
         addr = int(addr)
@@ -94,6 +102,10 @@ class AbstractLinuxCommand(commands.Command):
             return
 
         for check in op_members:
+            # redhat-specific garbage
+            if check.startswith("__UNIQUE_ID_rh_kabi_hide"):
+                continue
+
             addr = int(ops.m(check))
 
             if addr and addr != 0 and addr != -1:
@@ -178,8 +190,13 @@ def _get_path_file(task, filp):
     rmnt    = task.fs.get_root_mnt()
     dentry  = filp.dentry
     vfsmnt  = filp.vfsmnt
-    
-    return do_get_path(rdentry, rmnt, dentry, vfsmnt)
+   
+    key = "%x|%x|%x|%x" % (rdentry.v(), rmnt.v(), dentry.v(), vfsmnt.v())
+
+    if not key in task.obj_vm.profile.dentry_cache:
+        task.obj_vm.profile.dentry_cache[key] = do_get_path(rdentry, rmnt, dentry, vfsmnt)
+
+    return task.obj_vm.profile.dentry_cache[key]
 
 def get_new_sock_pipe_path(task, filp):
     dentry = filp.dentry
@@ -233,6 +250,61 @@ def write_elf_file(dump_dir, task, elf_addr):
 
     return file_path 
 
+def get_time_vars(obj_vm):
+    '''
+    Sometime in 3.[3-5], Linux switched to a global timekeeper structure
+    This just figures out which is in use and returns the correct variables
+    '''
+    wall_addr       = obj_vm.profile.get_symbol("wall_to_monotonic")
+    sleep_addr      = obj_vm.profile.get_symbol("total_sleep_time")
+    timekeeper_addr = obj_vm.profile.get_symbol("timekeeper")
+    tkcore_addr     = obj_vm.profile.get_symbol("tk_core") 
 
+    wall  = None
+    timeo = None
 
+    # old way
+    if wall_addr and sleep_addr:
+        wall = obj.Object("timespec", offset = wall_addr, vm = obj_vm)
+        timeo = obj.Object("timespec", offset = sleep_addr, vm = obj_vm)
+
+    elif wall_addr:
+        wall  = obj.Object("timespec", offset = wall_addr, vm = obj_vm)
+        timeo = vol_timespec(0, 0)
+
+    # timekeeper way
+    elif timekeeper_addr:
+        timekeeper = obj.Object("timekeeper", offset = timekeeper_addr, vm = obj_vm)
+        wall = timekeeper.wall_to_monotonic
+        timeo = timekeeper.total_sleep_time
+
+    # 3.17(ish) - 3.19(ish) way
+    elif tkcore_addr and hasattr("timekeeper", "total_sleep_time"):
+        # skip seqcount
+        timekeeper = obj.Object("timekeeper", offset = tkcore_addr + 4, vm = obj_vm)
+        wall = timekeeper.wall_to_monotonic
+        timeo = timekeeper.total_sleep_time
+
+    # 3.19(ish)+
+    # getboottime from 3.19.x
+    elif tkcore_addr:
+        # skip seqcount
+        timekeeper = obj.Object("timekeeper", offset = tkcore_addr + 8, vm = obj_vm)
+        wall = timekeeper.wall_to_monotonic
+
+        oreal = timekeeper.offs_real
+        oboot = timekeeper.offs_boot
+
+        if hasattr(oreal,"tv64"):
+            tv64 = (oreal.tv64 & 0xffffffff) - (oboot.tv64 & 0xffffffff)
+        else:
+            tv64 = (oreal & 0xffffffff) - (oboot & 0xffffffff)
+            
+        if tv64:
+            tv64 = (tv64 / 100000000) * -1
+            timeo = vol_timespec(tv64, 0) 
+        else:
+            timeo = None
+
+    return (wall, timeo)
 
