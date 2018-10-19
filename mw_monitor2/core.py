@@ -100,24 +100,24 @@ class VADRegion(object):
     PAGE_SIZE = 0x1000
 
     def __init__(self, start, size, proc, mapped_file, tag, vad_type, private, protection):
-        self.start = start
-        self.size = size
+        self.__start = start
+        self.__size = size
         # flags
-        self.vad_type = vad_type
-        self.private = private
-        self.protection = protection
+        self.__vad_type = vad_type
+        self.__private = private
+        self.__protection = protection
         # Proc to which the VAD is associated
-        self.proc = proc
+        self.__proc = proc
         # Mapped file and tag
-        self.mapped_file = mapped_file
-        self.tag = tag
+        self.__mapped_file = mapped_file
+        self.__tag = tag
 
         # Map for page permissions
-        self.permissions = []
+        self.__permissions = []
 
         initial_page_prot = 0
 
-        self.page_permission_modified = False
+        self.__page_permission_modified = False
 
         # Initialize page permissions for all the pages.
         if 'PAGE_NOACCESS' in protection:
@@ -139,64 +139,97 @@ class VADRegion(object):
         else:
             initial_page_prot = 0
 
-        nb_pages = self.size / VADRegion.PAGE_SIZE
+        nb_pages = self.__size / VADRegion.PAGE_SIZE
         for i in range(0, nb_pages):
-            self.permissions.append(initial_page_prot)
+            self.__permissions.append(initial_page_prot)
 
-        self.potentially_injected = False
+        self.__potentially_injected = False
 
         # Taken from volatility, (vadinfo plugin).
         # Identify VAD Regions potentially created to hold shellcode.
         write_exec = "EXECUTE" in protection and "WRITE" in protection
-        if write_exec and self.private is True and self.tag == "VadS":
-            self.potentially_injected = True
-        if write_exec and (self.private is True and protection != "PAGE_EXECUTE_WRITECOPY"):
-            self.potentially_injected = True
+        if write_exec and self.__private is True and self.__tag == "VadS":
+            self.__potentially_injected = True
+        if write_exec and (self.__private is True and protection != "PAGE_EXECUTE_WRITECOPY"):
+            self.__potentially_injected = True
 
     def update_page_access(self, base_addr, size, new_access):
         '''
             Updates the page access permissions.
         '''
-        offset = (base_addr - self.start) / VADRegion.PAGE_SIZE
+        offset = (base_addr - self.__start) / VADRegion.PAGE_SIZE
         nb_pages = (size / VADRegion.PAGE_SIZE) if (size %
                                                     VADRegion.PAGE_SIZE == 0) else ((size / VADRegion.PAGE_SIZE) + 1)
         for i in range(offset, offset + nb_pages):
             # Check we do not access the list out of its boundaries
-            if i < 0 or i >= len(self.permissions):
+            if i < 0 or i >= len(self.__permissions):
                 break
-            if self.permissions[i] != new_access:
-                self.page_permission_modified = True
-            self.permissions[i] = new_access
+            if self.__permissions[i] != new_access:
+                self.__page_permission_modified = True
+            self.__permissions[i] = new_access
+
+    def get_start(self):
+        return self.__start
+
+    def get_size(self):
+        return self.__size
+
+    def get_vad_type(self):
+        return self.__vad_type
+
+    def get_private(self):
+        return self.__private
+
+    def get_protection(self):
+        return self.__protection
+
+    def get_proc(self):
+        return self.__proc
+
+    def get_mapped_file(self):
+        return self.__mapped_file
+
+    def get_tag(self):
+        return self.__tag
+
+    def get_permissions(self):
+        return self.__permissions
+
+    def get_page_permission_modified(self):
+        return self.__page_permission_modified
+
+    def get_potentially_injected(self):
+        return self.__potentially_injected
 
     def __eq__(self, other):
-        return (self.start == other.start and self.size == other.size)
+        return (self.__start == other.__start and self.__size == other.__size)
 
     def __lt__(self, other):
-        return (self.start < other.start)
+        return (self.__start < other.__start)
 
     def __le__(self, other):
-        return (self.start <= other.start)
+        return (self.__start <= other.__start)
 
     def __gt__(self, other):
-        return (self.start > other.start)
+        return (self.__start > other.__start)
 
     def __ge__(self, other):
-        return (self.start >= other.start)
+        return (self.__start >= other.__start)
 
     def __len__(self):
-        return self.size
+        return self.__size
 
     def __str__(self):
         res = ""
         try:
-            res = "[%s][%s][%s][%s] %08x(%08x) - %s - %s" % (self.vad_type,
-                                                             "P" if self.private else " ",
-                                                             "I" if self.potentially_injected else " ",
-                                                             "M" if self.page_permission_modified else " ",
-                                                             self.start,
-                                                             self.size,
-                                                             self.protection,
-                                                             "" if self.mapped_file is None else self.mapped_file)
+            res = "[%s][%s][%s][%s] %08x(%08x) - %s - %s" % (self.__vad_type,
+                                                             "P" if self.__private else " ",
+                                                             "I" if self.__potentially_injected else " ",
+                                                             "M" if self.__page_permission_modified else " ",
+                                                             self.__start,
+                                                             self.__size,
+                                                             self.__protection,
+                                                             "" if self.__mapped_file is None else self.__mapped_file)
         except Exception:
             traceback.print_exc()
         return res
@@ -210,72 +243,105 @@ class Process:
     def __init__(self, proc_name):
         import api
         self.TARGET_LONG_SIZE = api.get_os_bits() / 8
-        self.proc_num = Process.proc_counter
+        self.__proc_num = Process.proc_counter
         Process.proc_counter += 1
-        self.proc_name = proc_name
-        self.pgd = 0
-        self.pid = 0
-        self.modules = {}
+        self.__proc_name = proc_name
+        self.__pgd = 0
+        self.__pid = 0
+        self.__modules = {}
 
         # Record of API calls (related to VADs, and others
-        self.vads = []
+        self.__vads = []
         # Chunks of memory injected to other processes
-        self.injections = []
-        self.file_operations = []
-        self.section_maps = []
+        self.__injections = []
+        self.__file_operations = []
+        self.__section_maps = []
 
         # Indicates that this instance is a result of unpicking a serialized
         # object
-        self.unpickled = False
+        self.__unpickled = False
 
         # Exited. Indicates that process has already exited.
-        self.exited = False
+        self.__exited = False
 
 
     def set_pgd(self, pgd):
-        self.pgd = pgd
+        self.__pgd = pgd
 
     def set_pid(self, pid):
-        self.pid = pid
+        self.__pid = pid
 
     def set_name(self, name):
-        self.proc_name = name
+        self.__proc_name = name
 
     def get_pgd(self):
-        return self.pgd
+        return self.__pgd
 
     def get_pid(self):
-        return self.pid
+        return self.__pid
 
     def has_exited(self):
-        return self.exited
+        return self.__exited
 
     def set_exited(self):
-        self.exited = True
+        self.__exited = True
 
     def get_proc_name(self):
-        return self.proc_name
+        return self.__proc_name
+
+    def get_modules(self):
+        return self.__modules
+
+    def get_vads(self):
+        return self.__vads
+
+    def get_injections(self):
+        return self.__injections
+
+    def get_file_operations(self):
+        return self.__file_operations
+
+    def get_section_maps(self):
+        return self.__section_maps
+
+    def add_section_map(self, section_map):
+        global interproc_data
+        self.__section_maps.append(section_map)
+        interproc_data.deliver_section_map_callback(section_map)
+
+    def add_file_operation(self, operation):
+        global interproc_data
+        self.__file_operations.add(operation)
+        if isinstance(operation, FileRead):
+            interproc_data.deliver_file_read_callback(operation)
+        elif isinstance(operation, FileWrite):
+            interproc_data.deliver_file_write_callback(operation)
 
     def __str__(self):
-        return "%x" % self.pid
+        return "%x" % self.__pid
 
     def set_module(self, name, base, size):
-        if name not in self.modules:
-            self.modules[name] = [(base, size)]
-        elif (base, size) not in self.modules[name]:
-            self.modules[name].append((base, size))
+        if name not in self.__modules:
+            self.__modules[name] = [(base, size)]
+        elif (base, size) not in self.__modules[name]:
+            self.__modules[name].append((base, size))
 
     def get_overlapping_vad(self, addr):
         '''
         Get the VAD overlapping the address
         '''
-        for vad in self.vads:
-            if vad.start <= addr and (vad.start + vad.size) > addr:
+        for vad in self.__vads:
+            if vad.get_start() <= addr and (vad.get_start() + vad.get_size()) > addr:
                 return vad
         return None
 
     def add_injection(self, inj):
-        self.injections.append(inj)
+        global interproc_data
+        self.__injections.append(inj)
+        if inj.is_reverse():
+            interproc_data.deliver_remote_memory_read_callback(inj)
+        else:
+            interproc_data.deliver_remote_memory_write_callback(inj)
 
     def update_from_peb(self):
         '''
@@ -287,25 +353,25 @@ class Process:
         addr_space = get_addr_space(self.get_pgd())
 
         eprocs = [t for t in tasks.pslist(
-            addr_space) if t.UniqueProcessId == self.pid]
+            addr_space) if t.UniqueProcessId == self.__pid]
         if len(eprocs) != 1:
-            self.commandline = None
-            self.current_directory = None
-            self.image_path = None
+            self.__commandline = None
+            self.__current_directory = None
+            self.__image_path = None
         else:
             task = eprocs[0]
-            self.commandline = str(
+            self.__commandline = str(
                 task.Peb.ProcessParameters.CommandLine or '')
-            self.current_directory = str(
+            self.__current_directory = str(
                 task.Peb.ProcessParameters.CurrentDirectory.DosPath or '')
-            self.image_path = str(
+            self.__image_path = str(
                 task.Peb.ProcessParameters.ImagePathName or '')
 
     def update_vads(self):
         '''
         Call volatility to obtain VADS.
         '''
-        if self.unpickled:
+        if self.__unpickled:
             return
         import volatility.obj as obj
         import volatility.win32.tasks as tasks
@@ -315,7 +381,7 @@ class Process:
         addr_space = get_addr_space(self.get_pgd())
 
         eprocs = [t for t in tasks.pslist(
-            addr_space) if t.UniqueProcessId == self.pid]
+            addr_space) if t.UniqueProcessId == self.__pid]
         for task in eprocs:
             heaps = task.Peb.ProcessHeaps.dereference()
             modules = [mod.DllBase for mod in task.get_load_modules()]
@@ -367,46 +433,46 @@ class Process:
                     except Exception:
                         traceback.print_exc()
 
-                    if new_vad not in self.vads:
-                        self.vads.append(new_vad)
+                    if new_vad not in self.__vads:
+                        self.__vads.append(new_vad)
 
     def __getstate__(self):
         '''
             Returns objects to be pickled.
         '''
-        return (self.proc_num,
-                self.proc_name,
-                self.pgd,
-                self.pid,
-                self.modules,
+        return (self.__proc_num,
+                self.__proc_name,
+                self.__pgd,
+                self.__pid,
+                self.__modules,
                 #self.min_mod_addr,
                 #self.max_mod_addr,
                 #self.symbols,
-                self.vads,
+                self.__vads,
                 #self.other_calls,
-                self.injections,
-                self.file_operations,
-                self.section_maps)
+                self.__injections,
+                self.__file_operations,
+                self.__section_maps)
 
     def __setstate__(self, state):
         '''
             Sets pickled objects when unpickling
         '''
-        (self.proc_num,
-         self.proc_name,
-         self.pgd,
-         self.pid,
-         self.modules,
+        (self.__proc_num,
+         self.__proc_name,
+         self.__pgd,
+         self.__pid,
+         self.__modules,
          #self.min_mod_addr,
          #self.max_mod_addr,
          #self.symbols,
-         self.vads,
+         self.__vads,
          #self.other_calls,
-         self.injections,
-         self.file_operations,
-         self.section_maps) = state
+         self.__injections,
+         self.__file_operations,
+         self.__section_maps) = state
 
-        self.unpickled = True
+        self.__unpickled = True
 
     def print_stats(self, file_name):
         '''
@@ -414,38 +480,38 @@ class Process:
         '''
         self.update_from_peb()
 
-        f = open("%s_%x" % (file_name, self.pid), "w")
+        f = open("%s_%x" % (file_name, self.__pid), "w")
 
         f.write("BASIC INFORMATION\n")
         f.write("=================\n\n")
 
-        f.write("Process name: %s\n" % self.proc_name)
-        f.write("CR3: %x\n" % self.pgd)
-        f.write("PID: %x\n" % self.pid)
-        f.write("Nb of modules: %d\n" % len(self.modules))
-        f.write("Commandline: %s\n" % self.commandline)
-        f.write("Current directory: %s\n" % self.current_directory)
-        f.write("Image path: %s\n" % self.image_path)
+        f.write("Process name: %s\n" % self.__proc_name)
+        f.write("CR3: %x\n" % self.__pgd)
+        f.write("PID: %x\n" % self.__pid)
+        f.write("Nb of modules: %d\n" % len(self.__modules))
+        f.write("Commandline: %s\n" % self.__commandline)
+        f.write("Current directory: %s\n" % self.__current_directory)
+        f.write("Image path: %s\n" % self.__image_path)
         f.write("Target long size: %d\n" % self.TARGET_LONG_SIZE)
 
         f.write("\nMODULE LIST\n")
         f.write("===========\n\n")
 
-        vads = self.vads
+        vads = self.__vads
         #syms = self.symbols
         included_vads = []
-        for mod in self.modules:
+        for mod in self.__modules:
             f.write("\n%s\n" % mod)
             f.write(("-" * len(mod)) + "\n")
             mod_vads = []
             #mod_syms = []
-            for addr_s in self.modules[mod]:
+            for addr_s in self.__modules[mod]:
                 if self.TARGET_LONG_SIZE == 4:
                     f.write("0x%08x - %08x\n" % addr_s)
                 elif self.TARGET_LONG_SIZE == 8:
                     f.write("0x%016x - %016x\n" % addr_s)
                 mod_vads.extend(
-                    filter(lambda x: x.start >= addr_s[0] and (x.start < (addr_s[0] + addr_s[1])), vads))
+                    filter(lambda x: x.get_start() >= addr_s[0] and (x.get_start() < (addr_s[0] + addr_s[1])), vads))
                 #mod_syms.extend(
                 #    filter(lambda x: x.addr >= addr_s[0] and (x.addr < (addr_s[0] + addr_s[1])), syms))
             for v in mod_vads:
@@ -463,32 +529,32 @@ class Process:
         f.write("\nINJECTIONS\n")
         f.write("==========\n\n")
 
-        f.write("Nb of injections: %d\n\n" % (len(self.injections)))
+        f.write("Nb of injections: %d\n\n" % (len(self.__injections)))
 
-        for inj in self.injections:
+        for inj in self.__injections:
             f.write(str(inj) + "\n")
 
         f.write("\nFILE OPERATIONS\n")
         f.write("===============\n\n")
 
-        f.write("Nb of file operations: %d\n\n" % (len(self.file_operations)))
+        f.write("Nb of file operations: %d\n\n" % (len(self.__file_operations)))
 
-        for op in self.file_operations:
+        for op in self.__file_operations:
             f.write(str(op) + "\n")
 
         f.write("\nSECTION MAPS\n")
         f.write("============\n\n")
 
-        f.write("Nb of section maps: %d\n\n" % (len(self.section_maps)))
+        f.write("Nb of section maps: %d\n\n" % (len(self.__section_maps)))
 
-        for smap in self.section_maps:
+        for smap in self.__section_maps:
             if self.TARGET_LONG_SIZE == 4:
-                out_str = "%08x(%08x)" % (smap.base, smap.size)
+                out_str = "%08x(%08x)" % (smap.get_base(), smap.get_size())
             elif self.TARGET_LONG_SIZE == 8:
-                out_str = "%16x(%16x)" % (smap.base, smap.size)
+                out_str = "%16x(%16x)" % (smap.get_base(), smap.get_size())
 
-            if smap.section.backing_file is not None:
-                out_str += " %s" % (str(smap.section.backing_file))
+            if smap.get_section().get_backing_file() is not None:
+                out_str += " %s" % (str(smap.get_section().get_backing_file()))
             out_str += "\n"
             f.write(out_str)
         f.close()
@@ -497,32 +563,35 @@ class Process:
 class Injection:
 
     def __init__(self, remote_proc, remote_addr, local_proc, local_addr, size, data, reverse):
-        self.remote_proc = remote_proc
-        self.local_proc = local_proc
-        self.remote_addr = remote_addr
-        self.local_addr = local_addr
-        self.size = size
-        self.data = data
-        self.reverse = reverse
+        self.__remote_proc = remote_proc
+        self.__local_proc = local_proc
+        self.__remote_addr = remote_addr
+        self.__local_addr = local_addr
+        self.__size = size
+        self.__data = data
+        self.__reverse = reverse
+
+    def is_reverse(self):
+        return self.__reverse
 
     def __str__(self):
-        return "Remote injection: PID %x - %x -> PID %x - %x (%x)" % (self.local_proc.pid,
-                                                                      self.local_addr,
-                                                                      self.remote_proc.pid,
-                                                                      self.remote_addr,
-                                                                      self.size)
+        return "Remote injection: PID %x - %x -> PID %x - %x (%x)" % (self.__local_proc.get_pid(),
+                                                                      self.__local_addr,
+                                                                      self.__remote_proc.get_pid(),
+                                                                      self.__remote_addr,
+                                                                      self.__size)
 
 class FileOperation(object):
 
     def __init__(self, file_inst, proc, offset, size, data):
-        self.file_inst = file_inst
-        self.proc = proc
-        self.offset = offset
-        self.size = size
-        self.data = data
+        self.__file_inst = file_inst
+        self.__proc = proc
+        self.__offset = offset
+        self.__size = size
+        self.__data = data
 
     def __str__(self):
-        return "%s:%s - %08x(%08x bytes)" % (str(self.proc), str(self.file_inst), self.offset, self.size)
+        return "%s:%s - %08x(%08x bytes)" % (str(self.__proc), str(self.__file_inst), self.__offset, self.__size)
 
 
 class FileRead(FileOperation, object):
@@ -548,14 +617,20 @@ class FileWrite(FileOperation, object):
 class File:
 
     def __init__(self, file_name):
-        self.file_name = file_name
-        self.file_operations = []
+        self.__file_name = file_name
+        self.__file_operations = []
 
     def add_operation(self, op):
         self.file_operations.append(op)
 
+    def get_file_name(self):
+        return self.__file_name
+
+    def get_file_operations(self):
+        return self.__file_operations
+
     def __str__(self):
-        return self.file_name
+        return self.__file_name
 
 
 class Section:
@@ -567,7 +642,7 @@ class Section:
         TARGET_LONG_SIZE = api.get_os_bits() / 8
 
         # Volatility object representing the section
-        self.section_object = section_object
+        self.__section_object = section_object
 
         # Volatility lacks the vtype for _SECTION, which
         # has scarce documentation:
@@ -613,18 +688,18 @@ class Section:
 
         # Compute FileBacked and  CopyOnWrite
         try:
-            self.flags = struct.unpack(
-                "I", api.r_va(pgd, self.section_object.obj_offset + ((TARGET_LONG_SIZE * 6) + 8), 0x4))[0]
+            self.__flags = struct.unpack(
+                "I", api.r_va(pgd, self.__section_object.obj_offset + ((TARGET_LONG_SIZE * 6) + 8), 0x4))[0]
         except:
-            self.flags = 0x00000000
+            self.__flags = 0x00000000
             pp_print("Could not read flags in Section __init__\n")
-        self.cow = ((self.flags & 0x00000800) != 0)
-        self.file_backed = ((self.flags & 0x00000080) != 0)
+        self.__cow = ((self.__flags & 0x00000800) != 0)
+        self.__file_backed = ((self.__flags & 0x00000080) != 0)
 
-        self.backing_file = None
+        self.__backing_file = None
 
         # If so, get corresponding file.
-        if self.file_backed:
+        if self.__file_backed:
             # Dereference as _SEGMENT, that is different from _SEGMENT_OBJECT
             # This is because the volatility profile lacks the _SECTION object,
             # and instead has the _SECTION_OBJECT. Since the Segment field
@@ -634,9 +709,9 @@ class Section:
 
             # http://forum.sysinternals.com/section-object_topic24975.html
 
-            self.segment = self.section_object.Segment.dereference_as(
+            self.__segment = self.__section_object.Segment.dereference_as(
                 "_SEGMENT")
-            file_obj = self.segment.ControlArea.FilePointer
+            file_obj = self.__segment.ControlArea.FilePointer
 
 
             from volatility.plugins.overlays.windows.windows import _FILE_OBJECT
@@ -652,63 +727,84 @@ class Section:
                     raise TypeError("The type for self.segment.ControlArea.FilePointer in Section" + \
                                     "class does not match _FILE_OBJECT or _EX_FAST_REF: %r (type %r)" % (file_obj, type(file_obj)))
 
-            for fi in interproc_data.files:
-                if fi.file_name == str(file_obj.FileName):
-                    self.backing_file = fi
-                    break
+            self.__backing_file = interproc_data.get_file_by_file_name(str(file_obj.FileName))
 
             # If we have still not recorded the file, add it to files record
-            if self.backing_file is None:
-                self.backing_file = File(str(file_obj.FileName))
-                interproc_data.files.append(self.backing_file)
+            if self.__backing_file is None:
+                self.__backing_file = File(str(file_obj.FileName))
+                interproc_data.add_file(self.__backing_file)
         
-        self.unpickled = False
-        self.offset = self.section_object.obj_offset
+        self.__unpickled = False
+        self.__offset = self.__section_object.obj_offset
 
     def __getstate__(self):
         '''
             Returns objects to be pickled.
         '''
-        return (self.flags, self.cow, self.file_backed, self.backing_file, self.offset)
+        return (self.__flags, self.__cow, self.__file_backed, self.__backing_file, self.__offset)
 
     def __setstate__(self, state):
         '''
             Sets pickled objects when unpickling
         '''
-        self.flags, self.cow, self.file_backed, self.backing_file, self.offset = state
-        self.section_object = None
-        self.unpickled = True
+        self.__flags, self.__cow, self.__file_backed, self.__backing_file, self.__offset = state
+        self.__section_object = None
+        self.__unpickled = True
 
     def get_object(self):
-        if self.unpickled:
+        if self.__unpickled:
             return None
         else:
-            return self.section_object
+            return self.__section_object
 
     def get_offset(self):
-        if self.unpickled:
-            return self.offset
+        if self.__unpickled:
+            return self.__offset
         else:
-            return self.section_object.obj_offset
+            return self.__section_object.obj_offset
 
     def is_cow(self):
-        return self.is_cow
+        return self.__is_cow
+
+    def get_flags(self):
+        return self.__flags
+
+    def get_file_backed(self):
+        return self.__file_backed
+
+    def get_backing_file(self):
+        return self.__backing_file
+
+    def get_offset(self):
+        return self.__offset
 
 
 class SectionMap:
 
     def __init__(self, section, base, size, section_offset):
-        self.section = section
-        self.base = base
-        self.size = size
-        self.section_offset = section_offset
+        self.__section = section
+        self.__base = base
+        self.__size = size
+        self.__section_offset = section_offset
         # This flag indicates if the map is still active (created and not yet unmapped).
         # When a map is unmapped, instead of deleting our record, we deactivate it to keep
         # a list of all the mapped memory.
-        self.active = True
+        self.__active = True
+
+    def get_section(self):
+        return self.__section
+
+    def get_base(self):
+        return self.__base
+
+    def get_size(self):
+        return self.__size
+
+    def get_section_offset(self):
+        return self.__section_offset
 
     def is_active(self):
-        return self.active
+        return self.__active
 
     def deactivate(self):
-        self.active = False
+        self.__active = False

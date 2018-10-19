@@ -185,9 +185,8 @@ def ntcreateprocessret(params,
                                                                          int(proc_obj.Pcb.DirectoryTableBase.v())))
 
         # Check if we are already monitoring the process
-        for p in interproc_data.procs:
-            if p.get_pid() == int(proc_obj.UniqueProcessId):
-                return
+        if interproc_data.get_process_by_pid(int(proc_obj.UniqueProcessId)) is not None:
+            return
 
         pp_print("Following %s %x %x\n" %
         (proc_obj.ImageFileName, proc_obj.UniqueProcessId, proc_obj.Pcb.DirectoryTableBase.v()))
@@ -349,9 +348,8 @@ def ntopenprocessret(params, cm, callback_name, proc_hdl_p, proc, update_vads):
                      int(proc_obj.Pcb.DirectoryTableBase.v())))
 
         # Check if we are already monitoring the process
-        for p in interproc_data.procs:
-            if p.get_pid() == int(proc_obj.UniqueProcessId):
-                return
+        if interproc_data.get_process_by_pid(int(proc_obj.UniqueProcessId)) is not None:
+            return
 
         params["pid"] = int(proc_obj.UniqueProcessId)
         params["pgd"] = int(proc_obj.Pcb.DirectoryTableBase.v())
@@ -456,10 +454,7 @@ def ntwritevirtualmemory(params, cm, proc, update_vads, reverse=False):
             break
 
     if proc_obj is not None:
-        for p in interproc_data.procs:
-            if p.get_pid() == proc_obj.UniqueProcessId:
-                remote_proc = p
-                break
+        remote_proc = interproc_data.get_process_by_pid(int(proc_obj.UniqueProcessId))
     else:
         # Sometimes we get calls to this function over non-proc handles (e.g. type "Desktop")
         return
@@ -563,16 +558,12 @@ def ntreadfile(params, cm, proc, update_vads, is_write=False):
             break
 
     if file_obj is not None:
-        file_instance = None
-        for fi in interproc_data.files:
-            if fi.file_name == str(file_obj.FileName):
-                file_instance = fi
-                break
+        file_instance = interproc_data.get_file_by_file_name(str(file_obj.FileName))
 
         # If we have still not recorded the file, add it to files to record
         if file_instance is None:
             file_instance = File(str(file_obj.FileName))
-            interproc_data.files.append(file_instance)
+            interproc_data.add_file(file_instance)
         # Now, record the read/write
         # curr_file_offset is never used
         # curr_file_offset = int(file_obj.CurrentByteOffset.QuadPart)
@@ -625,7 +616,7 @@ def ntreadfile(params, cm, proc, update_vads, is_write=False):
                             (proc.get_pid(), offset, length, str(file_obj.FileName)))
 
         file_instance.add_operation(op)
-        local_proc.file_operations.append(op)
+        local_proc.add_file_operation(op)
 
     if update_vads:
         proc.update_vads()
@@ -695,17 +686,16 @@ def ntmapviewofsection_ret(params,
     else:
         offset = 0
 
-    mapping_proc.section_maps.append(
-        SectionMap(mapped_sec, base, size, offset))
+    mapping_proc.add_section_map(SectionMap(mapped_sec, base, size, offset))
 
     if interproc_config.interproc_text_log and interproc_config.interproc_text_log_handle is not None:
         f = interproc_config.interproc_text_log_handle
         if TARGET_LONG_SIZE == 4:
             f.write("[PID: %x] NtMapViewOfSection: Base: %08x Size: %08x Offset: %08x / Section: %s\n" %
-                    (proc.get_pid(), base, size, offset, mapped_sec.backing_file))
+                    (proc.get_pid(), base, size, offset, mapped_sec.get_backing_file()))
         elif TARGET_LONG_SIZE == 8:
             f.write("[PID: %x] NtMapViewOfSection: Base: %16x Size: %16x Offset: %08x / Section: %s\n" %
-                    (proc.get_pid(), base, size, offset, mapped_sec.backing_file))
+                    (proc.get_pid(), base, size, offset, mapped_sec.get_backing_file()))
 
     if update_vads:
         proc.update_vads()
@@ -790,24 +780,19 @@ def ntmapviewofsection(params, cm, proc, update_vads):
     if (proc_obj is not None or mapping_proc is not None) and section_obj is not None:
         mapped_sec = None
         if mapping_proc is None:
-            for p in interproc_data.procs:
-                if p.get_pid() == proc_obj.UniqueProcessId:
-                    mapping_proc = p
-                    break
+            mapping_proc = interproc_data.get_process_by_pid(int(proc_obj.UniqueProcessId))
         if mapping_proc is None:
             pp_error("[!] The mapping process is not being monitored," +
                           " a handle was obtained with an API different from " +
                           "OpenProcess or CreateProcess\n")
             return
-        for sec in interproc_data.sections:
-            if sec.get_offset() == section_obj.obj_offset:
-                mapped_sec = sec
-                break
+
+        mapped_sec = interproc_data.get_section_by_offset(section_obj.obj_offset)
 
         # If the section was not in our list, we create an entry
         if mapped_sec is None:
             mapped_sec = Section(pgd, section_obj)
-            interproc_data.sections.append(mapped_sec)
+            interproc_data.add_section(mapped_sec)
 
         # Record the actual map once we return back from the call and we can
         # dereference output parameters
@@ -880,23 +865,20 @@ def ntunmapviewofsection(params, cm, proc, update_vads):
 
     mapping_proc = None
     if proc_obj is not None:
-        for p in interproc_data.procs:
-            if p.get_pid() == proc_obj.UniqueProcessId:
-                mapping_proc = p
-                break
+        mapping_proc = interproc_data.get_process_by_pid(int(proc_obj.UniqueProcessId))
 
     if mapping_proc is not None:
-        for m in mapping_proc.section_maps:
-            if m.base == base and m.is_active():
+        for m in mapping_proc.get_section_maps():
+            if m.get_base() == base and m.is_active():
                 m.deactivate()
                 if interproc_config.interproc_text_log and interproc_config.interproc_text_log_handle is not None:
                     f = interproc_config.interproc_text_log_handle
                     if (TARGET_LONG_SIZE == 4):
                         f.write("[PID: %x] NtUnmapViewOfSection: Base: %08x Size: %08x / Section: %s\n" %
-                                (proc.get_pid(), base, m.size, m.section.backing_file))
+                                (proc.get_pid(), base, m.get_size(), m.get_section().get_backing_file()))
                     elif (TARGET_LONG_SIZE == 8):
                         f.write("[PID: %x] NtUnmapViewOfSection: Base: %16x Size: %16x / Section: %s\n" %
-                                (proc.get_pid(), base, m.size, m.section.backing_file))
+                                (proc.get_pid(), base, m.get_size(), m.get_section().get_backing_file()))
 
     if update_vads:
         proc.update_vads()
@@ -960,15 +942,12 @@ def ntvirtualprotect(params, cm, proc, update_vads):
 
     mapping_proc = None
     if proc_obj is not None:
-        for p in interproc_data.procs:
-            if p.get_pid() == proc_obj.UniqueProcessId:
-                mapping_proc = p
-                break
+        mapping_proc = interproc_data.get_process_by_pid(int(proc_obj.UniqueProcessId))
 
     if mapping_proc is not None:
-        for v in mapping_proc.vads:
+        for v in mapping_proc.get_vads():
             # If the block overlaps the vad:
-            if base_addr >= v.start and base_addr < (v.start + v.size):
+            if base_addr >= v.get_start() and base_addr < (v.get_start() + v.get_size()):
                 v.update_page_access(base_addr, size, new_access)
 
     if interproc_config.interproc_text_log and interproc_config.interproc_text_log_handle is not None:
@@ -1096,10 +1075,7 @@ def ntallocatevirtualmemory(params,
 
     mapping_proc = None
     if proc_obj is not None:
-        for p in interproc_data.procs:
-            if p.get_pid() == proc_obj.UniqueProcessId:
-                mapping_proc = p
-                break
+        mapping_proc = interproc_data.get_process_by_pid(int(proc_obj.UniqueProcessId))
 
     if mapping_proc is not None:
         # Arguments to callback: the callback name, so that it can unset it,

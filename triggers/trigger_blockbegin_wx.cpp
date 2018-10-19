@@ -35,17 +35,17 @@ extern "C"{
 #include "trigger_helpers.h"
 
 extern "C"{
-    std::unordered_set<pyrebox_target_ulong> page_status;
-    int function_declared = 0;
-    pyrebox_target_ulong* begin;
-    pyrebox_target_ulong* end;
-    pyrebox_target_ulong* pgd;
+    std::map<callback_handle_t, std::unordered_set<pyrebox_target_ulong> > page_status;
+    std::map<callback_handle_t, int> function_declared;
+    std::map<callback_handle_t, pyrebox_target_ulong*> begin;
+    std::map<callback_handle_t, pyrebox_target_ulong*> end;
+    std::map<callback_handle_t, pyrebox_target_ulong*> pgd;
 
     void erase_vars(callback_handle_t handle){
-        begin = (pyrebox_target_ulong*) get_var(handle,"begin");
-        end = (pyrebox_target_ulong*) get_var(handle,"end");
-        pgd = (pyrebox_target_ulong*) get_var(handle,"pgd");
-        page_status.clear();
+        begin[handle] = (pyrebox_target_ulong*) get_var(handle,"begin");
+        end[handle] = (pyrebox_target_ulong*) get_var(handle,"end");
+        pgd[handle] = (pyrebox_target_ulong*) get_var(handle,"pgd");
+        page_status[handle].clear();
     }
 
     //Define trigger type. This type is checked when trigger is loaded
@@ -55,13 +55,14 @@ extern "C"{
 
     //Trigger, return 1 if event should be passed to python callback 
     int trigger(callback_handle_t handle, callback_params_t params){
-        if (function_declared == 0){
-            begin = (pyrebox_target_ulong*) get_var(handle,"begin");
-            end = (pyrebox_target_ulong*) get_var(handle,"end");
-            pgd = (pyrebox_target_ulong*) get_var(handle,"pgd");
+        if (function_declared.find(handle) == function_declared.end() || function_declared[handle] == 0){
+            begin[handle] = (pyrebox_target_ulong*) get_var(handle,"begin");
+            end[handle] = (pyrebox_target_ulong*) get_var(handle,"end");
+            pgd[handle] = (pyrebox_target_ulong*) get_var(handle,"pgd");
+            page_status[handle] = std::unordered_set<pyrebox_target_ulong>();
 
             declare_function(handle, "erase_vars", erase_vars);
-            function_declared = 1;
+            function_declared[handle] = 1;
         }
 
         int status = 0;
@@ -69,11 +70,11 @@ extern "C"{
         pyrebox_target_ulong pc = get_tb_addr(params.block_begin_params.tb);
         pyrebox_target_ulong page_mask = (((pyrebox_target_ulong) -1) - 0xFFF);
         
-        if ((*pgd == (pyrebox_target_ulong) -1 || *pgd == get_running_process(params.block_begin_params.cpu_index)) &&  pc >= *begin && pc < *end){
+        if ((*(pgd[handle]) == (pyrebox_target_ulong) -1 || *(pgd[handle]) == get_running_process(params.block_begin_params.cpu_index)) &&  pc >= *(begin[handle]) && pc < *(end[handle])){
             pyrebox_target_ulong page = pc & page_mask;
-            std::unordered_set<pyrebox_target_ulong>::iterator it = page_status.find(page);
-            if (it == page_status.end()){
-                page_status.insert(page);
+            std::unordered_set<pyrebox_target_ulong>::iterator it = page_status[handle].find(page);
+            if (it == page_status[handle].end()){
+                page_status[handle].insert(page);
                 status = 1;
             }
         }
