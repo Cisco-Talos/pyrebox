@@ -571,6 +571,27 @@ class Injection:
         self.__data = data
         self.__reverse = reverse
 
+    def get_remote_proc(self):
+        return self.__remote_proc
+
+    def get_local_proc(self):
+        return self.__local_proc
+
+    def get_remote_addr(self):
+        return self.__remote_addr
+
+    def get_local_addr(self):
+        return self.__local_addr
+
+    def get_size(self):
+        return self.__size
+
+    def get_data(self):
+        return self.__data
+
+    def get_reverse(self):
+        return self.__reverse
+
     def is_reverse(self):
         return self.__reverse
 
@@ -589,6 +610,21 @@ class FileOperation(object):
         self.__offset = offset
         self.__size = size
         self.__data = data
+
+    def get_file(self):
+        return self.__file_inst
+
+    def get_proc(self):
+        return self.__proc
+
+    def get_offset(self):
+        return self.__offset
+
+    def get_size(self):
+        return self.__size
+
+    def get_data(self):
+        return self.__data
 
     def __str__(self):
         return "%s:%s - %08x(%08x bytes)" % (str(self.__proc), str(self.__file_inst), self.__offset, self.__size)
@@ -769,7 +805,7 @@ class Section:
     def get_flags(self):
         return self.__flags
 
-    def get_file_backed(self):
+    def is_file_backed(self):
         return self.__file_backed
 
     def get_backing_file(self):
@@ -781,8 +817,9 @@ class Section:
 
 class SectionMap:
 
-    def __init__(self, section, base, size, section_offset):
+    def __init__(self, section, pgd, base, size, section_offset):
         self.__section = section
+        self.__pgd = pgd
         self.__base = base
         self.__size = size
         self.__section_offset = section_offset
@@ -805,6 +842,9 @@ class SectionMap:
 
     def is_active(self):
         return self.__active
+
+    def get_pgd(self):
+        return self.__pgd
 
     def deactivate(self):
         self.__active = False

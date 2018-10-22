@@ -73,19 +73,27 @@ UNPACKER_LOG_PATH = None
 UNPACKER_DUMP_PATH = None
 
 memory_dump_callbacks = []
+written_files = []
+section_maps = []
+
+dump_counter = 0
+
 
 def register_memory_dump_callback(cb):
     global memory_dump_callbacks
     memory_dump_callbacks.append(cb)
 
+
 def remove_memory_dump_callback(cb):
     global memory_dump_callbacks
     memory_dump_callbacks.remove(cb)
+
 
 def deliver_memory_dump_callback(params):
     global memory_dump_callbacks
     for cb in memory_dump_callbacks:
         cb(params)
+
 
 def init_log():
     '''
@@ -112,6 +120,19 @@ def append_log(line):
     f.close()
 
 
+def generate_dump(pgd, reason):
+    #Create dump
+    global pyrebox_print
+    global current_layer
+    global dump_counter
+
+    f = open(os.path.join(UNPACKER_DUMP_PATH, "dump_list.txt"), "a")
+    f.write("DUMP %d - Layer %d - Reason: %s\n" % (dump_counter, current_layer, reason))
+    dump([pgd], pyrebox_print, path = os.path.join(UNPACKER_DUMP_PATH, "dump_%d_layer-%d" % (dump_counter, current_layer)))
+    dump_counter += 1
+    f.close()
+
+
 def mem_write(params):
     '''
         Callback for memory writes.
@@ -122,6 +143,8 @@ def mem_write(params):
     global current_layer
     global UNPACKER_LOG_PATH
     global UNPACKER_DUMP_PATH
+    global section_maps
+    global written_files
 
     import api
     from cpus import X64CPU, X86CPU
@@ -153,6 +176,13 @@ def mem_write(params):
             append_log("[W]  - PGD [%08x] - PAGE [%08x] - FROM [%08x]" % (pgd, page, pc))
         else:
             append_log("[W]  - PGD [%016x] - PAGE [%016x] - FROM [%016x]" % (pgd, page, pc))
+
+        # Finally, check if the memory was mapped to file, so we record a file write for such file
+        for base, size, file_name in section_maps:
+            if page >= (base & mask) and page < (((base + size) & mask) + 0x1000):
+                if file_name not in written_files:
+                    written_files.append(file_name)
+                    append_log("------> Section mapped, FILE [%s]" % (file_name))
 
 
 def block_exec(params):
@@ -211,8 +241,8 @@ def block_exec(params):
             cm.call_trigger_function("mem_write", "erase_vars")
             cm.call_trigger_function("block_begin", "erase_vars")
 
-            #Create dump
-            dump([pgd], pyrebox_print, path = os.path.join(UNPACKER_DUMP_PATH, "dump_%d" % (current_layer)))
+            generate_dump(pgd, "Transition to previously written memory page(s)")
+
             deliver_memory_dump_callback({"pgd": pgd, "page_status_x": page_status_x[pgd], "page_status_w": page_status_w[pgd]})
     else:
         # Update page status (execution)
@@ -263,6 +293,9 @@ def module_entry_point(params):
     # Start monitoring process
     api.start_monitoring_process(pgd)
 
+    # Create a dump, on process entry point for every process
+    generate_dump(pgd, "Dump at process entry point for PGD 0x%x" % pgd)
+
     pyrebox_print("Started monitoring process")
 
 def clean():
@@ -282,21 +315,124 @@ def clean():
     cm.clean()
     pyrebox_print("[*]    Cleaned module")
 
-def file_read(params):
-    pyrebox_print("File READ callback")
-    pass
-def file_write(params):
-    pyrebox_print("File WRITE callback")
-    pass
-def memory_read(params):
-    pyrebox_print("Remote Memory READ callback")
-    pass
-def memory_write(params):
-    pyrebox_print("Remote Memory WRITE callback")
-    pass
-def section_map(params):
-    pyrebox_print("Section MAP callback")
-    pass
+def file_read(file_read):
+    '''
+        File read operations
+    '''
+    global written_files
+    if file_read.get_file().get_file_name() in written_files:
+        pgd = file_read.get_proc().get_pgd() 
+        addr = file_read.get_offset()
+        size = file_read.get_size()
+
+        if pgd not in page_status_w:
+            page_status_w[pgd] = {}
+
+        mask = 0xFFFFF000 if TARGET_LONG_SIZE == 4 else 0xFFFFFFFFFFFFF000
+        page = addr & mask
+
+        while page < (addr + size):
+            # Set page write status (update with current layer)
+            page_status_w[pgd][page] = current_layer
+            page += 0x1000
+
+            # Log the page write
+            if TARGET_LONG_SIZE == 4:
+                append_log("[W]  - NtReadFile PGD [%08x] - PAGE [%08x] - FILE [%s]" % (pgd, page, file_read.get_file().get_file_name()))
+            else:
+                append_log("[W]  - NtReadFile PGD [%016x] - PAGE [%016x] - FILE [%s]" % (pgd, page, file_read.get_file().get_file_name()))
+
+
+def file_write(file_write):
+    '''
+        File write operation
+    '''
+    global written_files
+    if file_write.get_file().get_file_name() not in written_files:
+        written_files.append(file_write.get_file().get_file_name())
+
+def memory_read(injection):
+    '''
+        Callback on memory read.
+    '''
+    pgd = injection.get_local_proc().get_pgd()
+
+    if pgd not in page_status_w:
+        page_status_w[pgd] = {}
+
+    mask = 0xFFFFF000 if TARGET_LONG_SIZE == 4 else 0xFFFFFFFFFFFFF000
+    page = injection.get_local_addr() & mask
+
+    while page < (injection.get_local_addr() + injection.get_size()):
+        # Set page write status (update with current layer)
+        page_status_w[pgd][page] = current_layer
+        page += 0x1000
+
+        # Log the page write
+        if TARGET_LONG_SIZE == 4:
+            append_log("[W]  - NtReadVirtualMemory PGD [%08x] - PAGE [%08x]" % (pgd, page))
+        else:
+            append_log("[W]  - NtReadVirtualMemory PGD [%016x] - PAGE [%016x]" % (pgd, page))
+
+def memory_write(injection):
+    '''
+        Callback on memory write
+    '''
+
+    pgd = injection.get_remote_proc().get_pgd()
+
+    if pgd not in page_status_w:
+        page_status_w[pgd] = {}
+
+    mask = 0xFFFFF000 if TARGET_LONG_SIZE == 4 else 0xFFFFFFFFFFFFF000
+    page = injection.get_remote_addr() & mask
+
+    while page < (injection.get_remote_addr() + injection.get_size()):
+        # Set page write status (update with current layer)
+        page_status_w[pgd][page] = current_layer
+        page += 0x1000
+
+        # Log the page write
+        if TARGET_LONG_SIZE == 4:
+            append_log("[W]  - NtWriteVirtualMemory PGD [%08x] - PAGE [%08x]" % (pgd, page))
+        else:
+            append_log("[W]  - NtWriteVirtualMemory PGD [%016x] - PAGE [%016x]" % (pgd, page))
+
+def section_map(section_map):
+    '''
+        Callback on Section Map
+    '''
+    global section_maps
+    if section_map.get_section().is_file_backed():
+        file_name = section_map.get_section().get_backing_file().get_file_name()
+        # 1) Add the entry to the list
+        entry = (section_map.get_base(), 
+                 section_map.get_size(), 
+                 file_name)
+        if entry not in section_maps:
+            section_maps.append(entry)
+
+        # 2) If the file had been previously written, mark memory as written
+        if file_name in written_files: 
+            pgd = section_map.get_pgd() 
+
+            if pgd not in page_status_w:
+                page_status_w[pgd] = {}
+
+            mask = 0xFFFFF000 if TARGET_LONG_SIZE == 4 else 0xFFFFFFFFFFFFF000
+            page = section_map.get_base() & mask
+
+            while page < (section_map.get_base() + section_map.get_size()):
+                # Set page write status (update with current layer)
+                page_status_w[pgd][page] = current_layer
+                page += 0x1000
+
+                # Log the page write
+                if TARGET_LONG_SIZE == 4:
+                    append_log("[W]  - NtMapViewOfSection PGD [%08x] - PAGE [%08x] - FILE [%s]" % (pgd, page, file_name))
+                else:
+                    append_log("[W]  - NtMapViewOfSection PGD [%016x] - PAGE [%016x] - FILE [%s]" % (pgd, page, file_name))
+
 
 def initialize_callbacks(module_hdl, printer):
     '''

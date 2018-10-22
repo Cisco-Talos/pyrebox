@@ -686,7 +686,7 @@ def ntmapviewofsection_ret(params,
     else:
         offset = 0
 
-    mapping_proc.add_section_map(SectionMap(mapped_sec, base, size, offset))
+    mapping_proc.add_section_map(SectionMap(mapped_sec, pgd, base, size, offset))
 
     if interproc_config.interproc_text_log and interproc_config.interproc_text_log_handle is not None:
         f = interproc_config.interproc_text_log_handle
