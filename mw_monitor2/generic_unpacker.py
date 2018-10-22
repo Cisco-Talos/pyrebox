@@ -238,8 +238,8 @@ def block_exec(params):
             current_layer = page_status_x[pgd][page]
 
             # Reset write cache on triggers
-            cm.call_trigger_function("mem_write", "erase_vars")
-            cm.call_trigger_function("block_begin", "erase_vars")
+            cm.call_trigger_function("mem_write_%x" % pgd, "erase_vars")
+            cm.call_trigger_function("block_begin_%x" % pgd, "erase_vars")
 
             generate_dump(pgd, "Transition to previously written memory page(s)")
 
@@ -271,24 +271,24 @@ def module_entry_point(params):
     pyrebox_print("Reached entry point of new process: %x" % pgd)
 
     # Add memory write / memory execute callbacks, and their triggers
-    cm.add_callback(CallbackManager.MEM_WRITE_CB, mem_write, name="mem_write")
-    cm.add_callback(CallbackManager.BLOCK_BEGIN_CB, block_exec, name="block_begin")
+    cm.add_callback(CallbackManager.MEM_WRITE_CB, mem_write, name="mem_write_%x" % pgd)
+    cm.add_callback(CallbackManager.BLOCK_BEGIN_CB, block_exec, name="block_begin_%x" % pgd)
 
-    cm.add_trigger("mem_write", "triggers/trigger_memwrite_wx.so")
-    cm.set_trigger_var("mem_write", "begin", 0x0)
+    cm.add_trigger("mem_write_%x" % pgd, "triggers/trigger_memwrite_wx.so")
+    cm.set_trigger_var("mem_write_%x" % pgd, "begin", 0x0)
     if TARGET_LONG_SIZE == 4:
-        cm.set_trigger_var("mem_write", "end", 0x80000000)
+        cm.set_trigger_var("mem_write_%x" % pgd, "end", 0x80000000)
     else:
-        cm.set_trigger_var("mem_write", "end", 0x000007FFFFFFFFFF)
-    cm.set_trigger_var("mem_write", "pgd", pgd)
+        cm.set_trigger_var("mem_write_%x" % pgd, "end", 0x000007FFFFFFFFFF)
+    cm.set_trigger_var("mem_write_%x" % pgd, "pgd", pgd)
 
-    cm.add_trigger("block_begin", "triggers/trigger_blockbegin_wx.so")
-    cm.set_trigger_var("block_begin", "begin", 0x0)
+    cm.add_trigger("block_begin_%x" % pgd, "triggers/trigger_blockbegin_wx.so")
+    cm.set_trigger_var("block_begin_%x" % pgd, "begin", 0x0)
     if TARGET_LONG_SIZE == 4:
-        cm.set_trigger_var("block_begin", "end", 0x80000000)
+        cm.set_trigger_var("block_begin_%x" % pgd, "end", 0x80000000)
     else:
-        cm.set_trigger_var("block_begin", "end", 0x000007FFFFFFFFFF)
-    cm.set_trigger_var("block_begin", "pgd", pgd)
+        cm.set_trigger_var("block_begin_%x" % pgd, "end", 0x000007FFFFFFFFFF)
+    cm.set_trigger_var("block_begin_%x" % pgd, "pgd", pgd)
 
     # Start monitoring process
     api.start_monitoring_process(pgd)
@@ -363,16 +363,23 @@ def memory_read(injection):
     mask = 0xFFFFF000 if TARGET_LONG_SIZE == 4 else 0xFFFFFFFFFFFFF000
     page = injection.get_local_addr() & mask
 
+    if TARGET_LONG_SIZE == 4:
+        append_log("[NtReadVirtualMemory] - PGD [%08x] - ADDR [%08x] - SIZE [%08x]" % (pgd, injection.get_local_addr(), injection.get_size()))
+    else:
+        append_log("[NtReadVirtualMemory] - PGD [%016x] - ADDR [%016x] - SIZE [%016x]" % (pgd, injection.get_local_addr(), injection.get_size()))
+
     while page < (injection.get_local_addr() + injection.get_size()):
         # Set page write status (update with current layer)
         page_status_w[pgd][page] = current_layer
-        page += 0x1000
 
         # Log the page write
         if TARGET_LONG_SIZE == 4:
-            append_log("[W]  - NtReadVirtualMemory PGD [%08x] - PAGE [%08x]" % (pgd, page))
+            append_log("---> [W]  -  PGD [%08x] - PAGE [%08x]" % (pgd, page))
         else:
-            append_log("[W]  - NtReadVirtualMemory PGD [%016x] - PAGE [%016x]" % (pgd, page))
+            append_log("---> [W]  -  PGD [%016x] - PAGE [%016x]" % (pgd, page))
+
+        page += 0x1000
+
 
 def memory_write(injection):
     '''
@@ -387,16 +394,23 @@ def memory_write(injection):
     mask = 0xFFFFF000 if TARGET_LONG_SIZE == 4 else 0xFFFFFFFFFFFFF000
     page = injection.get_remote_addr() & mask
 
+    if TARGET_LONG_SIZE == 4:
+        append_log("[NtWriteVirtualMemory] - PGD [%08x] - ADDR [%08x] - SIZE [%08x]" % (pgd, injection.get_remote_addr(), injection.get_size()))
+    else:
+        append_log("[NtWriteVirtualMemory] - PGD [%016x] - ADDR [%016x] - SIZE [%016x]" % (pgd, injection.get_remote_addr(), injection.get_size()))
+
     while page < (injection.get_remote_addr() + injection.get_size()):
         # Set page write status (update with current layer)
         page_status_w[pgd][page] = current_layer
-        page += 0x1000
 
         # Log the page write
         if TARGET_LONG_SIZE == 4:
-            append_log("[W]  - NtWriteVirtualMemory PGD [%08x] - PAGE [%08x]" % (pgd, page))
+            append_log("---> [W]  -  PGD [%08x] - PAGE [%08x]" % (pgd, page))
         else:
-            append_log("[W]  - NtWriteVirtualMemory PGD [%016x] - PAGE [%016x]" % (pgd, page))
+            append_log("---> [W]  -  PGD [%016x] - PAGE [%016x]" % (pgd, page))
+
+        page += 0x1000
+
 
 def section_map(section_map):
     '''
