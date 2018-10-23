@@ -73,8 +73,9 @@ UNPACKER_LOG_PATH = None
 UNPACKER_DUMP_PATH = None
 
 memory_dump_callbacks = []
-written_files = []
+written_files = {}
 section_maps = []
+ntdll_space = None
 
 dump_counter = 0
 
@@ -145,6 +146,7 @@ def mem_write(params):
     global UNPACKER_DUMP_PATH
     global section_maps
     global written_files
+    global ntdll_space
 
     import api
     from cpus import X64CPU, X86CPU
@@ -159,6 +161,7 @@ def mem_write(params):
     # Get running process, as well as CPU object
     pgd = api.get_running_process(cpu_index)
     cpu = api.r_cpu(cpu_index)
+    pc = cpu.RIP if isinstance(cpu, X64CPU) else cpu.EIP
 
     if pgd not in page_status_w:
         page_status_w[pgd] = {}
@@ -167,22 +170,37 @@ def mem_write(params):
         mask = 0xFFFFF000 if TARGET_LONG_SIZE == 4 else 0xFFFFFFFFFFFFF000
         page = vaddr & mask
 
+        overlapping_section_maps = [] 
+        # Check if the memory was mapped to file, so we record a file write for such file
+        for base, size, file_offset, file_name in section_maps:
+            if page >= (base & mask) and page < (((base + size) & mask) + 0x1000):
+                overlapping_section_maps.append((base, size, file_offset, file_name))
+
+        # If it comes from ntdll and affects to a mapped file, just ignore it, 
+        # it is likely due to relocations or loader/stuff and is prone to FPs.
+        if (pc >= ntdll_space[0] and pc < (ntdll_space[0] + ntdll_space[1])) and len(overlapping_section_maps) > 0:
+            return
+
         # Set page write status (update with current layer)
         page_status_w[pgd][page] = current_layer
 
         # Log the page write
-        pc = cpu.RIP if isinstance(cpu, X64CPU) else cpu.EIP
         if TARGET_LONG_SIZE == 4:
             append_log("[W]  - PGD [%08x] - PAGE [%08x] - FROM [%08x]" % (pgd, page, pc))
         else:
             append_log("[W]  - PGD [%016x] - PAGE [%016x] - FROM [%016x]" % (pgd, page, pc))
 
+        # Only reflect on mapped file if it doesn't come from ntdll, to avoid FPs due to relocation
+        # fixing.
         # Finally, check if the memory was mapped to file, so we record a file write for such file
-        for base, size, file_name in section_maps:
-            if page >= (base & mask) and page < (((base + size) & mask) + 0x1000):
-                if file_name not in written_files:
-                    written_files.append(file_name)
-                    append_log("------> Section mapped, FILE [%s]" % (file_name))
+        for base, size, file_offset, file_name in overlapping_section_maps:
+            if file_name not in written_files:
+                written_files[file_name] = [((page - (base & mask)) + file_offset, 0x1000)]
+            else:
+                written_files[file_name].append(((page - (base & mask)) + file_offset, 0x1000))
+            append_log("^^^---> PAGE is section mapped, FILE [%s] - Offset %x - Size %x" % (file_name, (page - (base & mask)) + file_offset, size))
+
+
 
 
 def block_exec(params):
@@ -257,6 +275,7 @@ def module_entry_point(params):
     global UNPACKER_LOG_PATH
     global UNPACKER_DUMP_PATH
     global pyrebox_print
+    global ntdll_space
 
     from api import CallbackManager
     import api
@@ -296,7 +315,10 @@ def module_entry_point(params):
     # Create a dump, on process entry point for every process
     generate_dump(pgd, "Dump at process entry point for PGD 0x%x" % pgd)
 
-    pyrebox_print("Started monitoring process")
+    # Get the address space for ntdll
+    for mod in api.get_module_list(pgd):
+        if "ntdll.dll" in mod["name"].lower():
+            ntdll_space = (mod["base"], mod["size"])
 
 def clean():
     '''
@@ -321,20 +343,36 @@ def file_read(file_read):
     '''
     global written_files
     if file_read.get_file().get_file_name() in written_files:
-        pgd = file_read.get_proc().get_pgd() 
+        pgd = file_read.get_proc().get_pgd()
         addr = file_read.get_offset()
         size = file_read.get_size()
+        buff = file_read.get_buffer_addr()
+
+        mask = 0xFFFFF000 if TARGET_LONG_SIZE == 4 else 0xFFFFFFFFFFFFF000
+        pages_to_add = []
+        for w_offset, w_size in written_files[file_read.get_file().get_file_name()]:
+            if (addr >= w_offset and addr < (w_offset + w_size)):
+                start_offset = addr
+                end_offset = (w_offset + w_size) if (w_offset + w_size) < (addr + size) else (addr + size)
+            elif (addr < w_offset and (addr + size) > w_offset):
+                start_offset = w_offset
+                end_offset = (w_offset + w_size) if (w_offset + w_size) < (addr + size) else (addr + size)
+            else:
+                continue
+
+            page = ((start_offset - addr) + buff) & mask
+            end = ((end_offset - addr + buff) & mask)
+            end_page = end if end % 0x1000 == 0 else end + 0x1000
+            while page < end_page:
+                pages_to_add.append(page)
+                page += 0x1000
 
         if pgd not in page_status_w:
             page_status_w[pgd] = {}
 
-        mask = 0xFFFFF000 if TARGET_LONG_SIZE == 4 else 0xFFFFFFFFFFFFF000
-        page = addr & mask
-
-        while page < (addr + size):
+        for page in pages_to_add:
             # Set page write status (update with current layer)
             page_status_w[pgd][page] = current_layer
-            page += 0x1000
 
             # Log the page write
             if TARGET_LONG_SIZE == 4:
@@ -349,7 +387,10 @@ def file_write(file_write):
     '''
     global written_files
     if file_write.get_file().get_file_name() not in written_files:
-        written_files.append(file_write.get_file().get_file_name())
+        written_files[file_write.get_file().get_file_name()] = [(file_write.get_offset(), file_write.get_size())]
+    else:
+        written_files[file_write.get_file().get_file_name()].append((file_write.get_offset(), file_write.get_size()))
+    
 
 def memory_read(injection):
     '''
@@ -374,9 +415,9 @@ def memory_read(injection):
 
         # Log the page write
         if TARGET_LONG_SIZE == 4:
-            append_log("---> [W]  -  PGD [%08x] - PAGE [%08x]" % (pgd, page))
+            append_log("^^^---> [W]  -  PGD [%08x] - PAGE [%08x]" % (pgd, page))
         else:
-            append_log("---> [W]  -  PGD [%016x] - PAGE [%016x]" % (pgd, page))
+            append_log("^^^---> [W]  -  PGD [%016x] - PAGE [%016x]" % (pgd, page))
 
         page += 0x1000
 
@@ -405,9 +446,9 @@ def memory_write(injection):
 
         # Log the page write
         if TARGET_LONG_SIZE == 4:
-            append_log("---> [W]  -  PGD [%08x] - PAGE [%08x]" % (pgd, page))
+            append_log("^^^---> [W]  -  PGD [%08x] - PAGE [%08x]" % (pgd, page))
         else:
-            append_log("---> [W]  -  PGD [%016x] - PAGE [%016x]" % (pgd, page))
+            append_log("^^^---> [W]  -  PGD [%016x] - PAGE [%016x]" % (pgd, page))
 
         page += 0x1000
 
@@ -422,30 +463,66 @@ def section_map(section_map):
         # 1) Add the entry to the list
         entry = (section_map.get_base(), 
                  section_map.get_size(), 
+                 section_map.get_section_offset(),
                  file_name)
+
         if entry not in section_maps:
             section_maps.append(entry)
+            append_log("[NtMapViewOfSection]  PGD [%08x] - ADDR [%08x] - SIZE [%08x] - OFFSET [%08x] - FILE [%s]" % (section_map.get_pgd(), entry[0], entry[1], entry[2], file_name))
 
         # 2) If the file had been previously written, mark memory as written
         if file_name in written_files: 
             pgd = section_map.get_pgd() 
 
+            addr = entry[2]
+            size = entry[1]
+    
+            mask = 0xFFFFF000 if TARGET_LONG_SIZE == 4 else 0xFFFFFFFFFFFFF000
+            pages_to_add = []
+            for w_offset, w_size in written_files[file_name]:
+                if (addr >= w_offset and addr < (w_offset + w_size)):
+                    start_offset = addr
+                    end_offset = (w_offset + w_size) if (w_offset + w_size) < (addr + size) else (addr + size)
+                    #append_log("----> Previously written block: %x - %x" % (w_offset, w_size))
+                elif (addr < w_offset and (addr + size) > w_offset):
+                    start_offset = w_offset
+                    end_offset = (w_offset + w_size) if (w_offset + w_size) < (addr + size) else (addr + size)
+                    #append_log("----> Previously written block: %x - %x" % (w_offset, w_size))
+                else:
+                    continue
+
+                page = ((start_offset - addr) + entry[0]) & mask
+                end = ((end_offset - addr + entry[0]) & mask)
+                end_page = end if (end % 0x1000) == 0 else end + 0x1000
+                while page < end_page:
+                    #append_log("----> Overlap page: %x" % (page))
+                    pages_to_add.append(page)
+                    page += 0x1000
+
             if pgd not in page_status_w:
                 page_status_w[pgd] = {}
 
-            mask = 0xFFFFF000 if TARGET_LONG_SIZE == 4 else 0xFFFFFFFFFFFFF000
-            page = section_map.get_base() & mask
-
-            while page < (section_map.get_base() + section_map.get_size()):
+            for page in pages_to_add:
                 # Set page write status (update with current layer)
                 page_status_w[pgd][page] = current_layer
-                page += 0x1000
 
                 # Log the page write
                 if TARGET_LONG_SIZE == 4:
-                    append_log("[W]  - NtMapViewOfSection PGD [%08x] - PAGE [%08x] - FILE [%s]" % (pgd, page, file_name))
+                    append_log("^^^---> [W]  - NtMapViewOfSection PGD [%08x] - PAGE [%08x] - FILE [%s]" % (pgd, page, file_name))
                 else:
-                    append_log("[W]  - NtMapViewOfSection PGD [%016x] - PAGE [%016x] - FILE [%s]" % (pgd, page, file_name))
+                    append_log("^^^---> [W]  - NtMapViewOfSection PGD [%016x] - PAGE [%016x] - FILE [%s]" % (pgd, page, file_name))
+
+def section_unmap(section_map):
+    global section_maps
+
+    map_to_remove = None
+    for sm in section_maps:
+        if sm[0] == section_map.get_base():
+            map_to_remove = sm
+
+    if map_to_remove is not None:
+        append_log("[NtUnmapViewOfSection] Removing: ADDR %x - SIZE %x - OFFSET %x - FILE %s " % map_to_remove)
+        section_maps.remove(map_to_remove)
 
 
 def initialize_callbacks(module_hdl, printer):
@@ -491,6 +568,7 @@ def initialize_callbacks(module_hdl, printer):
         interproc_data.register_remote_memory_read_callback(memory_read)
         interproc_data.register_remote_memory_write_callback(memory_write)
         interproc_data.register_section_map_callback(section_map)
+        interproc_data.register_section_unmap_callback(section_unmap)
         cm = CallbackManager(module_hdl, new_style = True)
         pyrebox_print("[*]    Initialized callbacks")
     except Exception as e:

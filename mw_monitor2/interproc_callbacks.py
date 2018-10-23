@@ -179,7 +179,7 @@ def ntcreateprocessret(params,
         if interproc_config.interproc_text_log and interproc_config.interproc_text_log_handle is not None:
             f = interproc_config.interproc_text_log_handle
             f.write(
-                "[PID: %x] NtCreateProcess: %s - PID: %x - CR3: %x\n" % (proc.get_pid(),
+                "[PID: %08x] NtCreateProcess: %s - PID: %x - CR3: %x\n" % (proc.get_pid(),
                                                                          str(proc_obj.ImageFileName),
                                                                          int(proc_obj.UniqueProcessId),
                                                                          int(proc_obj.Pcb.DirectoryTableBase.v())))
@@ -341,7 +341,7 @@ def ntopenprocessret(params, cm, callback_name, proc_hdl_p, proc, update_vads):
     if proc_obj is not None:
         if interproc_config.interproc_text_log and interproc_config.interproc_text_log_handle is not None:
             f = interproc_config.interproc_text_log_handle
-            f.write("[PID: %x] NtOpenProcess: %s - PID: %x - CR3: %x\n" %
+            f.write("[PID: %08x] NtOpenProcess: %s - PID: %x - CR3: %x\n" %
                     (proc.get_pid(),
                      str(proc_obj.ImageFileName),
                      int(proc_obj.UniqueProcessId),
@@ -472,20 +472,20 @@ def ntwritevirtualmemory(params, cm, proc, update_vads, reverse=False):
             if interproc_config.interproc_text_log and interproc_config.interproc_text_log_handle is not None:
                 f = interproc_config.interproc_text_log_handle
                 if TARGET_LONG_SIZE == 4:
-                    f.write("[PID: %x] NtReadVirtualMemory: PID: %x - Addr: %08x <-- PID: %x Addr: %08x / Size: %08x\n" %
+                    f.write("[PID: %08x] NtReadVirtualMemory: PID: %x - Addr: %08x <-- PID: %x Addr: %08x / Size: %08x\n" %
                             (proc.get_pid(), local_proc.get_pid(), local_addr, remote_proc.get_pid(), remote_addr, size))
                 elif TARGET_LONG_SIZE == 8:
-                    f.write("[PID: %x] NtReadVirtualMemory: PID: %x - Addr: %16x <-- PID: %x Addr: %16x / Size: %16x\n" %
+                    f.write("[PID: %08x] NtReadVirtualMemory: PID: %x - Addr: %16x <-- PID: %x Addr: %16x / Size: %16x\n" %
                             (proc.get_pid(), local_proc.get_pid(), local_addr, remote_proc.get_pid(), remote_addr, size))
         else:
             data = None
             if interproc_config.interproc_text_log and interproc_config.interproc_text_log_handle is not None:
                 f = interproc_config.interproc_text_log_handle
                 if TARGET_LONG_SIZE == 4:
-                    f.write("[PID: %x] NtWriteVirtualMemory: PID: %x - Addr: %08x --> PID: %x Addr: %08x / Size: %08x\n" %
+                    f.write("[PID: %08x] NtWriteVirtualMemory: PID: %x - Addr: %08x --> PID: %x Addr: %08x / Size: %08x\n" %
                             (proc.get_pid(), local_proc.get_pid(), local_addr, remote_proc.get_pid(), remote_addr, size))
                 elif TARGET_LONG_SIZE == 8:
-                    f.write("[PID: %x] NtWriteVirtualMemory: PID: %x - Addr: %16x --> PID: %x Addr: %16x / Size: %16x\n" %
+                    f.write("[PID: %08x] NtWriteVirtualMemory: PID: %x - Addr: %16x --> PID: %x Addr: %16x / Size: %16x\n" %
                             (proc.get_pid(), local_proc.get_pid(), local_addr, remote_proc.get_pid(), remote_addr, size))
 
         inj = Injection(remote_proc, remote_addr,
@@ -595,24 +595,24 @@ def ntreadfile(params, cm, proc, update_vads, is_write=False):
         local_proc = proc
 
         if not is_write:
-            op = FileRead(file_instance, local_proc, offset, length, None)
+            op = FileRead(file_instance, local_proc, buff, offset, length, None)
             if interproc_config.interproc_text_log and interproc_config.interproc_text_log_handle is not None:
                 f = interproc_config.interproc_text_log_handle
                 if TARGET_LONG_SIZE == 4:
-                    f.write("[PID: %x] NtReadFile: Offset: %08x Size: %08x / %s\n" %
+                    f.write("[PID: %08x] NtReadFile: Offset: %08x Size: %08x / %s\n" %
                             (proc.get_pid(), offset, length, str(file_obj.FileName)))
                 elif TARGET_LONG_SIZE == 8:
-                    f.write("[PID: %x] NtReadFile: Offset: %16x Size: %16x / %s\n" %
+                    f.write("[PID: %08x] NtReadFile: Offset: %16x Size: %16x / %s\n" %
                             (proc.get_pid(), offset, length, str(file_obj.FileName)))
         else:
-            op = FileWrite(file_instance, local_proc, offset, length, None)
+            op = FileWrite(file_instance, local_proc, buff, offset, length, None)
             if interproc_config.interproc_text_log and interproc_config.interproc_text_log_handle is not None:
                 f = interproc_config.interproc_text_log_handle
                 if TARGET_LONG_SIZE == 4:
-                    f.write("[PID: %x] NtWriteFile: Offset: %08x Size: %08x / %s\n" %
+                    f.write("[PID: %08x] NtWriteFile: Offset: %08x Size: %08x / %s\n" %
                             (proc.get_pid(), offset, length, str(file_obj.FileName)))
                 elif TARGET_LONG_SIZE == 8:
-                    f.write("[PID: %x] NtWriteFile: Offset: %16x Size: %16x / %s\n" %
+                    f.write("[PID: %08x] NtWriteFile: Offset: %16x Size: %16x / %s\n" %
                             (proc.get_pid(), offset, length, str(file_obj.FileName)))
 
         file_instance.add_operation(op)
@@ -691,10 +691,10 @@ def ntmapviewofsection_ret(params,
     if interproc_config.interproc_text_log and interproc_config.interproc_text_log_handle is not None:
         f = interproc_config.interproc_text_log_handle
         if TARGET_LONG_SIZE == 4:
-            f.write("[PID: %x] NtMapViewOfSection: Base: %08x Size: %08x Offset: %08x / Section: %s\n" %
+            f.write("[PID: %08x] NtMapViewOfSection: Base: %08x Size: %08x Offset: %08x / Section: %s\n" %
                     (proc.get_pid(), base, size, offset, mapped_sec.get_backing_file()))
         elif TARGET_LONG_SIZE == 8:
-            f.write("[PID: %x] NtMapViewOfSection: Base: %16x Size: %16x Offset: %08x / Section: %s\n" %
+            f.write("[PID: %08x] NtMapViewOfSection: Base: %16x Size: %16x Offset: %08x / Section: %s\n" %
                     (proc.get_pid(), base, size, offset, mapped_sec.get_backing_file()))
 
     if update_vads:
@@ -874,10 +874,10 @@ def ntunmapviewofsection(params, cm, proc, update_vads):
                 if interproc_config.interproc_text_log and interproc_config.interproc_text_log_handle is not None:
                     f = interproc_config.interproc_text_log_handle
                     if (TARGET_LONG_SIZE == 4):
-                        f.write("[PID: %x] NtUnmapViewOfSection: Base: %08x Size: %08x / Section: %s\n" %
+                        f.write("[PID: %08x] NtUnmapViewOfSection: Base: %08x Size: %08x / Section: %s\n" %
                                 (proc.get_pid(), base, m.get_size(), m.get_section().get_backing_file()))
                     elif (TARGET_LONG_SIZE == 8):
-                        f.write("[PID: %x] NtUnmapViewOfSection: Base: %16x Size: %16x / Section: %s\n" %
+                        f.write("[PID: %08x] NtUnmapViewOfSection: Base: %16x Size: %16x / Section: %s\n" %
                                 (proc.get_pid(), base, m.get_size(), m.get_section().get_backing_file()))
 
     if update_vads:
@@ -953,10 +953,10 @@ def ntvirtualprotect(params, cm, proc, update_vads):
     if interproc_config.interproc_text_log and interproc_config.interproc_text_log_handle is not None:
         f = interproc_config.interproc_text_log_handle
         if TARGET_LONG_SIZE == 4:
-            f.write("[PID: %x] NtVirtualProtect: Base: %08x Size: %08x NewProtect: %08x\n" %
+            f.write("[PID: %08x] NtVirtualProtect: Base: %08x Size: %08x NewProtect: %08x\n" %
                     (proc.get_pid(), base_addr, size, new_access))
         elif TARGET_LONG_SIZE == 8:
-            f.write("[PID: %x] NtVirtualProtect: Base: %016x Size: %016x NewProtect: %016x\n" %
+            f.write("[PID: %08x] NtVirtualProtect: Base: %016x Size: %016x NewProtect: %016x\n" %
                     (proc.get_pid(), base_addr, size, new_access))
     if update_vads:
         proc.update_vads()
@@ -1004,10 +1004,10 @@ def ntallocatevirtualmemory_ret(params,
     if interproc_config.interproc_text_log and interproc_config.interproc_text_log_handle is not None:
         f = interproc_config.interproc_text_log_handle
         if TARGET_LONG_SIZE == 4:
-            f.write("[PID: %x] NtAllocateVirtualMemory: Base: %08x Size: %08x Protect: %08x\n" %
+            f.write("[PID: %08x] NtAllocateVirtualMemory: Base: %08x Size: %08x Protect: %08x\n" %
                     (proc.get_pid(), base, size, access))
         elif TARGET_LONG_SIZE == 8:
-            f.write("[PID: %x] NtAllocateVirtualMemory: Base: %016x Size: %016x Protect: %016x\n" %
+            f.write("[PID: %08x] NtAllocateVirtualMemory: Base: %016x Size: %016x Protect: %016x\n" %
                     (proc.get_pid(), base, size, access))
 
     if update_vads:

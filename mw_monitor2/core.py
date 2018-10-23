@@ -311,7 +311,7 @@ class Process:
 
     def add_file_operation(self, operation):
         global interproc_data
-        self.__file_operations.add(operation)
+        self.__file_operations.append(operation)
         if isinstance(operation, FileRead):
             interproc_data.deliver_file_read_callback(operation)
         elif isinstance(operation, FileWrite):
@@ -604,12 +604,13 @@ class Injection:
 
 class FileOperation(object):
 
-    def __init__(self, file_inst, proc, offset, size, data):
+    def __init__(self, file_inst, proc, buffer_addr, offset, size, data):
         self.__file_inst = file_inst
         self.__proc = proc
         self.__offset = offset
         self.__size = size
         self.__data = data
+        self.__buffer_addr = buffer_addr
 
     def get_file(self):
         return self.__file_inst
@@ -626,14 +627,17 @@ class FileOperation(object):
     def get_data(self):
         return self.__data
 
+    def get_buffer_addr(self):
+        return self.__buffer_addr
+
     def __str__(self):
         return "%s:%s - %08x(%08x bytes)" % (str(self.__proc), str(self.__file_inst), self.__offset, self.__size)
 
 
 class FileRead(FileOperation, object):
 
-    def __init__(self, file_inst, proc, offset, size, data):
-        super(FileRead, self).__init__(file_inst, proc, offset, size, data)
+    def __init__(self, file_inst, proc, buffer_addr, offset, size, data):
+        super(FileRead, self).__init__(file_inst, proc, buffer_addr,  offset, size, data)
 
     def __str__(self):
         res = "File Read: %s" % super(FileRead, self).__str__()
@@ -642,8 +646,8 @@ class FileRead(FileOperation, object):
 
 class FileWrite(FileOperation, object):
 
-    def __init__(self, file_inst, proc, offset, size, data):
-        super(FileWrite, self).__init__(file_inst, proc, offset, size, data)
+    def __init__(self, file_inst, proc, buffer_addr, offset, size, data):
+        super(FileWrite, self).__init__(file_inst, proc, buffer_addr, offset, size, data)
 
     def __str__(self):
         res = "File Write: %s" % super(FileWrite, self).__str__()
@@ -657,7 +661,7 @@ class File:
         self.__file_operations = []
 
     def add_operation(self, op):
-        self.file_operations.append(op)
+        self.__file_operations.append(op)
 
     def get_file_name(self):
         return self.__file_name
@@ -848,3 +852,4 @@ class SectionMap:
 
     def deactivate(self):
         self.__active = False
+        interproc_data.deliver_section_unmap_callback(self)

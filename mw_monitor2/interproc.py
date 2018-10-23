@@ -80,6 +80,7 @@ class InterprocData():
         self.__remote_memory_read_callbacks = []
         self.__remote_memory_write_callbacks = []
         self.__section_map_callbacks = []
+        self.__section_unmap_callbacks = []
 
         # More callbacks
         self.__load_module_callbacks = []
@@ -104,6 +105,9 @@ class InterprocData():
 
     def register_section_map_callback(self, cb):
         self.__section_map_callbacks.append(cb)
+
+    def register_section_unmap_callback(self, cb):
+        self.__section_unmap_callbacks.append(cb)
     
     def register_load_module_callback(self, cb):
         self.__load_module_callbacks.append(cb)
@@ -130,6 +134,9 @@ class InterprocData():
     def remove_section_map_callback(self, cb):
         self.__section_map_callbacks.remove(cb)
 
+    def remove_section_unmap_callback(self, cb):
+        self.__section_unmap_callbacks.remove(cb)
+
     def remove_load_module_callback(self, cb):
         self.__load_module_callbacks.remove(cb)
 
@@ -154,6 +161,10 @@ class InterprocData():
     def deliver_section_map_callback(self, section_map):
         for cb in self.__section_map_callbacks:
             cb(section_map)
+    def deliver_section_unmap_callback(self, section_map):
+        for cb in self.__section_unmap_callbacks:
+            cb(section_map)
+
 
     def deliver_load_module_callback(self, param):
         for cb in self.__load_module_callbacks:
