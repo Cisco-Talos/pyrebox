@@ -134,7 +134,4 @@ if ! [ -f qemu/x86_64-softmmu/qemu-system-x86_64 ]; then
     echo -e "${RED}\n[!] Oops... build failed!${NC}\n"
     exit 1
 fi
-echo -e "${GREEN}\n[*] Creating symbolic links...${NC}\n"
-ln -sf qemu/i386-softmmu/qemu-system-i386 pyrebox-i386
-ln -sf qemu/x86_64-softmmu/qemu-system-x86_64 pyrebox-x86_64
 echo -e "${GREEN}\n\n[*] Done, enjoy!${NC}"
