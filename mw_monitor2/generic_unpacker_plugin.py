@@ -62,6 +62,7 @@ def memory_dump_callback(params):
     pgd = params["pgd"]
     page_status_w = params["page_status_w"]
     page_status_x = params["page_status_x"]
+    dump_path = params["dump_path"]
 
     pyrebox_print("On memory dump callback...")
 

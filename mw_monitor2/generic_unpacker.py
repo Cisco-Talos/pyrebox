@@ -126,13 +126,19 @@ def generate_dump(pgd, reason):
     global pyrebox_print
     global current_layer
     global dump_counter
+    global page_status_x
+    global page_status_w
 
     f = open(os.path.join(UNPACKER_DUMP_PATH, "dump_list.txt"), "a")
     f.write("DUMP %d - Layer %d - Reason: %s\n" % (dump_counter, current_layer, reason))
-    dump([pgd], pyrebox_print, path = os.path.join(UNPACKER_DUMP_PATH, "dump_%d_layer-%d" % (dump_counter, current_layer)))
-    dump_counter += 1
     f.close()
-
+    dump([pgd], pyrebox_print, path = os.path.join(UNPACKER_DUMP_PATH, "dump_%d_layer-%d" % (dump_counter, current_layer)))
+    if pgd not in page_status_x:
+        page_status_x[pgd] = {}
+    if pgd not in page_status_w:
+        page_status_w[pgd] = {}
+    deliver_memory_dump_callback({"pgd": pgd, "page_status_x": page_status_x[pgd], "page_status_w": page_status_w[pgd], "dump_path": os.path.join(UNPACKER_DUMP_PATH, "dump_%d_layer-%d" % (dump_counter, current_layer))})
+    dump_counter += 1
 
 def mem_write(params):
     '''
@@ -261,7 +267,7 @@ def block_exec(params):
 
             generate_dump(pgd, "Transition to previously written memory page(s)")
 
-            deliver_memory_dump_callback({"pgd": pgd, "page_status_x": page_status_x[pgd], "page_status_w": page_status_w[pgd]})
+            
     else:
         # Update page status (execution)
         page_status_x[pgd][page] = current_layer
