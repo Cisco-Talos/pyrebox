@@ -69,6 +69,8 @@ documentation:
 
 #We place these 2 rules so that we can compile more comfortably from this directory
 all: 
+	rm -f pyrebox-i386
+	rm -f pyrebox-x86_64
 	cp -f .pyrebox-i386 pyrebox-i386
 	cp -f .pyrebox-x86_64 pyrebox-x86_64
 	@[ ! -f ./sleuthkit/Makefile ] && ./build.sh --reconfigure || true
