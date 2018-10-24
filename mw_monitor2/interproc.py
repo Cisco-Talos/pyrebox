@@ -392,14 +392,17 @@ def add_module(proc, params):
                 pp_print("Adding breakpoint at %s:%s %x:%x from process with PID %x\n" %
                               (mod, fun, bp.get_addr(), pgd, pid))
 
-    # Main module of the process
-    elif name.lower() == proc.get_proc_name():
+
+    # Main module of the process. Only set entry point callback if it has not been set already.
+    # In some cases the main module gets reloaded.
+    elif name.lower() == proc.get_proc_name() and pgd not in entry_point_bps:
         # Set a breakpoint on the EP
         entry_point_bps[pgd] = api.BP(base, 
                                 pgd, 
                                 size = size, 
                                 new_style = True, 
                                 func = functools.partial(module_entry_point, proc))
+
         entry_point_bps[pgd].enable()
 
 
@@ -413,6 +416,7 @@ def module_loaded(proc, params):
     '''
         LOADMODULE_CB, for every created process
     '''
+    global pyrebox_print
     #pid = params["pid"]
     #pgd = params["pgd"]
     #base = params["base"]
@@ -420,7 +424,6 @@ def module_loaded(proc, params):
     #name = params["name"]
     #fullname = params["fullname"]
     add_module(proc, params)
-
 
 def tlb_exec(target_proc, params):
     '''
