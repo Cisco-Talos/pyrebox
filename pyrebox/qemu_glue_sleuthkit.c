@@ -80,7 +80,8 @@ void pyrebox_bdrv_open(void *opaque){
     } else {
         utils_print("[*] Found volume system of type %s at %lx, number of partitions: %d\n", tsk_vs_type_todesc(vs->vstype), vs->offset, vs->part_count);
     }
-    for (int i = 0; i < vs->part_count; ++i){
+    int i;
+    for (i = 0; i < vs->part_count; ++i){
         const TSK_VS_PART_INFO* pi = tsk_vs_part_get(vs, i);
         utils_print("    [#] Partition %d - Start sector: %lx - Number of sectors: %lx - Desc: %s\n", i, pi->start, pi->len, pi->desc);
         if (pi != NULL){
@@ -158,16 +159,17 @@ QEMU_GLUE_TSK_PATH_INFO* qemu_glue_tsk_ls(unsigned int fs_number, char* path){
             }
             res->info.dir_info.number_of_filenames = fs_dir->names_used;
             //Zero out
-            for (int i = 0; i < fs_dir->names_used; ++i){
+            int i; 
+            for (i = 0; i < fs_dir->names_used; ++i){
                 res->info.dir_info.filenames[i] = NULL;
             }
             //Copy filenames
-            for (int i = 0; i < fs_dir->names_used; ++i){
+            for (i = 0; i < fs_dir->names_used; ++i){
                 res->info.dir_info.filenames[i] = (char*) malloc(fs_dir->names[i].name_size);
                 if(res->info.dir_info.filenames[i] == NULL){
                     utils_print_error("[!] Could not allocate structure QEMU_GLUE_TSK_PATH_INFO\n");
                     // Free allocated names
-                    for (int i = 0; i < fs_dir->names_used; ++i){
+                    for (i = 0; i < fs_dir->names_used; ++i){
                         if (res->info.dir_info.filenames[i] != NULL){
                             free(res->info.dir_info.filenames[i]);
                             res->info.dir_info.filenames[i] = NULL;
@@ -240,7 +242,8 @@ void qemu_glue_tsk_free_path_info(QEMU_GLUE_TSK_PATH_INFO* path_info){
         if(path_info->type == QEMU_GLUE_TSK_DIR){
             if(path_info->info.dir_info.filenames != NULL){
                 // Free allocated names
-                for (int i = 0; i < path_info->info.dir_info.number_of_filenames; ++i){
+                int i; 
+                for (i = 0; i < path_info->info.dir_info.number_of_filenames; ++i){
                     if (path_info->info.dir_info.filenames[i] != NULL){
                         free(path_info->info.dir_info.filenames[i]);
                         path_info->info.dir_info.filenames[i] = NULL;
@@ -318,7 +321,8 @@ void pyrebox_test_read_disk(void){
     if (pi == NULL){
         printf("Could not obtain path info\n");
     } else {
-        for(int i = 0; i < pi->info.dir_info.number_of_filenames; i++){
+        int i;
+        for(i = 0; i < pi->info.dir_info.number_of_filenames; i++){
             printf("Filename: %s\n", pi->info.dir_info.filenames[i]);
         }
         qemu_glue_tsk_free_path_info(pi);
