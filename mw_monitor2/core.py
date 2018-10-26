@@ -474,13 +474,11 @@ class Process:
 
         self.__unpickled = True
 
-    def print_stats(self, file_name):
+    def print_stats(self, f):
         '''
             Prints some basic statistics about processes.
         '''
         self.update_from_peb()
-
-        f = open("%s_%x" % (file_name, self.__pid), "w")
 
         f.write("BASIC INFORMATION\n")
         f.write("=================\n\n")
@@ -557,7 +555,8 @@ class Process:
                 out_str += " %s" % (str(smap.get_section().get_backing_file()))
             out_str += "\n"
             f.write(out_str)
-        f.close()
+
+        f.write("\n" * 8)
 
 
 class Injection:

@@ -262,8 +262,10 @@ def interproc_basic_stats():
     global interproc_data
     import traceback
     try:
+        f = open(interproc_config.interproc_basic_stats_name, "w")
         for proc in interproc_data.get_processes():
-            proc.print_stats(interproc_config.interproc_basic_stats_name)
+            proc.print_stats(f)
+        f.close()
     except Exception:
         traceback.print_exc()
         pp_error(traceback.print_stack())
@@ -549,23 +551,15 @@ def initialize_callbacks(module_hdl, printer):
     try:
         pyrebox_print("[*]    Reading configuration file")
         #Read AutoRun configuration file (json)
-        f = open(os.environ["MW_MONITOR2_CONF_PATH"], "r")
+        f = open(os.environ["MWMONITOR_INTERPROC_CONF_PATH"], "r")
         conf = json.load(f)
         f.close()
-        if "interproc" in conf:
-            interproc_config.interproc_bin_log = conf["interproc"].get("bin_log", False)
-            interproc_config.interproc_text_log = conf["interproc"].get("text_log", False)
-            interproc_config.interproc_basic_stats = conf["interproc"].get("basic_stats", False)
-            interproc_config.interproc_text_log_name = conf["interproc"].get("text_log_path", "interproc.log")
-            interproc_config.interproc_basic_stats_name = conf["interproc"].get("basic_stats_path", "basic_stats")
-            interproc_config.interproc_bin_log_name = conf["interproc"].get("bin_log_path", "interproc.bin")
-        else:
-            interproc_config.interproc_bin_log = False
-            interproc_config.interproc_text_log = False
-            interproc_config.interproc_basic_stats = False
-            interproc_config.interproc_text_log_name = "interproc.log"
-            interproc_config.interproc_basic_stats_name = "basic_stats"
-            interproc_config.interproc_bin_log_name = "interproc.bin"
+        interproc_config.interproc_bin_log = conf.get("bin_log", False)
+        interproc_config.interproc_text_log = conf.get("text_log", False)
+        interproc_config.interproc_basic_stats = conf.get("basic_stats", False)
+        interproc_config.interproc_text_log_name = conf.get("text_log_path", "interproc.log")
+        interproc_config.interproc_basic_stats_name = conf.get("basic_stats_path", "basic_stats")
+        interproc_config.interproc_bin_log_name = conf.get("bin_log_path", "interproc.bin")
 
         
         interproc_config.interproc_text_log_handle = open(interproc_config.interproc_text_log_name, "w")
