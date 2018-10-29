@@ -193,6 +193,13 @@ class InterprocData():
         else:
             return None
 
+    def get_process_by_pgd(self, pgd):
+        for p in self.__procs.values():
+            if p.get_pgd() == pgd:
+                return p
+        else:
+            return None
+
     def get_processes(self):
         return self.__procs.values()
 

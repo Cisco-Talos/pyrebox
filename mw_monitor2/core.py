@@ -274,6 +274,8 @@ class Process:
     def set_name(self, name):
         self.__proc_name = name
 
+    def get_proc_num(self):
+        return self.__proc_num
     def get_pgd(self):
         return self.__pgd
 
@@ -435,6 +437,9 @@ class Process:
 
                     if new_vad not in self.__vads:
                         self.__vads.append(new_vad)
+
+    def locate_nearest_symbol(self, pc):
+        return None
 
     def __getstate__(self):
         '''
