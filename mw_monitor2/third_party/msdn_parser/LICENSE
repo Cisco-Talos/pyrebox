@@ -1,0 +1,19 @@
+PROJECT
+
+    msdn_crawler
+    https://github.com/zynamics/msdn-crawler
+    https://code.google.com/p/zynamics.msdn-crawler/
+
+LICENSE
+
+    GPLv2
+
+AFFECTED FILES
+
+    zynamics_msdn_crawler.py
+        Modified file with respecto to the original
+        project. Updated to collect information about 
+        the direction of parameters (in/out)
+    msdn_populated.xml
+        Generated with the zynamics_msdn_crawler.py
+        file.

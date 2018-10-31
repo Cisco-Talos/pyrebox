@@ -40,58 +40,7 @@ PAGE_READONLY = 0x02
 PAGE_READWRITE = 0x04
 PAGE_WRITECOPY = 0x08
 
-# TODO: Replace, put this on the rest of individual modules
-class MwMonitor():
-    '''
-    Class that holds all the main structures to monitor the execution of the sample
-    '''
-    def __init__(self):
-        # Callback manager
-        self.cm = None
-        # Plugin printer
-        self.printer = None
-        # API doc database
-        self.db = None
-        # BP counter used to hook API call returns
-        self.bp_counter = 0
-
-        # Output bundle name
-        self.output_bundle_name = None
-
-        # Module activation status
-        self.api_tracer = False
-        self.interproc = False
-        self.coverage = False
-        self.dumper = False
-        self.api_tracer_text_log = False
-        self.api_tracer_bin_log = False
-
-        self.api_tracer_text_log_name = "function_calls.log"
-        self.api_tracer_bin_log_name = "function_calls.bin"
-        self.api_tracer_procs = None
-
-        self.coverage_log_name = "coverage.bin"
-        self.coverage_procs = None
-
-        self.dumper_onexit = True
-        self.dumper_dumpat = None
-        self.dumper_path = "./"
-
-        # List of API calls to trace
-        self.include_apis = None
-        self.exclude_apis = None
-        self.exclude_modules = None
-        self.include_apis_addrs = None
-        self.exclude_apis_addrs = None
-        self.exclude_modules_addrs = None
-        self.exclude_origin_modules = None
-        self.exclude_origin_modules_addrs = None
-
-        # data
-        self.data = InterprocData()
-
 # ======================================     CLASSES       ===============
-
 
 class VADRegion(object):
     '''
@@ -114,6 +63,9 @@ class VADRegion(object):
 
         # Map for page permissions
         self.__permissions = []
+
+        # API calls from the VAD. Only populated by the api_tracer plugin
+        self.__calls = []
 
         initial_page_prot = 0
 
@@ -201,6 +153,12 @@ class VADRegion(object):
     def get_potentially_injected(self):
         return self.__potentially_injected
 
+    def get_calls(self):
+        return self.__calls
+
+    def add_call(self, call):
+        self.__calls.append(call)
+
     def __eq__(self, other):
         return (self.__start == other.__start and self.__size == other.__size)
 
@@ -237,6 +195,41 @@ class VADRegion(object):
     def __hash__(self):
         return hash(tuple(self))
 
+class Symbol:
+
+    def __init__(self, mod, fun, addr):
+        self.__mod = mod
+        self.__fun = fun
+        self.__addr = addr
+
+    def get_mod(self):
+        return self.__mod
+
+    def get_fun(self):
+        return self.__fun
+
+    def get_addr(self):
+        return self.__addr
+
+    def __lt__(self, other):
+        return self.__addr < other.get_addr()
+
+    def __le__(self, other):
+        return self.__addr <= other.get_addr()
+
+    def __eq__(self, other):
+        return self.__addr == other.get_addr()
+
+    def __ne__(self, other):
+        return self.__addr != other.get_addr()
+
+    def __gt__(self, other):
+        return self.__addr > other.get_addr()
+
+    def __ge__(self, other):
+        return self.__addr >= other.get_addr()
+
+
 class Process:
     proc_counter = 0
 
@@ -264,6 +257,19 @@ class Process:
         # Exited. Indicates that process has already exited.
         self.__exited = False
 
+        self.__symbols = []
+        self.__other_calls = []
+        self.__all_calls = []
+
+
+    def get_symbols(self):
+        return self.__symbols
+
+    def get_all_calls(self):
+        return self.__all_calls
+
+    def get_other_calls(self):
+        return self.__other_calls
 
     def set_pgd(self, pgd):
         self.__pgd = pgd
@@ -328,6 +334,13 @@ class Process:
         elif (base, size) not in self.__modules[name]:
             self.__modules[name].append((base, size))
 
+    def get_overlapping_module(self, addr):
+        for mod_name in self.__modules:
+            for base,size in self.__modules[mod_name]:
+                if base >= addr and addr < (base + size):
+                    return mod_name
+        return None
+
     def get_overlapping_vad(self, addr):
         '''
         Get the VAD overlapping the address
@@ -368,6 +381,28 @@ class Process:
                 task.Peb.ProcessParameters.CurrentDirectory.DosPath or '')
             self.__image_path = str(
                 task.Peb.ProcessParameters.ImagePathName or '')
+
+    def update_symbols(self):
+        import api
+        from api import CallbackManager
+
+        if self.__unpickled:
+            return
+
+        syms = api.get_symbol_list()
+
+        for d in syms:
+            mod = d["mod"]
+            fun = d["name"]
+            addr = d["addr"]
+
+            pos = bisect.bisect_left(self.__symbols, Symbol("", "", addr))
+            if pos >= 0 and pos < len(self.__symbols) and self.__symbols[pos].get_addr() == addr:
+                continue
+            if mod in self.__modules:
+                for pair in self.__modules[mod]:
+                    bisect.insort(
+                        self.__symbols, Symbol(mod, fun, pair[0] + addr))
 
     def update_vads(self):
         '''
@@ -438,8 +473,34 @@ class Process:
                     if new_vad not in self.__vads:
                         self.__vads.append(new_vad)
 
-    def locate_nearest_symbol(self, pc):
-        return None
+    def add_call(self, addr_from, addr_to, data):
+        '''
+        Add a function call to the corresponding VAD
+        '''
+        if self.__unpickled:
+            return
+        vad = self.get_overlapping_vad(addr_from)
+        if vad is None:
+            self.update_vads()
+            vad = self.get_overlapping_vad(addr_from)
+            if vad is None:
+                self.__other_calls.append((addr_from, addr_to, data))
+                return
+        vad.add_call((addr_from, addr_to, data))
+        self.__all_calls.append((addr_from, addr_to, data))
+
+
+    def locate_nearest_symbol(self, addr):
+        pos = bisect.bisect_left(self.__symbols, Symbol("", "", addr))
+        if pos < 0 or pos >= len(self.__symbols):
+            return None
+        # If the exact match is not located, go to the nearest (lower) address
+        if self.__symbols[pos].get_addr() != addr:
+            pos -= 1
+        if (addr - self.__symbols[pos].get_addr()) < 0x32 and (addr - self.__symbols[pos].get_addr()) >= 0:
+            return self.__symbols[pos]
+        else:
+            return None
 
     def __getstate__(self):
         '''
@@ -450,11 +511,9 @@ class Process:
                 self.__pgd,
                 self.__pid,
                 self.__modules,
-                #self.min_mod_addr,
-                #self.max_mod_addr,
-                #self.symbols,
+                self.__symbols,
                 self.__vads,
-                #self.other_calls,
+                self.__other_calls,
                 self.__injections,
                 self.__file_operations,
                 self.__section_maps)
@@ -468,11 +527,9 @@ class Process:
          self.__pgd,
          self.__pid,
          self.__modules,
-         #self.min_mod_addr,
-         #self.max_mod_addr,
-         #self.symbols,
+         self.__symbols,
          self.__vads,
-         #self.other_calls,
+         self.__other_calls,
          self.__injections,
          self.__file_operations,
          self.__section_maps) = state
