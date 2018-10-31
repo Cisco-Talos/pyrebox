@@ -92,6 +92,10 @@ Enable usb support
 ::
   -usb
 
+If the host(local) mouse pointer isn't properly synchronized with guest(remote) mouse pointer, add
+::
+  -device usb-tablet
+
 You can specify main image file with unsafe caching. Unsafe caching will make snapshoting much faster
 ::
   -drive file=images/xpsp3.qcow,index=0,media=disk,format=qcow2,cache=unsafe

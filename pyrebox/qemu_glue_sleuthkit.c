@@ -64,13 +64,14 @@ void pyrebox_bdrv_open(void *opaque){
 
     void* bs = blk_bs((BlockBackend *)opaque);
     TSK_IMG_INFO* img = tsk_img_open(1, (const char **) &opaque, QEMU_IMG, 0);
-    img->size = img_size;
 
-    if (img==NULL) {
+    if (img == NULL) {
         utils_print_error("[!] Error while opening image\n");
         tsk_error_print(stdout);
         return;
     }
+
+    img->size = img_size;
 
     TSK_VS_INFO* vs = tsk_vs_open(img, 0, TSK_VS_TYPE_DETECT);
     if (!vs){
