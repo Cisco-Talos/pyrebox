@@ -66,7 +66,6 @@ APITRACER_RULES = {}
 APITRACER_LIGHT_MODE = True 
 APITRACER_DATABASE = None
 
-
 def serialize_calls():
     from interproc import interproc_data
     global pyrebox_print
@@ -96,10 +95,10 @@ def log_calls():
                 if len(vad.get_calls()) > 0:
                     if TARGET_LONG_SIZE == 4:
                         f_out.write(
-                            "\n\nVAD [%08x - %08x]\n\n" % (vad.get_start(), vad.get_size()))
+                            "\n\nVAD [%08x - %08x] - %s\n\n" % (vad.get_start(), vad.get_size()), (vad.get_mapped_file() if vad.get_mapped_file() is not None else "Not file mapped"))
                     elif TARGET_LONG_SIZE == 8:
                         f_out.write(
-                            "\n\nVAD [%016x - %016x]\n\n" % (vad.get_start(), vad.get_size()))
+                            "\n\nVAD [%016x - %016x] - %s\n\n" % (vad.get_start(), vad.get_size()), (vad.get_mapped_file() if vad.get_mapped_file() is not None else "Not file mapped"))
                     for data in vad.get_calls():
                         f_out.write("%s" % data[2].__str__())
 
