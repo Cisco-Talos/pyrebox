@@ -4,7 +4,14 @@ Quick start
 ===========
 
 .. _documentation: https://en.wikibooks.org/wiki/QEMU/Networking#SMB_server
+.. _GitHub: https://github.com/Cisco-Talos/pyrebox
 
+Fetching PyREBox
+----------------
+
+You should always download PyREBox from either the *master* or *dev* branches in GitHub_. Please clone the repository
+using *git clone* instead of downloading the zip/tar package, as the git metadata contains important information for
+downloading and installing required submodules during the installation process.
 
 Building PyREBox
 ----------------
