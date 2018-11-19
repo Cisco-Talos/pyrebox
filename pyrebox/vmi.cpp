@@ -127,108 +127,113 @@ void vmi_tlb_callback(pyrebox_target_ulong new_pgd, pyrebox_target_ulong vaddr){
     }
 }
 
+int profile_starts_with(const char* a, const char* b, unsigned int max_length){
+    int length = strlen(b) > max_length ? max_length : strlen(b);
+    return strncmp(a, b, length);
+}
+
 void vmi_init(const char* prof){
-    strncpy(vol_profile,prof,MAX_PROFILE_LEN);
-    if (strncmp(vol_profile,"'VistaSP0x64'",MAX_PROFILE_LEN) == 0){
+    strncpy(vol_profile, prof, MAX_PROFILE_LEN);
+    if (profile_starts_with(vol_profile,"'VistaSP0x64",MAX_PROFILE_LEN) == 0){
         os_index = VistaSP0x64;
     }
-    else if(strncmp(vol_profile,"'VistaSP0x86'",MAX_PROFILE_LEN) == 0){
+    else if(profile_starts_with(vol_profile,"'VistaSP0x86",MAX_PROFILE_LEN) == 0){
         os_index = VistaSP0x86;
     }
-    else if(strncmp(vol_profile,"'VistaSP1x64'",MAX_PROFILE_LEN) == 0){
+    else if(profile_starts_with(vol_profile,"'VistaSP1x64",MAX_PROFILE_LEN) == 0){
         os_index = VistaSP1x64;
     }
-    else if(strncmp(vol_profile,"'VistaSP1x86'",MAX_PROFILE_LEN) == 0){
+    else if(profile_starts_with(vol_profile,"'VistaSP1x86",MAX_PROFILE_LEN) == 0){
         os_index = VistaSP1x86;
     }
-    else if(strncmp(vol_profile,"'VistaSP2x64'",MAX_PROFILE_LEN) == 0){
+    else if(profile_starts_with(vol_profile,"'VistaSP2x64",MAX_PROFILE_LEN) == 0){
         os_index = VistaSP2x64;
     }
-    else if(strncmp(vol_profile,"'VistaSP2x86'",MAX_PROFILE_LEN) == 0){
+    else if(profile_starts_with(vol_profile,"'VistaSP2x86",MAX_PROFILE_LEN) == 0){
         os_index = VistaSP2x86;
     }
-    else if(strncmp(vol_profile,"'Win10x64'",MAX_PROFILE_LEN) == 0){
+    else if(profile_starts_with(vol_profile,"'Win10x64",MAX_PROFILE_LEN) == 0){
         os_index = VistaSP2x64;
     }
-    else if(strncmp(vol_profile,"'Win10x86'",MAX_PROFILE_LEN) == 0){
+    else if(profile_starts_with(vol_profile,"'Win10x86",MAX_PROFILE_LEN) == 0){
         os_index = VistaSP2x86;
     }
-    else if(strncmp(vol_profile,"'Win2003SP0x86'",MAX_PROFILE_LEN) == 0){
+    else if(profile_starts_with(vol_profile,"'Win2003SP0x86",MAX_PROFILE_LEN) == 0){
         os_index = Win2003SP0x86;
     }
-    else if(strncmp(vol_profile,"'Win2003SP1x64'",MAX_PROFILE_LEN) == 0){
+    else if(profile_starts_with(vol_profile,"'Win2003SP1x64",MAX_PROFILE_LEN) == 0){
         os_index = Win2003SP1x64;
     }
-    else if(strncmp(vol_profile,"'Win2003SP1x86'",MAX_PROFILE_LEN) == 0){
+    else if(profile_starts_with(vol_profile,"'Win2003SP1x86",MAX_PROFILE_LEN) == 0){
         os_index = Win2003SP1x86;
     }
-    else if(strncmp(vol_profile,"'Win2003SP2x64'",MAX_PROFILE_LEN) == 0){
+    else if(profile_starts_with(vol_profile,"'Win2003SP2x64",MAX_PROFILE_LEN) == 0){
         os_index = Win2003SP2x64;
     }
-    else if(strncmp(vol_profile,"'Win2003SP2x86'",MAX_PROFILE_LEN) == 0){
+    else if(profile_starts_with(vol_profile,"'Win2003SP2x86",MAX_PROFILE_LEN) == 0){
         os_index = Win2003SP2x86;
     }
-    else if(strncmp(vol_profile,"'Win2008R2SP0x64'",MAX_PROFILE_LEN) == 0){
+    else if(profile_starts_with(vol_profile,"'Win2008R2SP0x64",MAX_PROFILE_LEN) == 0){
         os_index = Win2008R2SP0x64;
     }
-    else if(strncmp(vol_profile,"'Win2008R2SP1x64'",MAX_PROFILE_LEN) == 0){
+    else if(profile_starts_with(vol_profile,"'Win2008R2SP1x64",MAX_PROFILE_LEN) == 0){
         os_index = Win2008R2SP1x64;
     }
-    else if(strncmp(vol_profile,"'Win2008SP1x64'",MAX_PROFILE_LEN) == 0){
+    else if(profile_starts_with(vol_profile,"'Win2008SP1x64",MAX_PROFILE_LEN) == 0){
         os_index = Win2008SP1x64;
     }
-    else if(strncmp(vol_profile,"'Win2008SP1x86'",MAX_PROFILE_LEN) == 0){
+    else if(profile_starts_with(vol_profile,"'Win2008SP1x86",MAX_PROFILE_LEN) == 0){
         os_index = Win2008SP1x86;
     }
-    else if(strncmp(vol_profile,"'Win2008SP2x64'",MAX_PROFILE_LEN) == 0){
+    else if(profile_starts_with(vol_profile,"'Win2008SP2x64",MAX_PROFILE_LEN) == 0){
         os_index = Win2008SP2x64;
     }
-    else if(strncmp(vol_profile,"'Win2008SP2x86'",MAX_PROFILE_LEN) == 0){
+    else if(profile_starts_with(vol_profile,"'Win2008SP2x86",MAX_PROFILE_LEN) == 0){
         os_index = Win2008SP2x86;
     }
-    else if(strncmp(vol_profile,"'Win2012R2x64'",MAX_PROFILE_LEN) == 0){
+    else if(profile_starts_with(vol_profile,"'Win2012R2x64",MAX_PROFILE_LEN) == 0){
         os_index = Win2012R2x64;
     }
-    else if(strncmp(vol_profile,"'Win2012x64'",MAX_PROFILE_LEN) == 0){
+    else if(profile_starts_with(vol_profile,"'Win2012x64",MAX_PROFILE_LEN) == 0){
         os_index = Win2012x64;
     }
-    else if(strncmp(vol_profile,"'Win7SP0x64'",MAX_PROFILE_LEN) == 0){
+    else if(profile_starts_with(vol_profile,"'Win7SP0x64",MAX_PROFILE_LEN) == 0){
         os_index = Win7SP0x64;
     }
-    else if(strncmp(vol_profile,"'Win7SP0x86'",MAX_PROFILE_LEN) == 0){
+    else if(profile_starts_with(vol_profile,"'Win7SP0x86",MAX_PROFILE_LEN) == 0){
         os_index = Win7SP0x86;
     }
-    else if(strncmp(vol_profile,"'Win7SP1x64'",MAX_PROFILE_LEN) == 0){
+    else if(profile_starts_with(vol_profile,"'Win7SP1x64",MAX_PROFILE_LEN) == 0){
         os_index = Win7SP1x64;
     }
-    else if(strncmp(vol_profile,"'Win7SP1x86'",MAX_PROFILE_LEN) == 0){
+    else if(profile_starts_with(vol_profile,"'Win7SP1x86",MAX_PROFILE_LEN) == 0){
         os_index = Win7SP1x86;
     }
-    else if(strncmp(vol_profile,"'Win8SP0x64'",MAX_PROFILE_LEN) == 0){
+    else if(profile_starts_with(vol_profile,"'Win8SP0x64",MAX_PROFILE_LEN) == 0){
         os_index = Win8SP0x64;
     }
-    else if(strncmp(vol_profile,"'Win8SP0x86'",MAX_PROFILE_LEN) == 0){
+    else if(profile_starts_with(vol_profile,"'Win8SP0x86",MAX_PROFILE_LEN) == 0){
         os_index = Win8SP0x86;
     }
-    else if(strncmp(vol_profile,"'Win8SP1x64'",MAX_PROFILE_LEN) == 0){
+    else if(profile_starts_with(vol_profile,"'Win8SP1x64",MAX_PROFILE_LEN) == 0){
         os_index = Win8SP1x64;
     }
-    else if(strncmp(vol_profile,"'Win8SP1x86'",MAX_PROFILE_LEN) == 0){
+    else if(profile_starts_with(vol_profile,"'Win8SP1x86",MAX_PROFILE_LEN) == 0){
         os_index = Win8SP1x86;
     }
-    else if(strncmp(vol_profile,"'WinXPSP1x64'",MAX_PROFILE_LEN) == 0){
+    else if(profile_starts_with(vol_profile,"'WinXPSP1x64",MAX_PROFILE_LEN) == 0){
         os_index = WinXPSP1x64;
     }
-    else if(strncmp(vol_profile,"'WinXPSP2x64'",MAX_PROFILE_LEN) == 0){
+    else if(profile_starts_with(vol_profile,"'WinXPSP2x64",MAX_PROFILE_LEN) == 0){
         os_index = WinXPSP2x64;
     }
-    else if(strncmp(vol_profile,"'WinXPSP2x86'",MAX_PROFILE_LEN) == 0){
+    else if(profile_starts_with(vol_profile,"'WinXPSP2x86",MAX_PROFILE_LEN) == 0){
         os_index = WinXPSP2x86;
     }
-    else if(strncmp(vol_profile,"'WinXPSP3x86'",MAX_PROFILE_LEN) == 0){
+    else if(profile_starts_with(vol_profile,"'WinXPSP3x86",MAX_PROFILE_LEN) == 0){
         os_index = WinXPSP3x86;
     }
-    else if(strncmp(vol_profile,"'Linux",6) == 0){
+    else if(profile_starts_with(vol_profile,"'Linux",6) == 0){
         if (strstr(vol_profile,"x86'")){
             os_index = Linuxx86;
         } else if (strstr(vol_profile,"x64'")){
