@@ -1017,7 +1017,7 @@ class CallbackManager:
             :return: True if the callback already exists
             :rtype: bool
         """
-        return (name in self.callbacks) or (name in self.module_load_callbacks) or (name in self.module_remove_callbacks)
+        return (name in self.callbacks) or (name in self.load_module_callbacks) or (name in self.remove_module_callbacks)
 
     def add_trigger(self, name, trigger_path):
         ''' Add trigger to a callback.
