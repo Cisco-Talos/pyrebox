@@ -18,12 +18,13 @@
 # along with Volatility.  If not, see <http://www.gnu.org/licenses/>.
 #
 
-import struct, copy
+import struct
 import volatility.obj as obj
 import volatility.addrspace as addrspace
 import volatility.constants as constants
 import volatility.utils as utils
 import volatility.plugins.overlays.windows.win8 as win8
+import volatility.plugins.overlays.windows.windows as windows_main
 import volatility.plugins.patchguard as patchguard
 import volatility.registry as registry
 
@@ -85,26 +86,24 @@ class VolatilityKDBG(obj.VolatilityMagic):
         return buffer
 
     def unique_sizes(self):
+    	"""Determine the possible KDBG sizes to scan for, across all 
+    	profiles Win8 x64 and above. We do this by reflecting back on 
+    	the profile modifications to see which ones would trigger and
+    	then grabbing the KDBG size."""
     
-        items = registry.get_plugin_classes(obj.Profile).items()
+        items = registry.get_plugin_classes(windows_main.AbstractKDBGMod).items()
         sizes = set()
         
         for name, cls in items:
-            if (cls._md_os != "windows" or cls._md_memory_model != "64bit"):
+            try:
+                if (not cls.conditions["os"]("windows") or 
+                        not cls.conditions["major"](6)):
+                    continue
+
+                sizes.add(cls.kdbgsize)
+            except:
                 continue
-                
-            #if (cls._md_major, cls._md_minor) < (6, 2):
-            #    continue 
-                
-            conf = copy.deepcopy(self.obj_vm.get_config())
-            conf.PROFILE = name 
-            buff = addrspace.BufferAddressSpace(config = conf)
-            header = obj.VolMagic(buff).KDBGHeader.v()
-            
-            # this unpacks the kdbgsize from the signature 
-            size = struct.unpack("<H", header[-2:])[0]
-            sizes.add(size)
-            
+
         return sizes
 
     def copy_data_block(self, full_addr):
@@ -161,8 +160,24 @@ class VolatilityKDBG(obj.VolatilityMagic):
         wait_always = None
         # nt!KdpDataBlockEncoded
         block_encoded = None
-
+        
+        # collect instructions up to the first RET
+        before_ret = []
+        # we need a bswap instruction to be valid
+        found_bswap = False
+        
         for op in ops:
+        	if op.mnemonic == "BSWAP":
+        		found_bswap = True
+        	elif op.mnemonic == "RET":
+        		break
+        	else:
+        		before_ret.append(op)
+        		
+        if not found_bswap:
+        	return obj.NoneObject("No bswap instruction found")
+
+        for op in before_ret:
             # cmp cs:KdpDataBlockEncoded, 0
             if (not block_encoded and op.mnemonic == "CMP" and 
                         op.operands[0].type == "AbsoluteMemory" and 
@@ -202,13 +217,11 @@ class VolatilityKDBG(obj.VolatilityMagic):
                                         offset = offset,
                                         vm = addr_space)
                 break
-            elif op.mnemonic == "RET":
-                break
 
         # check if we've found all the required offsets 
         if (block_encoded != None 
                     and kdbg_block != None 
-                    and wait_never != None 
+                    and wait_never != None
                     and wait_always != None):
             
             # some acquisition tools decode the KDBG block but leave 
@@ -237,9 +250,10 @@ class VolatilityKDBG(obj.VolatilityMagic):
             kdbg.newattr('wait_never', wait_never)
             kdbg.newattr('wait_always', wait_always)                    
 
-            return kdbg
-        else:
-            return obj.NoneObject("Cannot find decoding entropy values")
+            if kdbg.Header.OwnerTag == 0x4742444b:
+                return kdbg
+                
+        return obj.NoneObject("Cannot find decoding entropy values")
 
     def generate_suggestions(self):
         """Generates a list of possible KDBG structure locations"""
