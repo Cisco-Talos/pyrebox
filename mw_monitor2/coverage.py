@@ -258,8 +258,6 @@ def initialize_callbacks(module_hdl, printer):
         return
     
     try:
-        # Initialize log
-        init_log()
         # Initialize process creation callback
         pyrebox_print("[*]    Initializing callbacks")
         interproc_data.register_entry_point_callback(module_entry_point)

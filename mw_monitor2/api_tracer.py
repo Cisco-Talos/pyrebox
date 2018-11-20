@@ -66,6 +66,10 @@ APITRACER_RULES = {}
 APITRACER_LIGHT_MODE = True 
 APITRACER_DATABASE = None
 
+APITRACER_ANTI_STOLEN = False
+APITRACER_ENABLE_JMP = False
+APITRACER_ENABLE_RET = False
+
 def serialize_calls():
     from interproc import interproc_data
     global pyrebox_print
@@ -94,11 +98,9 @@ def log_calls():
             for vad in proc.get_vads():
                 if len(vad.get_calls()) > 0:
                     if TARGET_LONG_SIZE == 4:
-                        f_out.write(
-                            "\n\nVAD [%08x - %08x] - %s\n\n" % (vad.get_start(), vad.get_size()), (vad.get_mapped_file() if vad.get_mapped_file() is not None else "Not file mapped"))
+                        f_out.write( "\n\nVAD [%08x - %08x] - %s\n\n" % (vad.get_start(), vad.get_size(), (vad.get_mapped_file() if vad.get_mapped_file() is not None else "Not file mapped")))
                     elif TARGET_LONG_SIZE == 8:
-                        f_out.write(
-                            "\n\nVAD [%016x - %016x] - %s\n\n" % (vad.get_start(), vad.get_size()), (vad.get_mapped_file() if vad.get_mapped_file() is not None else "Not file mapped"))
+                        f_out.write("\n\nVAD [%016x - %016x] - %s\n\n" % (vad.get_start(), vad.get_size(), (vad.get_mapped_file() if vad.get_mapped_file() is not None else "Not file mapped")))
                     for data in vad.get_calls():
                         f_out.write("%s" % data[2].__str__())
 
@@ -250,6 +252,7 @@ def opcodes(params, cb_name, proc):
     global bp_counter
     global APITRACER_DATABASE
     global APITRACER_RULES
+    global APITRACER_ANTI_STOLEN
 
     TARGET_LONG_SIZE = api.get_os_bits() / 8
 
@@ -260,16 +263,17 @@ def opcodes(params, cb_name, proc):
     pgd = api.get_running_process(cpu_index)
 
     try:
-        pyrebox_print("Opcode at address %x" % next_pc)
-        # Locate nearest lower symbol
-        sym = proc.locate_nearest_symbol(next_pc)
+        if APITRACER_ANTI_STOLEN:
+            # Locate nearest lower symbol
+            sym = proc.locate_nearest_symbol(next_pc)
+        else:
+            sym = proc.locate_nearest_symbol(next_pc, tolerate_offset = 0x0)
+
         if sym is None:
             return
         mod = sym.get_mod()
         fun = sym.get_fun()
         real_api_addr = sym.get_addr()
-
-        pyrebox_print(" --> %s %s %x" % (mod, fun, real_api_addr))
 
         # Reduce FP's by checking that the origin EIP is not also within the
         # same module (code reuse inside the dll)
@@ -302,8 +306,6 @@ def opcodes(params, cb_name, proc):
         # Apply default policy if not matched: 
         if not matched and APITRACER_RULES["policy"] == "reject":
             return
-
-        pyrebox_print("Adding call...")
 
         # Set callback on return address
         if TARGET_LONG_SIZE == 4:
@@ -350,7 +352,7 @@ def opcodes(params, cb_name, proc):
             argument_parser = ArgumentParser(cpu, cpu.RSP, mod, fun)
 
         if not argument_parser.in_db():
-            pyrebox_print("API function not present in db: %s - %s" % (mod, fun))
+            #pyrebox_print("API function not present in db: %s - %s" % (mod, fun))
             return
 
         data.set_in_args([arg for arg in argument_parser.get_in_args()])
@@ -358,9 +360,6 @@ def opcodes(params, cb_name, proc):
         # Add the call as soon as it is produced, and update
         # the output parameters on return
         proc.add_call(pc, real_api_addr, data)
-        if fun.lower() == "sleepex":
-            from ipython_shell import start_shell
-            start_shell()
 
         # If return address could not be read, we skip the callback
         if ret_addr != 0:
@@ -409,6 +408,10 @@ def module_entry_point(params):
     '''
         Callback on the entry point of the main module being monitored
     '''
+    global APITRACER_ANTI_STOLEN
+    global APITRACER_ENABLE_JMP
+    global APITRACER_ENABLE_RET
+
     global cm
     global pyrebox_print
     import os
@@ -429,7 +432,7 @@ def module_entry_point(params):
 
     pyrebox_print("Initializing API tracer for process %x" % pgd)
     
-    cb_func = functools.partial(opcodes, proc=new_proc)
+    cb_func = functools.partial(opcodes, proc = new_proc)
 
     #E8 cw   CALL rel16  Call near, relative, displacement relative to next instruction
     #E8 cd   CALL rel32  Call near, relative, displacement relative to next instruction
@@ -444,15 +447,45 @@ def module_entry_point(params):
     cm.add_callback(CallbackManager.OPCODE_RANGE_CB, functools.partial(cb_func, cb_name="call_ff_%x" % pid), name="call_ff_%x" % pid, start_opcode=0xFF, end_opcode=0xFF)
     cm.add_callback(CallbackManager.OPCODE_RANGE_CB, functools.partial(cb_func, cb_name="call_9a_%x" % pid), name="call_9a_%x" % pid, start_opcode=0x9A, end_opcode=0x9A)
 
+    cm.add_trigger("call_e8_%x" % pid, "mw_monitor2/trigger_jmp_call_ret_tracer.so")
+    cm.set_trigger_var("call_e8_%x" % pid, "pgd", pgd)
+    cm.set_trigger_var("call_e8_%x" % pid, "enable_ff_jmp", 1 if APITRACER_ENABLE_JMP else 0)
+
+    cm.add_trigger("call_ff_%x" % pid, "mw_monitor2/trigger_jmp_call_ret_tracer.so")
+    cm.set_trigger_var("call_ff_%x" % pid, "pgd", pgd)
+    cm.set_trigger_var("call_ff_%x" % pid, "enable_ff_jmp", 1 if APITRACER_ENABLE_JMP else 0)
+
+    cm.add_trigger("call_9a_%x" % pid, "mw_monitor2/trigger_jmp_call_ret_tracer.so")
+    cm.set_trigger_var("call_9a_%x" % pid, "pgd", pgd)
+    cm.set_trigger_var("call_9a_%x" % pid, "enable_ff_jmp", 1 if APITRACER_ENABLE_JMP else 0)
+
     #C3 RET NP Valid Valid Near return to calling procedure.
     #CB RET NP Valid Valid Far return to calling procedure.
     #C2 iw RET imm16 I Valid Valid Near return to calling procedure and pop imm16 bytes from stack.
     #CA iw RET imm16 I Valid Valid Far return to calling procedure and pop imm16 bytes from stack.
 
-    cm.add_callback(CallbackManager.OPCODE_RANGE_CB, functools.partial(cb_func, cb_name="ret_c3_%x" % pid), name="ret_c3_%x" % pid, start_opcode=0xC3, end_opcode=0xC3)
-    cm.add_callback(CallbackManager.OPCODE_RANGE_CB, functools.partial(cb_func, cb_name="ret_cb_%x" % pid), name="ret_cb_%x" % pid, start_opcode=0xCB, end_opcode=0xCB)
-    cm.add_callback(CallbackManager.OPCODE_RANGE_CB, functools.partial(cb_func, cb_name="ret_c2_%x" % pid), name="ret_c2_%x" % pid, start_opcode=0xC2, end_opcode=0xC2)
-    cm.add_callback(CallbackManager.OPCODE_RANGE_CB, functools.partial(cb_func, cb_name="ret_ca_%x" % pid), name="ret_ca_%x" % pid, start_opcode=0xCA, end_opcode=0xCA)
+    if APITRACER_ENABLE_RET:
+        cm.add_callback(CallbackManager.OPCODE_RANGE_CB, functools.partial(cb_func, cb_name="ret_c3_%x" % pid), name="ret_c3_%x" % pid, start_opcode=0xC3, end_opcode=0xC3)
+        cm.add_callback(CallbackManager.OPCODE_RANGE_CB, functools.partial(cb_func, cb_name="ret_cb_%x" % pid), name="ret_cb_%x" % pid, start_opcode=0xCB, end_opcode=0xCB)
+        cm.add_callback(CallbackManager.OPCODE_RANGE_CB, functools.partial(cb_func, cb_name="ret_c2_%x" % pid), name="ret_c2_%x" % pid, start_opcode=0xC2, end_opcode=0xC2)
+        cm.add_callback(CallbackManager.OPCODE_RANGE_CB, functools.partial(cb_func, cb_name="ret_ca_%x" % pid), name="ret_ca_%x" % pid, start_opcode=0xCA, end_opcode=0xCA)
+
+        cm.add_trigger("ret_c3_%x" % pid, "mw_monitor2/trigger_jmp_call_ret_tracer.so")
+        cm.set_trigger_var("ret_c3_%x" % pid, "pgd", pgd)
+        cm.set_trigger_var("ret_c3_%x" % pid, "enable_ff_jmp", 1 if APITRACER_ENABLE_JMP else 0)
+
+        cm.add_trigger("ret_cb_%x" % pid, "mw_monitor2/trigger_jmp_call_ret_tracer.so")
+        cm.set_trigger_var("ret_cb_%x" % pid, "pgd", pgd)
+        cm.set_trigger_var("ret_cb_%x" % pid, "enable_ff_jmp", 1 if APITRACER_ENABLE_JMP else 0)
+
+        cm.add_trigger("ret_c2_%x" % pid, "mw_monitor2/trigger_jmp_call_ret_tracer.so")
+        cm.set_trigger_var("ret_c2_%x" % pid, "pgd", pgd)
+        cm.set_trigger_var("ret_c2_%x" % pid, "enable_ff_jmp", 1 if APITRACER_ENABLE_JMP else 0)
+
+        cm.add_trigger("ret_ca_%x" % pid, "mw_monitor2/trigger_jmp_call_ret_tracer.so")
+        cm.set_trigger_var("ret_ca_%x" % pid, "pgd", pgd)
+        cm.set_trigger_var("ret_ca_%x" % pid, "enable_ff_jmp", 1 if APITRACER_ENABLE_JMP else 0)
+
 
     #EB cb JMP rel8       Jump short, RIP = RIP + 8-bit displacement sign extended to 64-bits
     #E9 cw JMP rel16      Jump near, relative, displacement relative to next instruction. Not supported in 64-bit mode.
@@ -465,40 +498,23 @@ def module_entry_point(params):
     #FF /5 JMP m16:16     Jump far, absolute indirect, address given in m16:16
     #FF /5 JMP m16:32     Jump far, absolute indirect, address given in m16:32.
     #FF /5 JMP m16:64     Jump far, absolute indirect, address given in m16:64
-    cm.add_callback(CallbackManager.OPCODE_RANGE_CB, functools.partial(cb_func, cb_name="jmp_e9_%x" % pid), name="jmp_e9_%x" % pid, start_opcode=0xE9, end_opcode=0xE9)
-    cm.add_callback(CallbackManager.OPCODE_RANGE_CB, functools.partial(cb_func, cb_name="jmp_ea_%x" % pid), name="jmp_ea_%x" % pid, start_opcode=0xEA, end_opcode=0xEA)
-    cm.add_callback(CallbackManager.OPCODE_RANGE_CB, functools.partial(cb_func, cb_name="jmp_eb_%x" % pid), name="jmp_eb_%x" % pid, start_opcode=0xEB, end_opcode=0xEB)
 
+    if APITRACER_ENABLE_JMP:
+        cm.add_callback(CallbackManager.OPCODE_RANGE_CB, functools.partial(cb_func, cb_name="jmp_e9_%x" % pid), name="jmp_e9_%x" % pid, start_opcode=0xE9, end_opcode=0xE9)
+        cm.add_callback(CallbackManager.OPCODE_RANGE_CB, functools.partial(cb_func, cb_name="jmp_ea_%x" % pid), name="jmp_ea_%x" % pid, start_opcode=0xEA, end_opcode=0xEA)
+        cm.add_callback(CallbackManager.OPCODE_RANGE_CB, functools.partial(cb_func, cb_name="jmp_eb_%x" % pid), name="jmp_eb_%x" % pid, start_opcode=0xEB, end_opcode=0xEB)
 
-    cm.add_trigger("call_e8_%x" % pid, "mw_monitor2/trigger_jmp_call_ret_tracer.so")
-    cm.set_trigger_var("call_e8_%x" % pid, "pgd", pgd)
+        cm.add_trigger("jmp_e9_%x" % pid, "mw_monitor2/trigger_jmp_call_ret_tracer.so")
+        cm.set_trigger_var("jmp_e9_%x" % pid, "pgd", pgd)
+        cm.set_trigger_var("jmp_e9_%x" % pid, "enable_ff_jmp", 1 if APITRACER_ENABLE_JMP else 0)
 
-    cm.add_trigger("call_ff_%x" % pid, "mw_monitor2/trigger_jmp_call_ret_tracer.so")
-    cm.set_trigger_var("call_ff_%x" % pid, "pgd", pgd)
+        cm.add_trigger("jmp_ea_%x" % pid, "mw_monitor2/trigger_jmp_call_ret_tracer.so")
+        cm.set_trigger_var("jmp_ea_%x" % pid, "pgd", pgd)
+        cm.set_trigger_var("jmp_ea_%x" % pid, "enable_ff_jmp", 1 if APITRACER_ENABLE_JMP else 0)
 
-    cm.add_trigger("call_9a_%x" % pid, "mw_monitor2/trigger_jmp_call_ret_tracer.so")
-    cm.set_trigger_var("call_9a_%x" % pid, "pgd", pgd)
-
-    cm.add_trigger("ret_c3_%x" % pid, "mw_monitor2/trigger_jmp_call_ret_tracer.so")
-    cm.set_trigger_var("ret_c3_%x" % pid, "pgd", pgd)
-
-    cm.add_trigger("ret_cb_%x" % pid, "mw_monitor2/trigger_jmp_call_ret_tracer.so")
-    cm.set_trigger_var("ret_cb_%x" % pid, "pgd", pgd)
-
-    cm.add_trigger("ret_c2_%x" % pid, "mw_monitor2/trigger_jmp_call_ret_tracer.so")
-    cm.set_trigger_var("ret_c2_%x" % pid, "pgd", pgd)
-
-    cm.add_trigger("ret_ca_%x" % pid, "mw_monitor2/trigger_jmp_call_ret_tracer.so")
-    cm.set_trigger_var("ret_ca_%x" % pid, "pgd", pgd)
-
-    cm.add_trigger("jmp_e9_%x" % pid, "mw_monitor2/trigger_jmp_call_ret_tracer.so")
-    cm.set_trigger_var("jmp_e9_%x" % pid, "pgd", pgd)
-
-    cm.add_trigger("jmp_ea_%x" % pid, "mw_monitor2/trigger_jmp_call_ret_tracer.so")
-    cm.set_trigger_var("jmp_ea_%x" % pid, "pgd", pgd)
-
-    cm.add_trigger("jmp_eb_%x" % pid, "mw_monitor2/trigger_jmp_call_ret_tracer.so")
-    cm.set_trigger_var("jmp_eb_%x" % pid, "pgd", pgd)
+        cm.add_trigger("jmp_eb_%x" % pid, "mw_monitor2/trigger_jmp_call_ret_tracer.so")
+        cm.set_trigger_var("jmp_eb_%x" % pid, "pgd", pgd)
+        cm.set_trigger_var("jmp_eb_%x" % pid, "enable_ff_jmp", 1 if APITRACER_ENABLE_JMP else 0)
 
     # Start monitoring process
     api.start_monitoring_process(pgd)
@@ -540,6 +556,10 @@ def initialize_callbacks(module_hdl, printer):
     global APITRACER_RULES
     global APITRACER_LIGHT_MODE
     global APITRACER_DATABASE
+    global APITRACER_ANTI_STOLEN
+    global APITRACER_ENABLE_JMP
+    global APITRACER_ENABLE_RET
+
     global interproc_data
 
     pyrebox_print = printer
@@ -583,6 +603,23 @@ def initialize_callbacks(module_hdl, printer):
 
         APITRACER_DATABASE = conf_data.get("database_path", None)
         set_db_path(APITRACER_DATABASE)
+
+        # Tracing engine configuration
+        if "anti_stolen_bytes" in conf_data:
+            APITRACER_ANTI_STOLEN = conf_data["anti_stolen_bytes"]
+        else:
+            APITRACER_ANTI_STOLEN = False
+
+        if "enable_jmp_tracing" in conf_data:
+            APITRACER_ENABLE_JMP = conf_data["enable_jmp_tracing"]
+        else:
+            APITRACER_ENABLE_JMP = False
+        
+        if "enable_ret_tracing" in conf_data:
+            APITRACER_ENABLE_RET = conf_data["enable_ret_tracing"] 
+        else:
+            APITRACER_ENABLE_RET = False
+
 
         if APITRACER_BIN_LOG_PATH is None or APITRACER_TEXT_LOG_PATH is None:
             raise ValueError("The json configuration file is not well-formed: fields missing?")

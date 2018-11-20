@@ -40,6 +40,7 @@ using namespace std;
 extern "C"{
     int function_declared = 0;
     pyrebox_target_ulong target_pgd = 0;
+    pyrebox_target_ulong enable_ff_jmp = 0;
 
     // Define trigger type. This type is checked when trigger is loaded
     callback_type_t get_type(){
@@ -62,6 +63,7 @@ extern "C"{
     int trigger(callback_handle_t handle, callback_params_t params){
         if (function_declared == 0){
             target_pgd = *((pyrebox_target_ulong*) get_var(handle,"pgd"));
+            enable_ff_jmp = *((pyrebox_target_ulong*) get_var(handle, "enable_ff_jmp"));
             function_declared = 1;
         }
 
@@ -114,9 +116,9 @@ extern "C"{
                                 // CALL
                                 set_opcode_var(handle, buffer[found]);
                                 return 1;
-                            } else if (reg == 0x20 || reg == 0x28) {
-                                //buffer[found] 
-                                // JMP 
+                            } else if ((reg == 0x20 || reg == 0x28) && enable_ff_jmp > 0) {
+                                //buffer[found]
+                                // JMP
                                 set_opcode_var(handle, buffer[found]);
                                 return 1;
                             } else {

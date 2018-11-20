@@ -337,7 +337,7 @@ class Process:
     def get_overlapping_module(self, addr):
         for mod_name in self.__modules:
             for base,size in self.__modules[mod_name]:
-                if base >= addr and addr < (base + size):
+                if addr >= base and addr < (base + size):
                     return mod_name
         return None
 
@@ -490,14 +490,21 @@ class Process:
         self.__all_calls.append((addr_from, addr_to, data))
 
 
-    def locate_nearest_symbol(self, addr):
+    def locate_nearest_symbol(self, addr, tolerate_offset = 0x32):
         pos = bisect.bisect_left(self.__symbols, Symbol("", "", addr))
         if pos < 0 or pos >= len(self.__symbols):
             return None
+
+        if self.__symbols[pos].get_addr() == addr:
+            return self.__symbols[pos]
+
         # If the exact match is not located, go to the nearest (lower) address
+        if tolerate_offset == 0:
+            return None
+
         if self.__symbols[pos].get_addr() != addr:
             pos -= 1
-        if (addr - self.__symbols[pos].get_addr()) < 0x32 and (addr - self.__symbols[pos].get_addr()) >= 0:
+        if (addr - self.__symbols[pos].get_addr()) < tolerate_offset and (addr - self.__symbols[pos].get_addr()) >= 0:
             return self.__symbols[pos]
         else:
             return None
