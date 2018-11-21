@@ -276,67 +276,77 @@ def windows_update_modules(pgd, update_symbols=False):
             list_entry_size = None
             list_entry_regions = []
 
+            scan_peb = True
             if task.Peb is None or not task.Peb.is_valid():
                 if isinstance(task.Peb.obj_offset, int):
                     list_entry_regions.append((task.obj_offset, task.Peb.obj_offset, task.Peb.size()))
-
-                if symbol_cache_must_be_saved:
-                    from vmi import save_symbols_to_cache_file
-                    save_symbols_to_cache_file()
-                    symbol_cache_must_be_saved = False
-
-                return list_entry_regions
+                scan_peb = False
 
             if task.Peb.Ldr is None or not task.Peb.Ldr.is_valid():
                 list_entry_regions.append((task.Peb.v(), task.Peb.Ldr.obj_offset, task.Peb.Ldr.size()))
+                scan_peb = False
 
-                if symbol_cache_must_be_saved:
-                    from vmi import save_symbols_to_cache_file
-                    save_symbols_to_cache_file()
-                    symbol_cache_must_be_saved = False
+            if scan_peb:
+                # Add the initial list pointer as a list entry if we already have a PEB and LDR
+                list_entry_regions.append((task.Peb.Ldr.dereference().obj_offset, task.Peb.Ldr.InLoadOrderModuleList.obj_offset, task.Peb.Ldr.InLoadOrderModuleList.size() * 3))
+                
+                # Note: we do not erase the modules we have information for from the list,
+                # unless we have a different module loaded at the same base address.
+                # In this way, if at some point the module gets unmapped from the PEB list
+                # but it is still in memory, we do not loose the information.
 
-                return list_entry_regions
+                if (p_pid, p_pgd) not in modules:
+                    modules[(p_pid, p_pgd)] = {}
 
-            # Add the initial list pointer as a list entry if we already have a PEB and LDR
-            list_entry_regions.append((task.Peb.Ldr.dereference().obj_offset, task.Peb.Ldr.InLoadOrderModuleList.obj_offset, task.Peb.Ldr.InLoadOrderModuleList.size() * 3))
-            
-            # Note: we do not erase the modules we have information for from the list,
-            # unless we have a different module loaded at the same base address.
-            # In this way, if at some point the module gets unmapped from the PEB list
-            # but it is still in memory, we do not loose the information.
+                # Mark all modules as non-present
+                set_modules_non_present(p_pid, p_pgd)
 
-            if (p_pid, p_pgd) not in modules:
-                modules[(p_pid, p_pgd)] = {}
+                for module in task.get_init_modules():
+                    if module.DllBase not in inserted_bases:
+                        inserted_bases.append(module.DllBase)
+                        windows_insert_module(p_pid, p_pgd, module, update_symbols)
+                        if list_entry_size is None:
+                            list_entry_size = module.InLoadOrderLinks.size()
+                        list_entry_regions.append((module.obj_offset, module.InLoadOrderLinks.obj_offset, list_entry_size * 3))
 
-            # Mark all modules as non-present
-            set_modules_non_present(p_pid, p_pgd)
+                for module in task.get_mem_modules():
+                    if module.DllBase not in inserted_bases:
+                        inserted_bases.append(module.DllBase)
+                        windows_insert_module(p_pid, p_pgd, module, update_symbols)
+                        if list_entry_size is None:
+                            list_entry_size = module.InLoadOrderLinks.size()
+                        list_entry_regions.append((module.obj_offset, module.InLoadOrderLinks.obj_offset, list_entry_size * 3))
 
-            for module in task.get_init_modules():
-                if module.DllBase not in inserted_bases:
-                    inserted_bases.append(module.DllBase)
-                    windows_insert_module(p_pid, p_pgd, module, update_symbols)
-                    if list_entry_size is None:
-                        list_entry_size = module.InLoadOrderLinks.size()
-                    list_entry_regions.append((module.obj_offset, module.InLoadOrderLinks.obj_offset, list_entry_size * 3))
+                for module in task.get_load_modules():
+                    if module.DllBase not in inserted_bases:
+                        inserted_bases.append(module.DllBase)
+                        windows_insert_module(p_pid, p_pgd, module, update_symbols)
+                        if list_entry_size is None:
+                            list_entry_size = module.InLoadOrderLinks.size()
+                        list_entry_regions.append((module.obj_offset, module.InLoadOrderLinks.obj_offset, list_entry_size * 3))
 
-            for module in task.get_mem_modules():
-                if module.DllBase not in inserted_bases:
-                    inserted_bases.append(module.DllBase)
-                    windows_insert_module(p_pid, p_pgd, module, update_symbols)
-                    if list_entry_size is None:
-                        list_entry_size = module.InLoadOrderLinks.size()
-                    list_entry_regions.append((module.obj_offset, module.InLoadOrderLinks.obj_offset, list_entry_size * 3))
+                # Now, if we are a 64bit system and the process is a Wow64 process, traverse VAD 
+                # to find the 32 bit modules
 
-            for module in task.get_load_modules():
-                if module.DllBase not in inserted_bases:
-                    inserted_bases.append(module.DllBase)
-                    windows_insert_module(p_pid, p_pgd, module, update_symbols)
-                    if list_entry_size is None:
-                        list_entry_size = module.InLoadOrderLinks.size()
-                    list_entry_regions.append((module.obj_offset, module.InLoadOrderLinks.obj_offset, list_entry_size * 3))
-
-            # Remove all the modules that are not marked as present
-            clean_non_present_modules(p_pid, p_pgd)
+                if api.get_os_bits() == 64 and task.IsWow64:
+                    for vad in task.VadRoot.traverse():
+                        if vad is not None:
+                            if hasattr(vad, "FileObject"):
+                                f = vad.FileObject
+                                if f is not None:
+                                    fname = f.file_name_with_device()
+                                    if fname and "Windows\\SysWOW64".lower() in fname.lower() and ".dll" == fname[-4:].lower():
+                                        fname_starts = fname.find("Windows\\SysWOW64")
+                                        fname = fname[fname_starts:]
+                                        if vad.Start not in modules[(p_pid, p_pgd)]:
+                                            windows_insert_module_internal(p_pid, p_pgd, vad.Start,
+                                                                           vad.End - vad.Start,
+                                                                           fname,
+                                                                           fname.split("\\")[-1],
+                                                                           "",
+                                                                           update_symbols)
+                # Remove all the modules that are not marked as present
+                clean_non_present_modules(p_pid, p_pgd)
 
             if symbol_cache_must_be_saved:
                 from vmi import save_symbols_to_cache_file
