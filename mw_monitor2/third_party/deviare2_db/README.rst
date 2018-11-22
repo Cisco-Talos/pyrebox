@@ -1,11 +1,17 @@
 How to generate sqlite database from deviare2
 =============================================
 
+Before generating a database, please be aware that there are
+precompiled 32 and 64 bit databases available in this repository.
+This generation process depends on an external project (Deviare2),
+and is not supported by the PyREBox development team.
+
 First, clone https://github.com/nektra/deviare2
 
 Second, go to source code, open the visual studio solution. In order to make it 
-compile with visual studio express, you will need to replace the afxres.h 
-dependency (MFC) on DbGenerator.rc.
+compile with Visual Studio Community, you will need to replace the afxres.h 
+dependency (MFC) on DbGenerator.rc, and other source files it you find any related
+error during compialation.
 ::
     diff --git a/Source/Database/Generator/DbGenerator.rc b/Source/Database/Generator/DbGenerator.rc
     index ee77252..a8e4eab 100644
@@ -50,8 +56,27 @@ Third, patch the DbGenerator.cpp to make it generate the sqlite database in a fi
      //-----------------------------------------------------------
 
 
-Finally, compile the DbGenerator project, and then under the directory 
-Database/DbBuilder/ run build_db32, or build_db64. It will take some time, be patient.
+Finally, compile the DbGenerator, DbMerge, and HeaderFix projects. For this, 
+you may need to compile support libraries (SqLiteLib, Lz4Lib), and to retarget
+the solution if you are using the Windows 10 SDK.
+
+Generate the headers used to generate the database. Under Deviare2/Database/HeaderBuilder
+::
+build32.bat Full
+build64.bat Full
+
+This may produce some errors for missing header files. Edit Deviare2/Database/HeaderBuilder/Full/headers.h
+to remove or comment the lines causing errors.
+
+Build the database, on Deviare2/Database/DbBuilder/ run
+::
+build_db32.bat
+build_db64.bat 
+
+It will take some time, be patient. This might as well produce syntax errors, introduced during the header
+generation. Fix them one by one, manually.
+
+
 
 This database lacks information about which parameters are input and output 
 parameters, but (at least part of) this information can be obtained from the 
