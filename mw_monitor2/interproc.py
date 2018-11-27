@@ -57,6 +57,10 @@ pyrebox_print = None
 interproc_breakpoints = []
 entry_point_bps = {}
 
+breakpoints = {}
+bp_funcs = {}
+
+
 # Lists of exported callbacks
 
 # Classes to hold module configuration and data
@@ -318,6 +322,8 @@ def add_module(proc, params):
     global cm
     global interproc_breakpoints
     global entry_point_bps
+    global breakpoints
+    global bp_funcs
 
     from utils import ConfigurationManager as conf_m
     import api
@@ -346,98 +352,138 @@ def add_module(proc, params):
     from interproc_callbacks import ntvirtualprotect
     from interproc_callbacks import ntallocatevirtualmemory
 
-    breakpoints = {}
-    bp_funcs = {}
 
     # Add callbacks, if ntdll is loaded
     if "windows/syswow64/ntdll.dll" in fullname.lower():
-        # Dictionary to store breakpoints for the following APIs:
-        breakpoints = {("windows/syswow64/ntdll.dll", "ZwOpenProcess"): None,
-                            ("windows/syswow64/ntdll.dll", "ZwReadFile"): None,
-                            ("windows/syswow64/ntdll.dll", "ZwWriteFile"): None,
-                            ("windows/syswow64/ntdll.dll", "ZwMapViewOfSection"): None,
-                            ("windows/syswow64/ntdll.dll", "ZwUnmapViewOfSection"): None,
-                            ("windows/syswow64/ntdll.dll", "ZwWriteVirtualMemory"): None,
-                            ("windows/syswow64/ntdll.dll", "ZwReadVirtualMemory"): None,
-                            ("windows/syswow64/ntdll.dll", "ZwProtectVirtualMemory"): None,
-                            ("windows/syswow64/ntdll.dll", "NtAllocateVirtualMemory"): None }
-
-        # Dictionary that maps dll-function name to breakpoint callbacks and boolean
+        # breakpoints - Dictionary to store breakpoints for the following APIs:
+        # bp_funcs - Dictionary that maps dll-function name to breakpoint callbacks and boolean
         # that tells whether the VAD list for the process must be updated after the call
         # or not.
-        bp_funcs = {
-            ("windows/syswow64/ntdll.dll", "ZwOpenProcess"): (ntopenprocess, True, 4),
-            ("windows/syswow64/ntdll.dll", "ZwReadFile"): (ntreadfile, False, 4),
-            ("windows/syswow64/ntdll.dll", "ZwWriteFile"): (ntwritefile, False, 4),
-            ("windows/syswow64/ntdll.dll", "ZwMapViewOfSection"): (ntmapviewofsection, True, 4),
-            ("windows/syswow64/ntdll.dll", "ZwUnmapViewOfSection"): (ntunmapviewofsection, True, 4),
-            ("windows/syswow64/ntdll.dll", "ZwWriteVirtualMemory"): (ntwritevirtualmemory, False, 4),
-            ("windows/syswow64/ntdll.dll", "ZwReadVirtualMemory"): (ntreadvirtualmemory, False, 4),
-            ("windows/syswow64/ntdll.dll", "ZwProtectVirtualMemory"): (ntvirtualprotect, False, 4),
-            ("windows/syswow64/ntdll.dll", "NtAllocateVirtualMemory"): (ntallocatevirtualmemory, True, 4)}
+
+        mod_name = "windows/syswow64/ntdll.dll"
+
+        if (mod_name, "ZwOpenProcess") not in breakpoints:
+            breakpoints[(mod_name, "ZwOpenProcess")] = None
+            bp_funcs[(mod_name, "ZwOpenProcess")] = (ntopenprocess, True, 4)
+
+        if (mod_name, "ZwReadFile") not in breakpoints:
+            breakpoints[(mod_name, "ZwReadFile")] = None
+            bp_funcs[(mod_name, "ZwReadFile")] = (ntreadfile, False, 4)
+
+        if (mod_name, "ZwWriteFile") not in breakpoints:
+            breakpoints[(mod_name, "ZwWriteFile")] = None
+            bp_funcs[(mod_name, "ZwWriteFile")] = (ntwritefile, False, 4)
+
+        if (mod_name, "ZwMapViewOfSection") not in breakpoints:
+            breakpoints[(mod_name, "ZwMapViewOfSection")] = None
+            bp_funcs[(mod_name, "ZwMapViewOfSection")] = (ntmapviewofsection, True, 4)
+
+        if (mod_name, "ZwUnmapViewOfSection") not in breakpoints:
+            breakpoints[(mod_name, "ZwUnmapViewOfSection")] = None
+            bp_funcs[(mod_name, "ZwUnmapViewOfSection")] = (ntunmapviewofsection, True, 4)
+
+        if (mod_name, "ZwWriteVirtualMemory") not in breakpoints:
+            breakpoints[(mod_name, "ZwWriteVirtualMemory")] = None
+            bp_funcs[(mod_name, "ZwWriteVirtualMemory")] = (ntwritevirtualmemory, False, 4)
+
+        if (mod_name, "ZwReadVirtualMemory") not in breakpoints:
+            breakpoints[(mod_name, "ZwReadVirtualMemory")] = None
+            bp_funcs[(mod_name, "ZwReadVirtualMemory")] = (ntreadvirtualmemory, False, 4)
+
+        if (mod_name, "ZwProtectVirtualMemory") not in breakpoints:
+            breakpoints[(mod_name, "ZwProtectVirtualMemory")] = None
+            bp_funcs[(mod_name, "ZwProtectVirtualMemory")] = (ntvirtualprotect, False, 4)
+
+        if (mod_name, "NtAllocateVirtualMemory") not in breakpoints:
+            breakpoints[(mod_name, "NtAllocateVirtualMemory")] = None
+            bp_funcs[(mod_name, "NtAllocateVirtualMemory")] = (ntallocatevirtualmemory, True, 4)
 
         profile = conf_m.vol_profile
 
-        # We hook both, because although Kernel32 calls the "Ex" version, a
-        # program may call directy ZwCreateProcess
-        breakpoints[("windows/syswow64/ntdll.dll", "ZwCreateProcessEx")] = None
-        bp_funcs[("windows/syswow64/ntdll.dll", "ZwCreateProcessEx")] = (
-            ntcreateprocess, True, 4)
-        breakpoints[("windows/syswow64/ntdll.dll", "ZwCreateProcess")] = None
-        bp_funcs[("windows/syswow64/ntdll.dll", "ZwCreateProcess")] = (
-            ntcreateprocess, True, 4)
-        if not ("WinXP" in profile or "Win2003" in profile):
-            # On Vista (and onwards), kernel32.dll no longer uses
-            # ZwCreateProcess/ZwCreateProcessEx (although these function remain
-            # in ntdll.dll. It Uses ZwCreateUserProcess.
-            breakpoints[("windows/syswow64/ntdll.dll", "ZwCreateUserProcess")] = None
-            bp_funcs[("windows/syswow64/ntdll.dll", "ZwCreateUserProcess")] = (
+        if (mod_name, "ZwCreateProcessEx") not in breakpoints:
+            # We hook both, because although Kernel32 calls the "Ex" version, a
+            # program may call directy ZwCreateProcess
+            breakpoints[(mod_name, "ZwCreateProcessEx")] = None
+            bp_funcs[(mod_name, "ZwCreateProcessEx")] = (
                 ntcreateprocess, True, 4)
 
-    elif "windows/system32/ntdll.dll" in fullname.lower():
-        # Dictionary to store breakpoints for the following APIs:
-        breakpoints = {("windows/system32/ntdll.dll", "ZwOpenProcess"): None,
-                       ("windows/system32/ntdll.dll", "ZwReadFile"): None,
-                       ("windows/system32/ntdll.dll", "ZwWriteFile"): None,
-                       ("windows/system32/ntdll.dll", "ZwMapViewOfSection"): None,
-                       ("windows/system32/ntdll.dll", "ZwUnmapViewOfSection"): None,
-                       ("windows/system32/ntdll.dll", "ZwWriteVirtualMemory"): None,
-                       ("windows/system32/ntdll.dll", "ZwReadVirtualMemory"): None,
-                       ("windows/system32/ntdll.dll", "ZwProtectVirtualMemory"): None,
-                       ("windows/system32/ntdll.dll", "NtAllocateVirtualMemory"): None}
-
-        # Dictionary that maps dll-function name to breakpoint callbacks and boolean
-        # that tells whether the VAD list for the process must be updated after the call
-        # or not.
-        bp_funcs = { ("windows/system32/ntdll.dll", "ZwOpenProcess"): (ntopenprocess, True, TARGET_LONG_SIZE),
-            ("windows/system32/ntdll.dll", "ZwReadFile"): (ntreadfile, False, TARGET_LONG_SIZE),
-            ("windows/system32/ntdll.dll", "ZwWriteFile"): (ntwritefile, False, TARGET_LONG_SIZE),
-            ("windows/system32/ntdll.dll", "ZwMapViewOfSection"): (ntmapviewofsection, True, TARGET_LONG_SIZE),
-            ("windows/system32/ntdll.dll", "ZwUnmapViewOfSection"): (ntunmapviewofsection, True, TARGET_LONG_SIZE),
-            ("windows/system32/ntdll.dll", "ZwWriteVirtualMemory"): (ntwritevirtualmemory, False, TARGET_LONG_SIZE),
-            ("windows/system32/ntdll.dll", "ZwReadVirtualMemory"): (ntreadvirtualmemory, False, TARGET_LONG_SIZE),
-            ("windows/system32/ntdll.dll", "ZwProtectVirtualMemory"): (ntvirtualprotect, False, TARGET_LONG_SIZE),
-            ("windows/system32/ntdll.dll", "NtAllocateVirtualMemory"): (ntallocatevirtualmemory, True, TARGET_LONG_SIZE )}
-
-        profile = conf_m.vol_profile
-
-        # We hook both, because although Kernel32 calls the "Ex" version, a
-        # program may call directy ZwCreateProcess
-        breakpoints[("windows/system32/ntdll.dll", "ZwCreateProcessEx")] = None
-        bp_funcs[("windows/system32/ntdll.dll", "ZwCreateProcessEx")] = (
-            ntcreateprocess, True, TARGET_LONG_SIZE)
-        breakpoints[("windows/system32/ntdll.dll", "ZwCreateProcess")] = None
-        bp_funcs[("windows/system32/ntdll.dll", "ZwCreateProcess")] = (
-            ntcreateprocess, True, TARGET_LONG_SIZE)
+        if (mod_name, "ZwCreateProcess") not in breakpoints:
+            breakpoints[(mod_name, "ZwCreateProcess")] = None
+            bp_funcs[(mod_name, "ZwCreateProcess")] = (
+                ntcreateprocess, True, 4)
 
         if not ("WinXP" in profile or "Win2003" in profile):
             # On Vista (and onwards), kernel32.dll no longer uses
             # ZwCreateProcess/ZwCreateProcessEx (although these function remain
             # in ntdll.dll. It Uses ZwCreateUserProcess.
-            breakpoints[("windows/system32/ntdll.dll", "ZwCreateUserProcess")] = None
-            bp_funcs[("windows/system32/ntdll.dll", "ZwCreateUserProcess")] = (
+            if (mod_name, "ZwCreateUserProcess") not in breakpoints:
+                breakpoints[(mod_name, "ZwCreateUserProcess")] = None
+                bp_funcs[(mod_name, "ZwCreateUserProcess")] = (
+                    ntcreateprocess, True, 4)
+
+    elif "windows/system32/ntdll.dll" in fullname.lower():
+
+        mod_name = "windows/system32/ntdll.dll"
+
+        if (mod_name, "ZwOpenProcess") not in breakpoints:
+            breakpoints[(mod_name, "ZwOpenProcess")] = None
+            bp_funcs[(mod_name, "ZwOpenProcess")] = (ntopenprocess, True, TARGET_LONG_SIZE)
+
+        if (mod_name, "ZwReadFile") not in breakpoints:
+            breakpoints[(mod_name, "ZwReadFile")] = None
+            bp_funcs[(mod_name, "ZwReadFile")] = (ntreadfile, False, TARGET_LONG_SIZE)
+
+        if (mod_name, "ZwWriteFile") not in breakpoints:
+            breakpoints[(mod_name, "ZwWriteFile")] = None
+            bp_funcs[(mod_name, "ZwWriteFile")] = (ntwritefile, False, TARGET_LONG_SIZE)
+
+        if (mod_name, "ZwMapViewOfSection") not in breakpoints:
+            breakpoints[(mod_name, "ZwMapViewOfSection")] = None
+            bp_funcs[(mod_name, "ZwMapViewOfSection")] = (ntmapviewofsection, True, TARGET_LONG_SIZE)
+
+        if (mod_name, "ZwUnmapViewOfSection") not in breakpoints:
+            breakpoints[(mod_name, "ZwUnmapViewOfSection")] = None
+            bp_funcs[(mod_name, "ZwUnmapViewOfSection")] = (ntunmapviewofsection, True, TARGET_LONG_SIZE)
+
+        if (mod_name, "ZwWriteVirtualMemory") not in breakpoints:
+            breakpoints[(mod_name, "ZwWriteVirtualMemory")] = None
+            bp_funcs[(mod_name, "ZwWriteVirtualMemory")] = (ntwritevirtualmemory, False, TARGET_LONG_SIZE)
+
+        if (mod_name, "ZwReadVirtualMemory") not in breakpoints:
+            breakpoints[(mod_name, "ZwReadVirtualMemory")] = None
+            bp_funcs[(mod_name, "ZwReadVirtualMemory")] = (ntreadvirtualmemory, False, TARGET_LONG_SIZE)
+
+        if (mod_name, "ZwProtectVirtualMemory") not in breakpoints:
+            breakpoints[(mod_name, "ZwProtectVirtualMemory")] = None
+            bp_funcs[(mod_name, "ZwProtectVirtualMemory")] = (ntvirtualprotect, False, TARGET_LONG_SIZE)
+
+        if (mod_name, "NtAllocateVirtualMemory") not in breakpoints:
+            breakpoints[(mod_name, "NtAllocateVirtualMemory")] = None
+            bp_funcs[(mod_name, "NtAllocateVirtualMemory")] = (ntallocatevirtualmemory, True, TARGET_LONG_SIZE)
+
+
+        profile = conf_m.vol_profile
+
+        if (mod_name, "ZwCreateProcessEx") not in breakpoints:
+            # We hook both, because although Kernel32 calls the "Ex" version, a
+            # program may call directy ZwCreateProcess
+            breakpoints[(mod_name, "ZwCreateProcessEx")] = None
+            bp_funcs[(mod_name, "ZwCreateProcessEx")] = (
                 ntcreateprocess, True, TARGET_LONG_SIZE)
 
+        if (mod_name, "ZwCreateProcess") not in breakpoints:
+            breakpoints[(mod_name, "ZwCreateProcess")] = None
+            bp_funcs[(mod_name, "ZwCreateProcess")] = (
+                ntcreateprocess, True, TARGET_LONG_SIZE)
+
+        if not ("WinXP" in profile or "Win2003" in profile):
+            # On Vista (and onwards), kernel32.dll no longer uses
+            # ZwCreateProcess/ZwCreateProcessEx (although these function remain
+            # in ntdll.dll. It Uses ZwCreateUserProcess.
+            if (mod_name, "ZwCreateUserProcess") not in breakpoints:
+                breakpoints[(mod_name, "ZwCreateUserProcess")] = None
+                bp_funcs[(mod_name, "ZwCreateUserProcess")] = (
+                    ntcreateprocess, True, TARGET_LONG_SIZE)
 
     # Add breakpoint if necessary
     for (mod, fun) in breakpoints:
