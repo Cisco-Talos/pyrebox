@@ -96,21 +96,37 @@ NKT_DBOBJFLAG_HasVirtual = 0x00400000
 NKT_DBOBJFLAG_HasInheritance = 0x00800000
 NKT_DBOBJFLAG_STRUCTUNION_MASK = 0x00F00000
 
-DB_PATH = ""
+DB_PATH_32 = ""
+DB_PATH_64 = ""
 DB = None
 
-def set_db_path(db_path):
-    global DB_PATH
-    DB_PATH = db_path
-
-def get_db():
-    global DB_PATH
-    global DB
-    if DB is None:
-        DB = DbConnector(DB_PATH)
-        return DB
+def set_db_path(db_path, bitness):
+    global DB_PATH_32
+    global DB_PATH_64
+    if bitness == 32:
+        DB_PATH_32 = db_path
     else:
-        return DB
+        DB_PATH_64 = db_path
+
+
+def get_db(bitness):
+    global DB_PATH_32
+    global DB_PATH_64
+    global DB_32
+    global DB_64
+    if bitness == 32:
+        if DB_32 is None:
+            DB_32 = DbConnector(DB_PATH_32)
+            return DB_32
+        else:
+            return DB_32
+    else:
+        if DB_64 is None:
+            DB_64 = DbConnector(DB_PATH_64)
+            return DB_64
+        else:
+            return DB_64
+
 
 # =============================================================== UTILS ==
 
@@ -796,7 +812,7 @@ class ArgumentParser:
     Given a function call, parses the database and reads the arguments for the function.
     '''
 
-    def __init__(self, cpu, addr, mod, fun):
+    def __init__(self, cpu, addr, mod, fun, bitness):
         # Address of stack at the moment of the call
         self.addr = addr
         self.pgd = cpu.CR3
@@ -805,7 +821,8 @@ class ArgumentParser:
         self.eax = None
         self.mod = mod
         self.fun = fun
-        self.c = get_db().get_c()
+        self.bitness = bitness
+        self.c = get_db(self.bitness).get_c()
         self.__in_db = False
         # Get function id in database
         query = ("select F.Id,F.Class,F.Flags,F.ReturnTypeId,F.ReturnClass " +

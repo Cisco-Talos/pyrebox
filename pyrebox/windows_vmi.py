@@ -49,12 +49,17 @@ def windows_insert_module_internal(
         fullname,
         basename,
         checksum,
-        update_symbols):
+        update_symbols,
+        do_stop = False):
 
     from utils import get_addr_space
-    from vmi import modules
-    from vmi import symbols
+    from vmi import add_symbols
+    from vmi import get_symbols
+    from vmi import has_symbols
     from vmi import Module
+    from vmi import add_module
+    from vmi import get_module
+    from vmi import has_module
     from api_internal import dispatch_module_load_callback
     from api_internal import dispatch_module_remove_callback
     import pefile
@@ -80,13 +85,14 @@ def windows_insert_module_internal(
     mod = Module(base, size, p_pid, p_pgd, checksum, basename, fullname)
 
     # First, we try to get the symbols from the cache 
-    if fullname != "" and fullname in symbols.keys():
-        mod.set_symbols(symbols[fullname])
+    if fullname != "" and has_symbols(fullname):
+        mod.set_symbols(get_symbols(fullname))
 
     # If we are updating symbols (a simple module retrieval would
     # not require symbol extraction), and we don't have any
     # symbols on the cache:
     elif fullname != "" and update_symbols:
+        pp_debug("Symbols not found in cache, extracting from %s...\n" % fullname)
         unnamed_function_counter = 0
         syms = {}
     
@@ -122,45 +128,42 @@ def windows_insert_module_internal(
                             syms["unnamed_funcion_%d" % unnamed_function_counter] = exp.address
                             unnamed_function_counter += 1
 
-                # If we managed to parse the export table, update the symbols
-                # except if it is empty
-                if fullname not in symbols.keys():
-                    symbols[fullname] = syms
-                    # Even if it is empty, the module symbols are set
-                    # to an empty list, and thus are 'resolved'.
-                    # Anyway, in future updates, they could be resolved,
-                    # as we allow this in the first condition.
-                    mod.set_symbols(symbols[fullname])
-                    symbol_cache_must_be_saved = True
-            else:
-                symbols[fullname] = {}
-                mod.set_symbols(symbols[fullname])
+        add_symbols(fullname, syms)
+        mod.set_symbols(syms)
+        # Even if it is empty, the module symbols are set
+        # to an empty list, and thus are 'resolved'.
+        # Anyway, in future updates, they could be resolved,
+        # as we allow this in the first condition.
+        symbol_cache_must_be_saved = True
  
     #Module load/del notification
-    if base in modules[(p_pid, p_pgd)]:
-        if modules[(p_pid, p_pgd)][base].get_size() != size or \
-           modules[(p_pid, p_pgd)][base].get_checksum() != checksum or \
-           modules[(p_pid, p_pgd)][base].get_name() != basename or \
-           modules[(p_pid, p_pgd)][base].get_fullname() != fullname:
+    if has_module(p_pid, p_pgd, base):
+        ex_mod = get_module(p_pid, p_pgd, base)
+        if ex_mod.get_size() != size or \
+           ex_mod.get_checksum() != checksum or \
+           ex_mod.get_name() != basename or \
+           ex_mod.get_fullname() != fullname:
             # Notify of module deletion and module load
             dispatch_module_remove_callback(p_pid, p_pgd, base,
-                                            modules[(p_pid, p_pgd)][base].get_size(),
-                                            modules[(p_pid, p_pgd)][base].get_name(),
-                                            modules[(p_pid, p_pgd)][base].get_fullname())
-            del modules[(p_pid, p_pgd)][base]
-            modules[(p_pid, p_pgd)][base] = mod
+                                            ex_mod.get_size(),
+                                            ex_mod.get_name(),
+                                            ex_mod.get_fullname())
+            add_module(p_pid, p_pgd, base, mod)
+            mod.set_present()
             dispatch_module_load_callback(p_pid, p_pgd, base, size, basename, fullname)
+
         # If we updated the symbols and have a bigger list now, dont substitute the module
         # but update its symbols instead
-        elif len(mod.get_symbols()) > len(modules[(p_pid, p_pgd)][base].get_symbols()):
-            modules[(p_pid, p_pgd)][base].set_symbols(mod.get_symbols())
+        elif len(mod.get_symbols()) > len(ex_mod.get_symbols()):
+            ex_mod.set_symbols(mod.get_symbols())
+        # In any case, mark as present 
+        ex_mod.set_present()
     else:
         # Just notify of module load
-        modules[(p_pid, p_pgd)][base] = mod
+        add_module(p_pid, p_pgd, base, mod)
+        # Mark the module as present
+        mod.set_present()
         dispatch_module_load_callback(p_pid, p_pgd, base, size, basename, fullname)
-
-    # Mark the module as present
-    modules[(p_pid, p_pgd)][base].set_present()
 
 
 def windows_insert_module(p_pid, p_pgd, module, update_symbols):
@@ -205,9 +208,11 @@ def windows_update_modules(pgd, update_symbols=False):
 
     import api
     from utils import get_addr_space
-    from vmi import modules
     from vmi import set_modules_non_present
     from vmi import clean_non_present_modules
+    from vmi import add_module
+    from vmi import get_module
+    from vmi import has_module
 
     if pgd != 0:
         addr_space = get_addr_space(pgd)
@@ -223,9 +228,6 @@ def windows_update_modules(pgd, update_symbols=False):
     inserted_bases = []
     # Parse/update kernel modules if pgd 0 is requested:
     if pgd == 0 and last_kdbg is not None:
-        if (0, 0) not in modules:
-            modules[(0, 0)] = {}
-
         kdbg = obj.Object(
             "_KDDEBUGGER_DATA64",
             offset=last_kdbg,
@@ -295,9 +297,6 @@ def windows_update_modules(pgd, update_symbols=False):
                 # In this way, if at some point the module gets unmapped from the PEB list
                 # but it is still in memory, we do not loose the information.
 
-                if (p_pid, p_pgd) not in modules:
-                    modules[(p_pid, p_pgd)] = {}
-
                 # Mark all modules as non-present
                 set_modules_non_present(p_pid, p_pgd)
 
@@ -338,13 +337,13 @@ def windows_update_modules(pgd, update_symbols=False):
                                     if fname and "Windows\\SysWOW64".lower() in fname.lower() and ".dll" == fname[-4:].lower():
                                         fname_starts = fname.find("Windows\\SysWOW64")
                                         fname = fname[fname_starts:]
-                                        if vad.Start not in modules[(p_pid, p_pgd)]:
-                                            windows_insert_module_internal(p_pid, p_pgd, vad.Start,
-                                                                           vad.End - vad.Start,
-                                                                           fname,
-                                                                           fname.split("\\")[-1],
-                                                                           "",
-                                                                           update_symbols)
+                                        windows_insert_module_internal(p_pid, p_pgd, vad.Start,
+                                                                       vad.End - vad.Start,
+                                                                       fname,
+                                                                       fname.split("\\")[-1],
+                                                                       "",
+                                                                       update_symbols,
+                                                                       do_stop = True)
                 # Remove all the modules that are not marked as present
                 clean_non_present_modules(p_pid, p_pgd)
 
@@ -517,7 +516,7 @@ def windows_read_memory_mapped(pgd, addr, size, pte, is_pae, bitness):
     if not f:
         raise RuntimeError("Could not read memory from pagefile: file not found")
 
-    print("Reading file %s at offset %x - Size: %x" % (filename, file_offset_to_read, size))
+    # print("Reading file %s at offset %x - Size: %x" % (filename, file_offset_to_read, size))
     f.seek(file_offset_to_read)
     data = f.read(size = size)
     f.close()

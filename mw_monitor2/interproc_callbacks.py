@@ -51,23 +51,29 @@ def read_return_parameter(cpu):
             "[interproc::read_return_parameter(cpu)] : Non-supported TARGET_LONG_SIZE: %d" % TARGET_LONG_SIZE)
 
 
-def read_parameters(cpu, num_params):
+def read_parameters(cpu, num_params, long_size):
     '''
         Reads parameters from the registers/stack
     '''
     import api
     TARGET_LONG_SIZE = api.get_os_bits() / 8
-    if TARGET_LONG_SIZE == 4:
+    if long_size == 4:
         # All the parameters are on the stack
         # We need to read num_params values + the return address
         try:
-            buff = api.r_va(cpu.CR3, cpu.ESP, (num_params + 1) * 4)
+            if TARGET_LONG_SIZE == 4:
+                buff = api.r_va(cpu.CR3, cpu.ESP, (num_params + 1) * 4)
+            else:
+                buff = api.r_va(cpu.CR3, cpu.RSP, (num_params + 1) * 4)
         except:
-            buff = "\x00" * len((num_params + 1) * 4)
-            pp_debug("Could not read properly the parameters in interproc_callbacks.py")
+            buff = "\x00" * ((num_params + 1) * 4)
+            if TARGET_LONG_SIZE == 4:
+                pp_debug("Could not read properly the parameters in interproc_callbacks.py at address %x - size %x" % (cpu.ESP, (num_params + 1)*4))
+            else:
+                pp_debug("Could not read properly the parameters in interproc_callbacks.py at address %x - size %x" % (cpu.RSP, (num_params + 1)*4))
         params = struct.unpack("<" + "I" * (1 + num_params), buff)
         return params
-    elif TARGET_LONG_SIZE == 8:
+    elif long_size == 8:
         params_regs = []
         params_stack = ()
 
@@ -80,42 +86,46 @@ def read_parameters(cpu, num_params):
 
         params_regs.append(struct.unpack("<Q", buff)[0])
 
-        if num_params <= 1:
+        if num_params >= 1:
             params_regs.append(cpu.RCX)
-        if num_params <= 2:
+        if num_params >= 2:
             params_regs.append(cpu.RDX)
-        if num_params <= 3:
+        if num_params >= 3:
             params_regs.append(cpu.R8)
-        if num_params <= 4:
+        if num_params >= 4:
             params_regs.append(cpu.R9)
         if num_params > 4:
-            # We need to read num_params + the return address + 0x20
+            # We need to read num_params (-4 parameters read from
+            # registers) + the return address + 0x20
             # 0x20 is for the 4 slots (of 8 bytes) allocated to store
             # register parameters (allocated by caller, used by callee)
             try:
-                buff = api.r_va(cpu.CR3, cpu.RSP, (num_params + 5) * 8)
+                buff = api.r_va(cpu.CR3, cpu.RSP, (num_params + 5 - 4) * 8)
             except:
-                buff = "\x00" * ((num_params + 5) * 8)
+                buff = "\x00" * ((num_params + 5 - 4) * 8)
                 pp_debug("Could not read properly the parameters in interproc_callbacks.py")
                 
             params_stack = struct.unpack(
-                "<" + "Q" * (5 + num_params), buff)
+                "<" + "Q" * (5 + num_params - 4), buff)
             params_stack = params_stack[5:]
         return (tuple(params_regs) + params_stack)
     else:
         raise Exception(
-            "[interproc::read_return_parameter(cpu)] : Non-supported TARGET_LONG_SIZE: %d" % TARGET_LONG_SIZE)
+            "[interproc::read_return_parameter(cpu)] : Non-supported TARGET_LONG_SIZE: %d" % long_size)
 
 
-def dereference_target_long(addr, pgd):
+def dereference_target_long(addr, pgd, long_size):
     import api
-    TARGET_LONG_SIZE = api.get_os_bits() / 8
-    typ = "<I" if TARGET_LONG_SIZE == 4 else "<Q"
+    typ = "<I" if long_size == 4 else "<Q"
     try:
-        buff = api.r_va(pgd, addr, TARGET_LONG_SIZE)
+        buff = api.r_va(pgd, addr, long_size)
     except:
-        buff = "\x00" * TARGET_LONG_SIZE
+        buff = "\x00" * long_size
         pp_debug("Could not dereference TARGET_LONG in interproc_callbacks.py")
+
+    if len(buff) == 0:
+        pp_warning("[interproc_callbacks.py:dereference_target_long] Error while dereferencing parameter with address %x" % addr)
+        return 0
     return struct.unpack(typ, buff)[0]
 
 # =============================================================== HOOKS ==
@@ -126,7 +136,8 @@ def ntcreateprocessret(params,
                        callback_name,
                        proc_hdl_p,
                        proc,
-                       update_vads):
+                       update_vads,
+                       long_size):
 
     import volatility.win32.tasks as tasks
     from interproc import interproc_start_monitoring_process
@@ -164,7 +175,7 @@ def ntcreateprocessret(params,
 
     # Dereference the output argument containing the hdl of the newly created
     # process
-    proc_hdl = dereference_target_long(proc_hdl_p, pgd)
+    proc_hdl = dereference_target_long(proc_hdl_p, pgd, long_size)
 
     # Search handle table for the new created process
     for task in eprocs:
@@ -211,7 +222,8 @@ def ntcreateprocessret(params,
 def ntcreateprocess(params,
                     cm, 
                     proc,
-                    update_vads):
+                    update_vads,
+                    long_size):
 
     # This function interface is for NTCreateProcess.
     # NtCreateProcessEx has different interface, but
@@ -269,7 +281,7 @@ def ntcreateprocess(params,
     # Set callback on return address
 
     # Read the first parameter (process handle)
-    params = read_parameters(cpu, 1)
+    params = read_parameters(cpu, 1, long_size)
 
     callback_name = cm.generate_callback_name("ntcreateprocess_ret")
 
@@ -281,7 +293,8 @@ def ntcreateprocess(params,
                                           callback_name=callback_name,
                                           proc_hdl_p=params[1],
                                           proc=proc,
-                                          update_vads=update_vads)
+                                          update_vads=update_vads,
+                                          long_size = long_size)
 
     cm.add_callback(api.CallbackManager.INSN_BEGIN_CB,
                           callback_function,
@@ -289,7 +302,7 @@ def ntcreateprocess(params,
                           addr=params[0],
                           pgd=pgd)
 
-def ntopenprocessret(params, cm, callback_name, proc_hdl_p, proc, update_vads):
+def ntopenprocessret(params, cm, callback_name, proc_hdl_p, proc, update_vads, long_size):
     import volatility.win32.tasks as tasks
     from interproc import interproc_start_monitoring_process
     from core import Process
@@ -327,7 +340,7 @@ def ntopenprocessret(params, cm, callback_name, proc_hdl_p, proc, update_vads):
 
     # Dereference the output argument containing the hdl of the newly created
     # process
-    proc_hdl = dereference_target_long(proc_hdl_p, pgd)
+    proc_hdl = dereference_target_long(proc_hdl_p, pgd, long_size)
 
     # Search handle table for the new created process
     for task in eprocs:
@@ -368,7 +381,7 @@ def ntopenprocessret(params, cm, callback_name, proc_hdl_p, proc, update_vads):
     return
 
 
-def ntopenprocess(params, cm, proc, update_vads):
+def ntopenprocess(params, cm, proc, update_vads, long_size):
     #  OUT PHANDLE             ProcessHandle,
     #  IN ACCESS_MASK          AccessMask,
     #  IN POBJECT_ATTRIBUTES   ObjectAttributes,
@@ -384,7 +397,7 @@ def ntopenprocess(params, cm, proc, update_vads):
     pgd = api.get_running_process(cpu_index)
 
     # Read the first parameter (process handle)
-    params = read_parameters(cpu, 1)
+    params = read_parameters(cpu, 1, long_size)
 
     # Set callback on return address
     callback_name = cm.generate_callback_name("ntopenprocess_ret")
@@ -394,7 +407,8 @@ def ntopenprocess(params, cm, proc, update_vads):
                                           callback_name=callback_name,
                                           proc_hdl_p=params[1],
                                           proc=proc,
-                                          update_vads=update_vads)
+                                          update_vads=update_vads,
+                                          long_size = long_size)
 
     cm.add_callback(api.CallbackManager.INSN_BEGIN_CB,
                           callback_function,
@@ -403,7 +417,7 @@ def ntopenprocess(params, cm, proc, update_vads):
                           pgd=pgd)
 
 
-def ntwritevirtualmemory(params, cm, proc, update_vads, reverse=False):
+def ntwritevirtualmemory(params, cm, proc, update_vads, long_size, reverse=False):
     import volatility.win32.tasks as tasks
     from core import Injection
     import api
@@ -427,7 +441,7 @@ def ntwritevirtualmemory(params, cm, proc, update_vads, reverse=False):
 
     # Read the parameters
     ret_addr, proc_hdl, remote_addr, local_addr, size, size_out = read_parameters(
-        cpu, 5)
+        cpu, 5, long_size)
 
     local_proc = proc 
 
@@ -496,7 +510,7 @@ def ntwritevirtualmemory(params, cm, proc, update_vads, reverse=False):
         proc.update_vads()
 
 
-def ntreadvirtualmemory(params, cm, proc, update_vads):
+def ntreadvirtualmemory(params, cm, proc, update_vads, long_size):
     # Reuse implementation in write virtual memory
     global interproc_data
     global interproc_config
@@ -505,10 +519,10 @@ def ntreadvirtualmemory(params, cm, proc, update_vads):
     cpu_index = params["cpu_index"]
     cpu = params["cpu"]
 
-    ntwritevirtualmemory(params, cm, proc, update_vads, reverse=True)
+    ntwritevirtualmemory(params, cm, proc, update_vads, long_size, reverse=True)
 
 
-def ntreadfile(params, cm, proc, update_vads, is_write=False):
+def ntreadfile(params, cm, proc, update_vads, long_size, is_write=False):
     import volatility.win32.tasks as tasks
     from core import FileRead
     from core import FileWrite
@@ -536,7 +550,7 @@ def ntreadfile(params, cm, proc, update_vads, is_write=False):
 
     # Read the parameters
     ret_addr, file_handle, arg2, arg3, arg4, arg5, buff, length, offset_p, arg9 = read_parameters(
-        cpu, 9)
+        cpu, 9, long_size)
 
     # Load volatility address space
     addr_space = get_addr_space(pgd)
@@ -622,7 +636,7 @@ def ntreadfile(params, cm, proc, update_vads, is_write=False):
         proc.update_vads()
 
 
-def ntwritefile(params, cm, proc, update_vads):
+def ntwritefile(params, cm, proc, update_vads, long_size):
     global interproc_data
     global interproc_config
 
@@ -639,7 +653,7 @@ def ntwritefile(params, cm, proc, update_vads):
     cpu_index = params["cpu_index"]
     cpu = params["cpu"]
 
-    ntreadfile(params, cm, proc, update_vads, is_write=True)
+    ntreadfile(params, cm, proc, update_vads, long_size, is_write=True)
 
 
 def ntmapviewofsection_ret(params,
@@ -650,7 +664,8 @@ def ntmapviewofsection_ret(params,
                            base_p, size_p,
                            offset_p,
                            proc,
-                           update_vads):
+                           update_vads,
+                           long_size):
     from core import SectionMap
     import api
     global interproc_data
@@ -667,12 +682,12 @@ def ntmapviewofsection_ret(params,
     cm.rm_callback(callback_name)
 
     if base_p != 0:
-        base = dereference_target_long(base_p, pgd)
+        base = dereference_target_long(base_p, pgd, long_size)
     else:
         base = 0
 
     if size_p != 0:
-        size = dereference_target_long(size_p, pgd)
+        size = dereference_target_long(size_p, pgd, long_size)
     else:
         size = 0
 
@@ -701,7 +716,7 @@ def ntmapviewofsection_ret(params,
         proc.update_vads()
 
 
-def ntmapviewofsection(params, cm, proc, update_vads):
+def ntmapviewofsection(params, cm, proc, update_vads, long_size):
     import volatility.obj as obj
     import volatility.win32.tasks as tasks
     import volatility.plugins.overlays.windows.windows as windows
@@ -732,7 +747,7 @@ def ntmapviewofsection(params, cm, proc, update_vads):
 
     # Read the parameters
     ret_addr, section_handle, proc_handle, base_p, arg_3, arg_4, offset_p, size_p = read_parameters(
-        cpu, 7)
+        cpu, 7, long_size)
 
     # Load volatility address space
     addr_space = get_addr_space(pgd)
@@ -809,7 +824,8 @@ def ntmapviewofsection(params, cm, proc, update_vads):
                                               size_p=size_p,
                                               offset_p=offset_p,
                                               proc=proc,
-                                              update_vads=update_vads)
+                                              update_vads=update_vads,
+                                              long_size = long_size)
 
         cm.add_callback(CallbackManager.INSN_BEGIN_CB,
                               callback_function,
@@ -818,7 +834,7 @@ def ntmapviewofsection(params, cm, proc, update_vads):
                               pgd=pgd)
 
 
-def ntunmapviewofsection(params, cm, proc, update_vads):
+def ntunmapviewofsection(params, cm, proc, update_vads, long_size):
     import volatility.win32.tasks as tasks
     from utils import get_addr_space
     import api
@@ -836,7 +852,7 @@ def ntunmapviewofsection(params, cm, proc, update_vads):
 
     pgd = api.get_running_process(cpu_index)
 
-    ret_addr, proc_handle, base = read_parameters(cpu, 2)
+    ret_addr, proc_handle, base = read_parameters(cpu, 2, long_size)
 
     # Load volatility address space
     addr_space = get_addr_space(pgd)
@@ -884,7 +900,7 @@ def ntunmapviewofsection(params, cm, proc, update_vads):
         proc.update_vads()
 
 
-def ntvirtualprotect(params, cm, proc, update_vads):
+def ntvirtualprotect(params, cm, proc, update_vads, long_size):
     import volatility.win32.tasks as tasks
     from utils import get_addr_space
     import api
@@ -908,15 +924,15 @@ def ntvirtualprotect(params, cm, proc, update_vads):
     # changed permissions.
 
     ret_addr, proc_handle, base_addr_p, size_p, new_access, old_access = read_parameters(
-        cpu, 5)
+        cpu, 5, long_size)
 
     # Load volatility address space
     addr_space = get_addr_space(pgd)
 
     # Get call parameters
 
-    base_addr = dereference_target_long(base_addr_p, pgd)
-    size = dereference_target_long(size_p, pgd)
+    base_addr = dereference_target_long(base_addr_p, pgd, long_size)
+    size = dereference_target_long(size_p, pgd, long_size)
 
     # Get list of processes, and filter out by the process that triggered the
     # call (current process id)
@@ -972,7 +988,8 @@ def ntallocatevirtualmemory_ret(params,
                                 aloc_type=None,
                                 access=None,
                                 proc=None,
-                                update_vads=None):
+                                update_vads=None,
+                                long_size=None):
 
     import api
     global interproc_data
@@ -992,12 +1009,12 @@ def ntallocatevirtualmemory_ret(params,
     # 8 bytes for 64 bit guest.
 
     if base_addr_p != 0:
-        base = dereference_target_long(base_addr_p, pgd)
+        base = dereference_target_long(base_addr_p, pgd, long_size)
     else:
         base = 0
 
     if size_p != 0:
-        size = dereference_target_long(size_p, pgd)
+        size = dereference_target_long(size_p, pgd, long_size)
     else:
         size = 0
 
@@ -1017,7 +1034,8 @@ def ntallocatevirtualmemory_ret(params,
 def ntallocatevirtualmemory(params,
                             cm,
                             proc,
-                            update_vads):
+                            update_vads,
+                            long_size):
 
     import volatility.win32.tasks as tasks
     import api
@@ -1046,7 +1064,7 @@ def ntallocatevirtualmemory(params,
 
     # Get call parameters
     (ret_addr, proc_handle, base_addr_p, zerobits,
-     size_p, aloc_type, access) = read_parameters(cpu, 6)
+     size_p, aloc_type, access) = read_parameters(cpu, 6, long_size)
 
     # Load volatility address space
     addr_space = get_addr_space(pgd)
@@ -1094,7 +1112,8 @@ def ntallocatevirtualmemory(params,
                                               aloc_type=aloc_type,
                                               access=access,
                                               proc=proc,
-                                              update_vads=update_vads)
+                                              update_vads=update_vads,
+                                              long_size = long_size)
 
         cm.add_callback(CallbackManager.INSN_BEGIN_CB,
                               callback_function,

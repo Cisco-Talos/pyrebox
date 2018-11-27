@@ -30,16 +30,52 @@ from utils import pp_warning
 from utils import pp_error
 
 # symbol cache
-symbols = {}
+__symbols = {}
 
 symbol_cache_path = None
 
-modules = {}  # List of modules for each process, index is pgd
+__modules = {}  # List of modules for each process, index is pgd
 
 OS_FAMILY_WIN = 0
 OS_FAMILY_LINUX = 1
 
 os_family = None
+
+def get_modules():
+    global __modules
+    return __modules
+
+def has_module(pid, pgd, base):
+    global __modules
+    return (((pid, pgd) in __modules) and (base in __modules[(pid, pgd)]))
+
+def get_module(pid, pgd, base):
+    global __modules
+    if (((pid, pgd) in __modules) and (base in __modules[(pid, pgd)])):
+        return __modules[(pid, pgd)][base]
+    else:
+        return None
+
+def add_module(pid, pgd, base, mod):
+    global __modules
+    if not (pid, pgd) in __modules:
+        __modules[(pid, pgd)] = {}
+    __modules[(pid, pgd)][base] = mod
+
+def add_symbols(mod_full_name, syms):
+    global __symbols
+    __symbols[mod_full_name] = syms
+
+def get_symbols(mod_full_name):
+    global __symbols
+    if mod_full_name in __symbols:
+        return __symbols[mod_full_name]
+    else:
+        return {}
+
+def has_symbols(mod_full_name):
+    global __symbols
+    return ((mod_full_name in __symbols))
 
 def set_symbol_cache_path(path):
     global symbol_cache_path
@@ -47,12 +83,12 @@ def set_symbol_cache_path(path):
 
 # Function to load symbols from a file cache
 def load_symbols_from_cache_file():
-    global symbols
+    global __symbols
     global symbol_cache_path
     if symbol_cache_path is not None and os.path.isfile(symbol_cache_path):
         try:
             f = open(symbol_cache_path, "r")
-            symbols = json.loads(f.read())
+            __symbols = json.loads(f.read())
             f.close()
         except Exception as e:
             pp_error("Error while reading symbols from %s: %s\n" % (symbol_cache_path, str(e)))
@@ -60,11 +96,11 @@ def load_symbols_from_cache_file():
 
 # Function to save symbols to a file cache
 def save_symbols_to_cache_file():
-    global symbols
+    global __symbols
     global symbol_cache_path
     if symbol_cache_path is not None:
         f = open(symbol_cache_path, "w")
-        f.write(json.dumps(symbols))
+        f.write(json.dumps(__symbols))
         f.close()
 
 class Module:
@@ -166,43 +202,44 @@ def update_modules(proc_pgd, update_symbols=False):
 
 
 def set_modules_non_present(pid, pgd):
+    global __modules
     if pid is not None:
-        if (pid, pgd) in modules:
-            for base, mod in modules[(pid, pgd)].iteritems():
+        if (pid, pgd) in __modules:
+            for base, mod in __modules[(pid, pgd)].iteritems():
                 mod.set_present(False)
     else:
-        for pid, _pgd in modules.keys():
+        for pid, _pgd in __modules.keys():
             if _pgd == pgd:
-                if (pid, pgd) in modules:
-                    for base, mod in modules[(pid, _pgd)].iteritems():
+                if (pid, pgd) in __modules:
+                    for base, mod in __modules[(pid, _pgd)].iteritems():
                         mod.set_present(False)
 
 def clean_non_present_modules(pid, pgd):
     from api_internal import dispatch_module_remove_callback
+    global __modules
 
     mods_to_remove = []
     if pid is not None:
-        if (pid, pgd) in modules:
-            for base, mod in modules[(pid, pgd)].iteritems():
+        if (pid, pgd) in __modules:
+            for base, mod in __modules[(pid, pgd)].iteritems():
                 if not mod.is_present():
                     mods_to_remove.append((pid, pgd, base))
     else:
-        for pid, _pgd in modules.keys():
+        for pid, _pgd in __modules.keys():
             if _pgd == pgd:
-                if (pid, _pgd) in modules:
-                    for base, mod in modules[(pid, _pgd)].iteritems():
+                if (pid, _pgd) in __modules:
+                    for base, mod in __modules[(pid, _pgd)].iteritems():
                         if not mod.is_present():
                             mods_to_remove.append((pid, pgd, base))
 
     for pid, pgd, base in mods_to_remove:
         # Callback notification
         dispatch_module_remove_callback(pid, pgd, base, 
-                                        modules[(pid, pgd)][base].get_size(),
-                                        modules[(pid, pgd)][base].get_name(),
-                                        modules[(pid, pgd)][base].get_fullname())
+                                        __modules[(pid, pgd)][base].get_size(),
+                                        __modules[(pid, pgd)][base].get_name(),
+                                        __modules[(pid, pgd)][base].get_fullname())
 
-        # Remove module
-        del modules[(pid, pgd)][base]
+        del __modules[(pid, pgd)][base]
 
 
 def read_paged_out_memory(pgd, addr, size):

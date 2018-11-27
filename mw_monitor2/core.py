@@ -26,6 +26,11 @@ import bisect
 import functools
 import struct
 import traceback
+from utils import pp_error
+from utils import pp_debug
+from utils import pp_warning
+from utils import pp_print
+
 
 from interproc import interproc_data
 from interproc import interproc_config
@@ -91,9 +96,7 @@ class VADRegion(object):
         else:
             initial_page_prot = 0
 
-        nb_pages = self.__size / VADRegion.PAGE_SIZE
-        for i in range(0, nb_pages):
-            self.__permissions.append(initial_page_prot)
+        self.__permissions.append((self.__start, self.__size, protection))
 
         self.__potentially_injected = False
 
@@ -109,16 +112,10 @@ class VADRegion(object):
         '''
             Updates the page access permissions.
         '''
-        offset = (base_addr - self.__start) / VADRegion.PAGE_SIZE
-        nb_pages = (size / VADRegion.PAGE_SIZE) if (size %
-                                                    VADRegion.PAGE_SIZE == 0) else ((size / VADRegion.PAGE_SIZE) + 1)
-        for i in range(offset, offset + nb_pages):
-            # Check we do not access the list out of its boundaries
-            if i < 0 or i >= len(self.__permissions):
-                break
-            if self.__permissions[i] != new_access:
-                self.__page_permission_modified = True
-            self.__permissions[i] = new_access
+        self.__permissions.append((base_addr, size, new_access))
+        # Compare to initial protection
+        if new_access != self.__permissions[0][2]:
+            self.__page_permission_modified = True
 
     def get_start(self):
         return self.__start
@@ -196,14 +193,17 @@ class VADRegion(object):
         return hash(tuple(self))
 
 class Symbol:
-
-    def __init__(self, mod, fun, addr):
+    def __init__(self, mod, mod_fullname, fun, addr):
         self.__mod = mod
         self.__fun = fun
         self.__addr = addr
+        self.__mod_fullname = mod_fullname
 
     def get_mod(self):
         return self.__mod
+
+    def get_mod_fullname(self):
+        return self.__mod_fullname
 
     def get_fun(self):
         return self.__fun
@@ -257,13 +257,18 @@ class Process:
         # Exited. Indicates that process has already exited.
         self.__exited = False
 
+        # Whether or not the process is a Wow64 process
+        self.__wow64 = False
+
         self.__symbols = []
         self.__other_calls = []
         self.__all_calls = []
 
+    def is_wow64(self):
+        return self.__wow64
 
-    def get_symbols(self):
-        return self.__symbols
+    def set_wow64(self, is_wow64):
+        self.__wow74 = is_wow64
 
     def get_all_calls(self):
         return self.__all_calls
@@ -395,14 +400,15 @@ class Process:
             mod = d["mod"]
             fun = d["name"]
             addr = d["addr"]
+            mod_fullname = d["mod_fullname"]
 
-            pos = bisect.bisect_left(self.__symbols, Symbol("", "", addr))
+            pos = bisect.bisect_left(self.__symbols, Symbol("", "", "", addr))
             if pos >= 0 and pos < len(self.__symbols) and self.__symbols[pos].get_addr() == addr:
                 continue
             if mod in self.__modules:
-                for pair in self.__modules[mod]:
+                for pair in self.__modules[mod_fullname]:
                     bisect.insort(
-                        self.__symbols, Symbol(mod, fun, pair[0] + addr))
+                        self.__symbols, Symbol(mod, mod_fullname, fun, pair[0] + addr))
 
     def update_vads(self):
         '''
@@ -491,7 +497,7 @@ class Process:
 
 
     def locate_nearest_symbol(self, addr, tolerate_offset = 0x32):
-        pos = bisect.bisect_left(self.__symbols, Symbol("", "", addr))
+        pos = bisect.bisect_left(self.__symbols, Symbol("", "", "", addr))
         if pos < 0 or pos >= len(self.__symbols):
             return None
 
@@ -827,8 +833,8 @@ class Section:
 
             # on winxp file_obj is volatility.obj.Pointer with .target being _FILE_OBJECT
             if not (type(file_obj) is Pointer and type(file_obj.dereference()) is _FILE_OBJECT):
-                from volatility.plugins.overlays.windows.windows import _EX_FAST_REF
-                if type(file_obj) is _EX_FAST_REF:
+                #from volatility.plugins.overlays.windows.windows import _EX_FAST_REF
+                if "_EX_FAST_REF" in  str(type(file_obj)):
                     # on newer volatility profiles, FilePointer is _EX_FAST_REF, needs deref
                     file_obj = file_obj.dereference_as("_FILE_OBJECT")
                 else:

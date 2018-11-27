@@ -272,19 +272,20 @@ def opcodes(params, cb_name, proc):
         if sym is None:
             return
         mod = sym.get_mod()
+        mod_fullname = sym.get_mod_fullname()
         fun = sym.get_fun()
         real_api_addr = sym.get_addr()
 
         # Reduce FP's by checking that the origin EIP is not also within the
         # same module (code reuse inside the dll)
 
-        if mod == proc.get_overlapping_module(pc):
+        if mod_fullname == proc.get_overlapping_module(pc):
             return
 
         matched = False
         # Check if the API is in the list (included or excluded)
         for rule in APITRACER_RULES["rules"]:
-            if rule["mod"] == "" or fnmatch.fnmatch(mod.lower(), rule["mod"].lower()):
+            if rule["mod"] == "" or fnmatch.fnmatch(mod_fullname.lower(), rule["mod"].lower()):
                 if rule["fun"] == "" or fnmatch.fnmatch(fun.lower(), rule["fun"].lower()):
                     if "from_mod" in rule and rule["from_mod"] != "":
                         overlapping_mod_name = proc.get_overlapping_module(pc)
@@ -323,21 +324,27 @@ def opcodes(params, cb_name, proc):
                 ret_addr = 0 
                 pyrebox_print("Could not read return address on API tracer: %s" % str(e))
 
+        is_64_bit_dll = True
+        if TARGET_LONG_SIZE == 4 or (TARGET_LONG_SIZE == 8 and proc.is_wow64() and "windows\\syswow64" in mod_fullname.lower()):
+            is_64_bit_dll = False
+
+
         if APITRACER_LIGHT_MODE:
+            bits = 32 if not is_64_bit_dll else 64
             if real_api_addr == next_pc:
                 if TARGET_LONG_SIZE == 4:
-                    proc.add_call(pc, real_api_addr, "[PID: %x] %08x --> %s:%s(%08x) --> %08x\n" % (
-                        proc.get_pid(), pc, mod, fun, real_api_addr, ret_addr))
+                    proc.add_call(pc, real_api_addr, "[PID: %x] (%d) %08x --> %s:%s(%08x) --> %08x\n" % (
+                        proc.get_pid(), bits, pc, mod_fullname, fun, real_api_addr, ret_addr))
                 elif TARGET_LONG_SIZE == 8:
-                    proc.add_call(pc, real_api_addr, "[PID: %x] %016x --> %s:%s(%016x) --> %016x\n" % (
-                        proc.get_pid(), pc, mod, fun, real_api_addr, ret_addr))
+                    proc.add_call(pc, real_api_addr, "[PID: %x] (%d) %016x --> %s:%s(%016x) --> %016x\n" % (
+                        proc.get_pid(), bits, pc, mod_fullname, fun, real_api_addr, ret_addr))
             else:
                 if TARGET_LONG_SIZE == 4:
-                    proc.add_call(pc, real_api_addr, "[PID: %x] %08x --> %s:%s(+%x)(%08x) --> %08x\n" % (
-                        proc.get_pid(), pc, mod, fun, (next_pc - real_api_addr), next_pc, ret_addr))
+                    proc.add_call(pc, real_api_addr, "[PID: %x] (%d) %08x --> %s:%s(+%x)(%08x) --> %08x\n" % (
+                        proc.get_pid(), bits, pc, mod_fullname, fun, (next_pc - real_api_addr), next_pc, ret_addr))
                 elif TARGET_LONG_SIZE == 8:
-                    proc.add_call(pc, real_api_addr, "[PID: %x] %016x --> %s:%s(+%x)(%016x) --> %016x\n" % (
-                        proc.get_pid(), pc, mod, fun, (next_pc - real_api_addr), next_pc, ret_addr))
+                    proc.add_call(pc, real_api_addr, "[PID: %x] (%d) %016x --> %s:%s(+%x)(%016x) --> %016x\n" % (
+                        proc.get_pid(), bits, pc, mod_fullname, fun, (next_pc - real_api_addr), next_pc, ret_addr))
             return
 
         data = APICallData()
@@ -346,10 +353,10 @@ def opcodes(params, cb_name, proc):
         data.set_fun(fun)
         data.set_ret_addr(ret_addr)
 
-        if TARGET_LONG_SIZE == 4:
-            argument_parser = ArgumentParser(cpu, cpu.ESP, mod, fun)
-        elif TARGET_LONG_SIZE == 8:
-            argument_parser = ArgumentParser(cpu, cpu.RSP, mod, fun)
+        if not is_64_bit_dll:
+            argument_parser = ArgumentParser(cpu, cpu.ESP, mod, fun, 32)
+        else:
+            argument_parser = ArgumentParser(cpu, cpu.RSP, mod, fun, 64)
 
         if not argument_parser.in_db():
             #pyrebox_print("API function not present in db: %s - %s" % (mod, fun))
@@ -388,6 +395,7 @@ def opcodes(params, cb_name, proc):
         traceback.print_exc()
     finally:
         return
+
 
 def module_load(params):
     global interproc_data
@@ -546,7 +554,6 @@ def initialize_callbacks(module_hdl, printer):
     from api import CallbackManager
     from plugins.guest_agent import guest_agent
     from mw_monitor2.interproc import interproc_data
-    from deviare_db_parser import DbConnector
     from deviare_db_parser import set_db_path 
 
     global cm
@@ -602,7 +609,7 @@ def initialize_callbacks(module_hdl, printer):
             raise Exception("Database path ('database_path') not properly specified")
 
         APITRACER_DATABASE = conf_data.get("database_path", None)
-        set_db_path(APITRACER_DATABASE)
+        set_db_path(APITRACER_DATABASE, 32)
 
         # Tracing engine configuration
         if "anti_stolen_bytes" in conf_data:

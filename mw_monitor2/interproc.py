@@ -301,6 +301,18 @@ def module_entry_point(proc, params):
     # Call all our internal callbacks
     interproc_data.deliver_entry_point_callback(params)
 
+    # Use volatility to check if it is a Wow64 process
+
+    # Get volatility address space using the function in utils
+    addr_space = get_addr_space(pgd)
+
+    # Get list of Task objects using volatility (EPROCESS executive objects)
+    eprocs = [t for t in tasks.pslist(
+        addr_space) if t.Pcb.DirectoryTableBase.v() == pgd]
+
+    if len(eprocs) > 0:
+        proc.set_wow64(eprocs[0].IsWow64)
+
 
 def add_module(proc, params):
     global cm
@@ -321,104 +333,145 @@ def add_module(proc, params):
     pgd = proc.get_pgd()
 
     # Update Process instance with module info
-    proc.set_module(name, base, size)
+    proc.set_module(fullname, base, size)
+
+    from interproc_callbacks import ntcreateprocess
+    from interproc_callbacks import ntopenprocess
+    from interproc_callbacks import ntwritevirtualmemory
+    from interproc_callbacks import ntreadvirtualmemory
+    from interproc_callbacks import ntreadfile
+    from interproc_callbacks import ntwritefile
+    from interproc_callbacks import ntmapviewofsection
+    from interproc_callbacks import ntunmapviewofsection
+    from interproc_callbacks import ntvirtualprotect
+    from interproc_callbacks import ntallocatevirtualmemory
+
+    breakpoints = {}
+    bp_funcs = {}
 
     # Add callbacks, if ntdll is loaded
-    if "ntdll.dll" in name.lower():
-        from interproc_callbacks import ntcreateprocess
-        from interproc_callbacks import ntopenprocess
-        from interproc_callbacks import ntwritevirtualmemory
-        from interproc_callbacks import ntreadvirtualmemory
-        from interproc_callbacks import ntreadfile
-        from interproc_callbacks import ntwritefile
-        from interproc_callbacks import ntmapviewofsection
-        from interproc_callbacks import ntunmapviewofsection
-        from interproc_callbacks import ntvirtualprotect
-        from interproc_callbacks import ntallocatevirtualmemory
-
+    if "windows/syswow64/ntdll.dll" in fullname.lower():
         # Dictionary to store breakpoints for the following APIs:
-        breakpoints = {("ntdll.dll", "ZwOpenProcess"): None,
-                            ("ntdll.dll", "ZwReadFile"): None,
-                            ("ntdll.dll", "ZwWriteFile"): None,
-                            ("ntdll.dll", "ZwMapViewOfSection"): None,
-                            ("ntdll.dll", "ZwUnmapViewOfSection"): None,
-                            ("ntdll.dll", "ZwWriteVirtualMemory"): None,
-                            ("ntdll.dll", "ZwReadVirtualMemory"): None,
-                            ("ntdll.dll", "ZwProtectVirtualMemory"): None,
-                            ("ntdll.dll", "NtAllocateVirtualMemory"): None}
+        breakpoints = {("windows/syswow64/ntdll.dll", "ZwOpenProcess"): None,
+                            ("windows/syswow64/ntdll.dll", "ZwReadFile"): None,
+                            ("windows/syswow64/ntdll.dll", "ZwWriteFile"): None,
+                            ("windows/syswow64/ntdll.dll", "ZwMapViewOfSection"): None,
+                            ("windows/syswow64/ntdll.dll", "ZwUnmapViewOfSection"): None,
+                            ("windows/syswow64/ntdll.dll", "ZwWriteVirtualMemory"): None,
+                            ("windows/syswow64/ntdll.dll", "ZwReadVirtualMemory"): None,
+                            ("windows/syswow64/ntdll.dll", "ZwProtectVirtualMemory"): None,
+                            ("windows/syswow64/ntdll.dll", "NtAllocateVirtualMemory"): None }
 
         # Dictionary that maps dll-function name to breakpoint callbacks and boolean
         # that tells whether the VAD list for the process must be updated after the call
         # or not.
         bp_funcs = {
-            ("ntdll.dll", "ZwOpenProcess"): (ntopenprocess, True),
-            ("ntdll.dll", "ZwReadFile"): (ntreadfile, False),
-            ("ntdll.dll", "ZwWriteFile"): (ntwritefile, False),
-            ("ntdll.dll", "ZwMapViewOfSection"): (ntmapviewofsection, True),
-            ("ntdll.dll", "ZwUnmapViewOfSection"): (ntunmapviewofsection, True),
-            ("ntdll.dll", "ZwWriteVirtualMemory"): (ntwritevirtualmemory, False),
-            ("ntdll.dll", "ZwReadVirtualMemory"): (ntreadvirtualmemory, False),
-            ("ntdll.dll", "ZwProtectVirtualMemory"): (ntvirtualprotect, False),
-            ("ntdll.dll", "NtAllocateVirtualMemory"): (ntallocatevirtualmemory, True)}
+            ("windows/syswow64/ntdll.dll", "ZwOpenProcess"): (ntopenprocess, True, 4),
+            ("windows/syswow64/ntdll.dll", "ZwReadFile"): (ntreadfile, False, 4),
+            ("windows/syswow64/ntdll.dll", "ZwWriteFile"): (ntwritefile, False, 4),
+            ("windows/syswow64/ntdll.dll", "ZwMapViewOfSection"): (ntmapviewofsection, True, 4),
+            ("windows/syswow64/ntdll.dll", "ZwUnmapViewOfSection"): (ntunmapviewofsection, True, 4),
+            ("windows/syswow64/ntdll.dll", "ZwWriteVirtualMemory"): (ntwritevirtualmemory, False, 4),
+            ("windows/syswow64/ntdll.dll", "ZwReadVirtualMemory"): (ntreadvirtualmemory, False, 4),
+            ("windows/syswow64/ntdll.dll", "ZwProtectVirtualMemory"): (ntvirtualprotect, False, 4),
+            ("windows/syswow64/ntdll.dll", "NtAllocateVirtualMemory"): (ntallocatevirtualmemory, True, 4)}
 
         profile = conf_m.vol_profile
 
-        # If before vista:
-        if "WinXP" in profile or "Win2003" in profile:
-            # We hook both, because although Kernel32 calls the "Ex" version, a
-            # program may call directy ZwCreateProcess
-            breakpoints[("ntdll.dll", "ZwCreateProcessEx")] = None
-            bp_funcs[("ntdll.dll", "ZwCreateProcessEx")] = (
-                ntcreateprocess, True)
-            breakpoints[("ntdll.dll", "ZwCreateProcess")] = None
-            bp_funcs[("ntdll.dll", "ZwCreateProcess")] = (
-                ntcreateprocess, True)
-        else:
-            breakpoints[("ntdll.dll", "ZwCreateProcessEx")] = None
-            bp_funcs[("ntdll.dll", "ZwCreateProcessEx")] = (
-                ntcreateprocess, True)
-            breakpoints[("ntdll.dll", "ZwCreateProcess")] = None
-            bp_funcs[("ntdll.dll", "ZwCreateProcess")] = (
-                ntcreateprocess, True)
+        # We hook both, because although Kernel32 calls the "Ex" version, a
+        # program may call directy ZwCreateProcess
+        breakpoints[("windows/syswow64/ntdll.dll", "ZwCreateProcessEx")] = None
+        bp_funcs[("windows/syswow64/ntdll.dll", "ZwCreateProcessEx")] = (
+            ntcreateprocess, True, 4)
+        breakpoints[("windows/syswow64/ntdll.dll", "ZwCreateProcess")] = None
+        bp_funcs[("windows/syswow64/ntdll.dll", "ZwCreateProcess")] = (
+            ntcreateprocess, True, 4)
+        if not ("WinXP" in profile or "Win2003" in profile):
             # On Vista (and onwards), kernel32.dll no longer uses
             # ZwCreateProcess/ZwCreateProcessEx (although these function remain
             # in ntdll.dll. It Uses ZwCreateUserProcess.
-            breakpoints[("ntdll.dll", "ZwCreateUserProcess")] = None
-            bp_funcs[("ntdll.dll", "ZwCreateUserProcess")] = (
-                ntcreateprocess, True)
+            breakpoints[("windows/syswow64/ntdll.dll", "ZwCreateUserProcess")] = None
+            bp_funcs[("windows/syswow64/ntdll.dll", "ZwCreateUserProcess")] = (
+                ntcreateprocess, True, 4)
 
-        # Add breakpoint if necessary
-        for (mod, fun) in breakpoints:
-            if breakpoints[(mod, fun)] is None:
+    elif "windows/system32/ntdll.dll" in fullname.lower():
+        # Dictionary to store breakpoints for the following APIs:
+        breakpoints = {("windows/system32/ntdll.dll", "ZwOpenProcess"): None,
+                       ("windows/system32/ntdll.dll", "ZwReadFile"): None,
+                       ("windows/system32/ntdll.dll", "ZwWriteFile"): None,
+                       ("windows/system32/ntdll.dll", "ZwMapViewOfSection"): None,
+                       ("windows/system32/ntdll.dll", "ZwUnmapViewOfSection"): None,
+                       ("windows/system32/ntdll.dll", "ZwWriteVirtualMemory"): None,
+                       ("windows/system32/ntdll.dll", "ZwReadVirtualMemory"): None,
+                       ("windows/system32/ntdll.dll", "ZwProtectVirtualMemory"): None,
+                       ("windows/system32/ntdll.dll", "NtAllocateVirtualMemory"): None}
+
+        # Dictionary that maps dll-function name to breakpoint callbacks and boolean
+        # that tells whether the VAD list for the process must be updated after the call
+        # or not.
+        bp_funcs = { ("windows/system32/ntdll.dll", "ZwOpenProcess"): (ntopenprocess, True, TARGET_LONG_SIZE),
+            ("windows/system32/ntdll.dll", "ZwReadFile"): (ntreadfile, False, TARGET_LONG_SIZE),
+            ("windows/system32/ntdll.dll", "ZwWriteFile"): (ntwritefile, False, TARGET_LONG_SIZE),
+            ("windows/system32/ntdll.dll", "ZwMapViewOfSection"): (ntmapviewofsection, True, TARGET_LONG_SIZE),
+            ("windows/system32/ntdll.dll", "ZwUnmapViewOfSection"): (ntunmapviewofsection, True, TARGET_LONG_SIZE),
+            ("windows/system32/ntdll.dll", "ZwWriteVirtualMemory"): (ntwritevirtualmemory, False, TARGET_LONG_SIZE),
+            ("windows/system32/ntdll.dll", "ZwReadVirtualMemory"): (ntreadvirtualmemory, False, TARGET_LONG_SIZE),
+            ("windows/system32/ntdll.dll", "ZwProtectVirtualMemory"): (ntvirtualprotect, False, TARGET_LONG_SIZE),
+            ("windows/system32/ntdll.dll", "NtAllocateVirtualMemory"): (ntallocatevirtualmemory, True, TARGET_LONG_SIZE )}
+
+        profile = conf_m.vol_profile
+
+        # We hook both, because although Kernel32 calls the "Ex" version, a
+        # program may call directy ZwCreateProcess
+        breakpoints[("windows/system32/ntdll.dll", "ZwCreateProcessEx")] = None
+        bp_funcs[("windows/system32/ntdll.dll", "ZwCreateProcessEx")] = (
+            ntcreateprocess, True, TARGET_LONG_SIZE)
+        breakpoints[("windows/system32/ntdll.dll", "ZwCreateProcess")] = None
+        bp_funcs[("windows/system32/ntdll.dll", "ZwCreateProcess")] = (
+            ntcreateprocess, True, TARGET_LONG_SIZE)
+
+        if not ("WinXP" in profile or "Win2003" in profile):
+            # On Vista (and onwards), kernel32.dll no longer uses
+            # ZwCreateProcess/ZwCreateProcessEx (although these function remain
+            # in ntdll.dll. It Uses ZwCreateUserProcess.
+            breakpoints[("windows/system32/ntdll.dll", "ZwCreateUserProcess")] = None
+            bp_funcs[("windows/system32/ntdll.dll", "ZwCreateUserProcess")] = (
+                ntcreateprocess, True, TARGET_LONG_SIZE)
+
+
+    # Add breakpoint if necessary
+    for (mod, fun) in breakpoints:
+        if breakpoints[(mod, fun)] is None:
+            try:
                 f_callback = bp_funcs[(mod, fun)][0]
                 update_vads = bp_funcs[(mod, fun)][1]
+                long_size = bp_funcs[(mod, fun)][2]
                 callback = functools.partial(
-                    f_callback, cm=cm, proc=proc, update_vads=update_vads)
+                    f_callback, cm=cm, proc=proc, update_vads=update_vads, long_size = long_size)
                 bp = api.BP(str("%s!%s" % (mod, fun)), pgd, func = callback, new_style = True)
                 bp.enable()
                 interproc_breakpoints.append(bp)
-                breakpoints[(mod, fun)] = (bp, bp.get_addr()) 
+                breakpoints[(mod, fun)] = (bp, bp.get_addr())
                 pp_print("Adding breakpoint at %s:%s %x:%x from process with PID %x\n" %
                               (mod, fun, bp.get_addr(), pgd, pid))
+            except Exception as e:
+                pyrebox_print("Could not set breakpoint on interproc: %s" % str(e))
 
 
     # Main module of the process. Only set entry point callback if it has not been set already.
     # In some cases the main module gets reloaded.
-    elif name.lower() == proc.get_proc_name() and pgd not in entry_point_bps:
+    if name.lower() == proc.get_proc_name() and pgd not in entry_point_bps:
         # Set a breakpoint on the EP
-        entry_point_bps[pgd] = api.BP(base, 
-                                pgd, 
-                                size = size, 
-                                new_style = True, 
+        entry_point_bps[pgd] = api.BP(base,
+                                pgd,
+                                size = size,
+                                new_style = True,
                                 func = functools.partial(module_entry_point, proc))
 
         entry_point_bps[pgd].enable()
 
-
     # Call all our internal callbacks
     interproc_data.deliver_load_module_callback(params)
-
-
 
 
 def module_loaded(proc, params):

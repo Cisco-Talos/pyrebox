@@ -559,8 +559,8 @@ def get_module_list(pgd):
 
     if found:
         vmi.update_modules(proc_pgd, update_symbols=False)
-        if (proc_pid, proc_pgd) in vmi.modules:
-            for mod in vmi.modules[(proc_pid, proc_pgd)].values():
+        if (proc_pid, proc_pgd) in vmi.get_modules():
+            for mod in vmi.get_modules()[(proc_pid, proc_pgd)].values():
                 mods.append({"name": mod.get_name(),
                              "fullname": mod.get_fullname(),
                              "base": mod.get_base(),
@@ -591,24 +591,24 @@ def get_symbol_list(pgd = None):
             proc_pgd = proc["pgd"]
             if proc_pgd != 0:
                 vmi.update_modules(proc_pgd, update_symbols=True)
-                if (proc_pid, proc_pgd) in vmi.modules:
-                    for module in vmi.modules[proc_pid, proc_pgd].values():
+                if (proc_pid, proc_pgd) in vmi.get_modules():
+                    for module in vmi.get_modules()[proc_pid, proc_pgd].values():
                         n = module.get_fullname()
                         if n not in diff_modules:
                             diff_modules[n] = module
         # Include kernel modules too
         vmi.update_modules(0, update_symbols=True)
-        if (0, 0) in vmi.modules:
-            for module in vmi.modules[0, 0].values():
+        if (0, 0) in vmi.get_modules():
+            for module in vmi.get_modules()[0, 0].values():
                 n = module.get_fullname()
                 if n not in diff_modules:
                     diff_modules[n] = module
 
     else:
         vmi.update_modules(pgd, update_symbols=True)
-        for proc_pid, proc_pgd in vmi.modules:
+        for proc_pid, proc_pgd in vmi.get_modules():
             if proc_pgd == pgd:
-                for module in vmi.modules[proc_pid, proc_pgd].values():
+                for module in vmi.get_modules()[proc_pid, proc_pgd].values():
                     n = module.get_fullname()
                     if n not in diff_modules:
                         diff_modules[n] = module
@@ -646,9 +646,9 @@ def sym_to_va(pgd, mod_name, func_name):
         raise ValueError("Process with PGD %x not found" % pgd)
     mod_name = mod_name.lower()
     func_name = func_name.lower()
-    for proc_pid, proc_pgd in vmi.modules:
+    for proc_pid, proc_pgd in vmi.get_modules():
         if proc_pgd == pgd:
-            for module in vmi.modules[proc_pid, proc_pgd].values():
+            for module in vmi.get_modules()[proc_pid, proc_pgd].values():
                 if mod_name in module.get_name().lower():
                     syms = module.get_symbols()
                     for name in syms:
@@ -681,9 +681,9 @@ def va_to_sym(pgd, addr):
     if not process_found:
         raise ValueError("Process with PGD %x not found" % pgd)
 
-    for proc_pid, proc_pgd in vmi.modules:
+    for proc_pid, proc_pgd in vmi.get_modules():
         if proc_pgd == pgd:
-            for module in vmi.modules[proc_pid, proc_pgd].values():
+            for module in vmi.get_modules()[proc_pid, proc_pgd].values():
                 offset = (addr - module.get_base())
                 if offset > 0 and offset < module.get_size():
                     syms = module.get_symbols()
@@ -806,6 +806,8 @@ def function_wrapper_new(f, *args, **kwargs):
         f(kwargs)
     except Exception as e:
         from utils import pp_error
+        import traceback
+        traceback.print_exc()
         pp_error("\nException occurred when calling callback function %s - %s" % (repr(f), str(e)))
     finally:
         return
@@ -1256,13 +1258,23 @@ class BP:
 
             candidates = []
             for sym in symbols:
-                if addr_name.lower() == sym["name"].lower() and addr_mod.lower() == sym["mod"].lower():
-                    candidates.append(sym)
+                if addr_name.lower() == sym["name"].lower():
+                    # First check fullname match
+                    if addr_mod.lower() == sym["mod_fullname"].lower():
+                        candidates = [sym]
+                        # Stop loop because we cannot have 2 symbols with the same name
+                        # for the same mod_fullname, and we cannot have 2 modules
+                        # with the same mod_fullname in the list of symbols.
+                        break
+                    
+                    # Second, check if we can match by module name 
+                    if addr_name.lower() == sym["name"].lower() and addr_mod.lower() == sym["mod"].lower():
+                        candidates.append(sym)
 
             if len(candidates) == 0:
-                raise ValueError("No candidate symbols found")
+                raise ValueError("No candidate symbols found for %s" % addr)
             if len(candidates) > 1:
-                raise ValueError("Found more than one candidate symbol, please be more specific")
+                raise ValueError("Found more than one candidate symbol, please be more specific - %s" % addr)
 
             mods = get_module_list(pgd)
             
