@@ -291,6 +291,8 @@ def module_entry_point(proc, params):
 
     from api import CallbackManager
     import api
+    from utils import get_addr_space
+    import volatility.win32.tasks as tasks
 
     # Get pameters
     cpu_index = params["cpu_index"]

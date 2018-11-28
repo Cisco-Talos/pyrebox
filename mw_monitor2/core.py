@@ -394,7 +394,7 @@ class Process:
         if self.__unpickled:
             return
 
-        syms = api.get_symbol_list()
+        syms = api.get_symbol_list(pgd = self.__pgd)
 
         for d in syms:
             mod = d["mod"]

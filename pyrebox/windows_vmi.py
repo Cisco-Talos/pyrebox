@@ -139,10 +139,10 @@ def windows_insert_module_internal(
     #Module load/del notification
     if has_module(p_pid, p_pgd, base):
         ex_mod = get_module(p_pid, p_pgd, base)
-        if ex_mod.get_size() != size or \
-           ex_mod.get_checksum() != checksum or \
-           ex_mod.get_name() != basename or \
-           ex_mod.get_fullname() != fullname:
+        # Module replacement, only if it is a different module, and also
+        # take into consideration wow64 redirection. Never substitute the
+        # wow64 version by the system32 version of the same dll
+        if (ex_mod.get_fullname().lower() != fullname.lower()) and not ((ex_mod.get_name().lower() == basename.lower()) and ("windows/syswow64".lower() in ex_mod.get_fullname().lower()) and ("windows/system32" in fullname.lower())):
             # Notify of module deletion and module load
             dispatch_module_remove_callback(p_pid, p_pgd, base,
                                             ex_mod.get_size(),
