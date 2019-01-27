@@ -39,9 +39,7 @@ RUN git clone https://github.com/Cisco-Talos/pyrebox pyrebox
 WORKDIR pyrebox
 RUN pip install -r requirements.txt
 RUN ./build.sh
-
-#FIXME: Ugly hack because pip is installing the library in the wrong place
-RUN mv /usr/local/lib/python2.7/dist-packages/usr/lib/python2.7/dist-packages/capstone/libcapstone.so /usr/local/lib
+RUN mv /usr/local/lib/python2.7/dist-packages/capstone/lib/libcapstone.so /usr/local/lib
 RUN ldconfig
 
 #OPTIONAL: Copy VM in. Left as an example
