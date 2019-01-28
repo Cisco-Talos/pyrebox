@@ -257,8 +257,22 @@ int is_mem_write_callback_needed(target_ulong pgd){
     return is_callback_needed(MEM_WRITE_CB, (pyrebox_target_ulong) INV_ADDR,pgd);
 }
 
+int keystroke_callback_disabled = 0;
+
+void disable_keystroke_callbacks(void){
+    keystroke_callback_disabled = 1;
+}
+
+void enable_keystroke_callbacks(void){
+    keystroke_callback_disabled = 0;
+}
+
 int is_keystroke_callback_needed(void){
-    return is_callback_needed(KEYSTROKE_CB, (pyrebox_target_ulong) INV_ADDR, (pyrebox_target_ulong) INV_PGD);
+    if (!keystroke_callback_disabled){
+        return is_callback_needed(KEYSTROKE_CB, (pyrebox_target_ulong) INV_ADDR, (pyrebox_target_ulong) INV_PGD);
+    } else {
+        return 0;
+    }
 }
 
 int is_nic_rec_callback_needed(void){

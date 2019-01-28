@@ -29,6 +29,14 @@
 #include "qemu_glue_callbacks_target_independent.h"
 #include "qemu_glue_callbacks_memory.h"
 
+// Disables the keystroke callback
+// every time we trigger it from the Python API
+// to avoid mutual lock.
+extern int keystroke_callback_disabled;
+
+void disable_keystroke_callbacks(void);
+void enable_keystroke_callbacks(void);
+
 //At translation time
 void helper_qemu_block_begin_callback(CPUState* cpu,TranslationBlock* tb);
 

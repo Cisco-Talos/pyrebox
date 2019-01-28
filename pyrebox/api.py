@@ -743,6 +743,51 @@ def get_loaded_modules():
     import c_api
     return c_api.get_loaded_modules()
 
+def mouse_move(dx = 0, dy = 0, dz = 0):
+    """ Move the mouse cursor. 0 means no movement.
+
+        :param dx: Differential on X axis.
+        :type dx: int
+
+        :param dy: Differential on Y axis.
+        :type dy: int
+
+        :param dz: Differential on Z axis (Scroll)
+        :type dz: int
+    """
+    import c_api
+    return c_api.mouse_move(dx, dy, dz)
+
+def mouse_button(button_state):
+    """ Press a button of the mouse.
+
+        :param button_state: Mouse button to press. 1: Left. 2: Middle. 4: Right. 
+        :type button_state: int
+    """
+    import c_api
+    return c_api.mouse_button(button_state)
+
+def send_key(keys, hold_time = -1):
+    """ Send a keystroke
+    
+        :param keys: Keys to press. Example: ctrl-alt-f1. For a list of valid keys: run sendkey [tab] on qemu monitor.
+        :type keys: str or unicode
+
+        :param hold_time: Optional. Hold time for the key, in milliseconds. Default: 100 ms
+        :type hold_time: int
+    """
+    import c_api
+    return c_api.send_key(keys, hold_time)
+
+def screenshot(filename):
+    """ Take a screenshot and save it to a file.
+
+        :param filename: File path where we want to save the screenshot.
+        :type filename: str
+        
+    """
+    import c_api
+    return c_api.screendump(filename)
 
 # ================================================== CLASSES  =============
 # These wrappers are helpers for the callback manager

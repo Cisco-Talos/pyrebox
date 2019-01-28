@@ -41,6 +41,7 @@ extern "C" {
     #include "qemu_glue.h"
     #include "utils.h"
     #include "qemu_glue_sleuthkit.h"
+    #include "qemu_glue_ui.h"
 }
 
 #include "callbacks.h"
@@ -1201,6 +1202,89 @@ PyObject* py_x86_is_pae(PyObject *dummy, PyObject *args){
    }
 }
 
+PyObject* py_mouse_move(PyObject *dummy, PyObject *args){
+    Py_ssize_t args_size = PyTuple_Size(args);
+    int dx;
+    int dy;
+    int dz;
+    if (args_size == 3){
+        if (PyArg_ParseTuple(args, "iii", &dx, &dy, &dz)){
+           pyrebox_mouse_move(dx, dy, dz);
+           Py_INCREF(Py_True);
+           return Py_True;
+         } else {
+               PyErr_SetString(PyExc_ValueError, "This internal function accepts 3 arguments: dx, dy, dz");
+               return 0;
+         }
+     } else {
+           PyErr_SetString(PyExc_ValueError, "This internal function accepts 3 arguments: dx, dy, dz");
+           return 0;
+     }
+}
+
+PyObject* py_mouse_button(PyObject *dummy, PyObject *args){
+    Py_ssize_t args_size = PyTuple_Size(args);
+    //1=L, 2=M, 4=R
+    int button_state;
+    if (args_size == 1){
+        if (PyArg_ParseTuple(args, "i", &button_state)){
+           if (button_state == 1 || button_state == 2 || button_state == 4){
+               pyrebox_mouse_button(button_state);
+               Py_INCREF(Py_True);
+               return Py_True;
+           }
+           else {
+               PyErr_SetString(PyExc_ValueError, "This internal function accepts 1 argument: button_state (1, 2, 4)");
+               return 0;
+           }
+         } else {
+               PyErr_SetString(PyExc_ValueError, "This internal function accepts 1 argument: button_state (1, 2, 4)");
+               return 0;
+         }
+     } else {
+           PyErr_SetString(PyExc_ValueError, "This internal function accepts 1 argument: button_state (1, 2, 4)");
+           return 0;
+     }
+}
+
+PyObject* py_send_key(PyObject *dummy, PyObject *args){
+    Py_ssize_t args_size = PyTuple_Size(args);
+    char* keys;
+    unsigned int length = 0;
+    int hold_time;
+    if (args_size == 2){
+        if (PyArg_ParseTuple(args, "s#i", &keys, &length, &hold_time)){
+           pyrebox_sendkeys(keys, hold_time);
+           Py_INCREF(Py_True);
+           return Py_True;
+         } else {
+               PyErr_SetString(PyExc_ValueError, "This internal function accepts 2 arguments: keys, hold_time");
+               return 0;
+         }
+     } else {
+           PyErr_SetString(PyExc_ValueError, "This internal function accepts 2 arguments: keys, hold_time");
+           return 0;
+     }
+}
+
+PyObject* py_screendump(PyObject *dummy, PyObject *args){
+    Py_ssize_t args_size = PyTuple_Size(args);
+    char* filename;
+    unsigned int length;
+    if (args_size == 1){
+        if (PyArg_ParseTuple(args, "s#", &filename, &length)){
+           pyrebox_screendump(filename);
+           Py_INCREF(Py_True);
+           return Py_True;
+         } else {
+               PyErr_SetString(PyExc_ValueError, "This internal function accepts 1 argument: filename");
+               return 0;
+         }
+     } else {
+           PyErr_SetString(PyExc_ValueError, "This internal function accepts 1 argument: filename");
+           return 0;
+     }
+}
 
 PyMethodDef api_methods[] = {
       {"register_callback", register_callback, METH_VARARGS, "register_callback"}, 
@@ -1246,6 +1330,10 @@ PyMethodDef api_methods[] = {
       {"close_guest_path", py_close_guest_path, METH_VARARGS, "close_guest_path"},
       {"x86_get_pte", py_x86_get_pte, METH_VARARGS, "x86_get_pte"},
       {"x86_is_pae", py_x86_is_pae, METH_VARARGS, "x86_is_pae"},
+      {"mouse_move", py_mouse_move, METH_VARARGS, "mouse_move"},
+      {"mouse_button", py_mouse_button, METH_VARARGS, "mouse_button"},
+      {"send_key", py_send_key, METH_VARARGS, "send_key"},
+      {"screendump", py_screendump, METH_VARARGS, "screendump"},
       { NULL, NULL, 0, NULL }
     };
 
