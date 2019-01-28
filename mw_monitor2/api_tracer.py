@@ -64,7 +64,8 @@ APITRACER_TEXT_LOG_PATH = "apitracer.log"
 #}
 APITRACER_RULES = {} 
 APITRACER_LIGHT_MODE = True 
-APITRACER_DATABASE = None
+APITRACER_DATABASE32 = None
+APITRACER_DATABASE64 = None
 
 APITRACER_ANTI_STOLEN = False
 APITRACER_ENABLE_JMP = False
@@ -98,7 +99,7 @@ def log_calls():
             for vad in proc.get_vads():
                 if len(vad.get_calls()) > 0:
                     if TARGET_LONG_SIZE == 4:
-                        f_out.write( "\n\nVAD [%08x - %08x] - %s\n\n" % (vad.get_start(), vad.get_size(), (vad.get_mapped_file() if vad.get_mapped_file() is not None else "Not file mapped")))
+                        f_out.write("\n\nVAD [%08x - %08x] - %s\n\n" % (vad.get_start(), vad.get_size(), (vad.get_mapped_file() if vad.get_mapped_file() is not None else "Not file mapped")))
                     elif TARGET_LONG_SIZE == 8:
                         f_out.write("\n\nVAD [%016x - %016x] - %s\n\n" % (vad.get_start(), vad.get_size(), (vad.get_mapped_file() if vad.get_mapped_file() is not None else "Not file mapped")))
                     for data in vad.get_calls():
@@ -250,7 +251,8 @@ def opcodes(params, cb_name, proc):
     import struct
 
     global bp_counter
-    global APITRACER_DATABASE
+    global APITRACER_DATABASE32
+    global APITRACER_DATABASE64
     global APITRACER_RULES
     global APITRACER_ANTI_STOLEN
 
@@ -271,15 +273,20 @@ def opcodes(params, cb_name, proc):
 
         if sym is None:
             return
+
+
         mod = sym.get_mod()
         mod_fullname = sym.get_mod_fullname()
         fun = sym.get_fun()
         real_api_addr = sym.get_addr()
 
+
+        caller_module_name = proc.get_overlapping_module(pc)
+
         # Reduce FP's by checking that the origin EIP is not also within the
         # same module (code reuse inside the dll)
 
-        if mod_fullname == proc.get_overlapping_module(pc):
+        if mod_fullname == caller_module_name:
             return
 
         matched = False
@@ -288,9 +295,8 @@ def opcodes(params, cb_name, proc):
             if rule["mod"] == "" or fnmatch.fnmatch(mod_fullname.lower(), rule["mod"].lower()):
                 if rule["fun"] == "" or fnmatch.fnmatch(fun.lower(), rule["fun"].lower()):
                     if "from_mod" in rule and rule["from_mod"] != "":
-                        overlapping_mod_name = proc.get_overlapping_module(pc)
-                        if overlapping_mod_name is not None:
-                            if fnmatch.fnmatch(overlapping_mod_name, rule["from_mod"].lower()):
+                        if caller_module_name is not None:
+                            if fnmatch.fnmatch(caller_module_name, rule["from_mod"].lower()):
                                 matched = True
                                 if rule["action"] == "reject":
                                     return
@@ -327,7 +333,6 @@ def opcodes(params, cb_name, proc):
         is_64_bit_dll = True
         if TARGET_LONG_SIZE == 4 or (TARGET_LONG_SIZE == 8 and proc.is_wow64() and "windows\\syswow64" in mod_fullname.lower()):
             is_64_bit_dll = False
-
 
         if APITRACER_LIGHT_MODE:
             bits = 32 if not is_64_bit_dll else 64
@@ -562,7 +567,8 @@ def initialize_callbacks(module_hdl, printer):
     global APITRACER_TEXT_LOG_PATH
     global APITRACER_RULES
     global APITRACER_LIGHT_MODE
-    global APITRACER_DATABASE
+    global APITRACER_DATABASE32
+    global APITRACER_DATABASE64
     global APITRACER_ANTI_STOLEN
     global APITRACER_ENABLE_JMP
     global APITRACER_ENABLE_RET
@@ -605,11 +611,17 @@ def initialize_callbacks(module_hdl, printer):
 
         APITRACER_LIGHT_MODE = conf_data.get("light_mode", True)
         
-        if not "database_path" in conf_data:
-            raise Exception("Database path ('database_path') not properly specified")
+        if not "database_path_32" in conf_data:
+            raise Exception("Database path ('database_path_32') not properly specified")
 
-        APITRACER_DATABASE = conf_data.get("database_path", None)
-        set_db_path(APITRACER_DATABASE, 32)
+        if not "database_path_64" in conf_data:
+            raise Exception("Database path ('database_path_64') not properly specified")
+
+        APITRACER_DATABASE32 = conf_data.get("database_path_32", None)
+        set_db_path(APITRACER_DATABASE32, 32)
+        APITRACER_DATABASE64 = conf_data.get("database_path_64", None)
+        set_db_path(APITRACER_DATABASE64, 64)
+
 
         # Tracing engine configuration
         if "anti_stolen_bytes" in conf_data:

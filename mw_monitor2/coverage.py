@@ -185,7 +185,7 @@ def module_entry_point(params):
     # Get running process
     pgd = api.get_running_process(cpu_index)
 
-    pyrebox_print("Reached entry point of new process: %x" % pgd)
+    pyrebox_print("[COVERAGE] Reached entry point of new process: %x" % pgd)
 
     new_proc = interproc_data.get_process_by_pgd(pgd)
 

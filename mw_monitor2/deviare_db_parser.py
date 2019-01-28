@@ -98,7 +98,8 @@ NKT_DBOBJFLAG_STRUCTUNION_MASK = 0x00F00000
 
 DB_PATH_32 = ""
 DB_PATH_64 = ""
-DB = None
+DB_32 = None
+DB_64 = None
 
 def set_db_path(db_path, bitness):
     global DB_PATH_32

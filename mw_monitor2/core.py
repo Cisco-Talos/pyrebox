@@ -268,7 +268,7 @@ class Process:
         return self.__wow64
 
     def set_wow64(self, is_wow64):
-        self.__wow74 = is_wow64
+        self.__wow64 = is_wow64
 
     def get_all_calls(self):
         return self.__all_calls
@@ -405,7 +405,7 @@ class Process:
             pos = bisect.bisect_left(self.__symbols, Symbol("", "", "", addr))
             if pos >= 0 and pos < len(self.__symbols) and self.__symbols[pos].get_addr() == addr:
                 continue
-            if mod in self.__modules:
+            if mod_fullname in self.__modules:
                 for pair in self.__modules[mod_fullname]:
                     bisect.insort(
                         self.__symbols, Symbol(mod, mod_fullname, fun, pair[0] + addr))
