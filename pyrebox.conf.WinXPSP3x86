@@ -10,7 +10,10 @@ scripts.getset_var_example: False
 scripts.bp_range_test: False
 scripts.mem_write_breakpoint_test: False
 mw_monitor.mw_monitor: False 
-mw_monitor2.interproc: True
+mw_monitor2.interproc: True 
+mw_monitor2.coverage: False
+mw_monitor2.api_tracer: False 
+mw_monitor2.generic_unpacker: False
 pyrebox_test.test_0_vmi_create_proc: False
 pyrebox_test.test_1_block_begin: False
 pyrebox_test.test_2_opt_block_begin: False
