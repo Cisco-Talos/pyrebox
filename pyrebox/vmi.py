@@ -259,3 +259,30 @@ def get_system_time():
         return win_get_system_time()
     elif os_family == OS_FAMILY_LINUX:
         raise NotImplementedError("get_system_time not implemented on Linux guests")
+
+def get_threads():
+    global os_family
+    from windows_vmi import get_threads as win_get_threads
+    if os_family == OS_FAMILY_WIN:
+        return list(win_get_threads())
+    elif os_family == OS_FAMILY_LINUX:
+        raise NotImplementedError("get_threads not implemented yet on Linux guests")
+
+def get_thread_id(thread_number, thread_list):
+    if thread_number < len(thread_list):
+        return long(thread_list[thread_number]['id'])
+    else:
+        return long(0)
+
+def get_thread_description(thread_id, thread_list):
+    for element in thread_list:
+        if element['id'] == thread_id:
+            return "%s(%x) - %x" % (element['process_name'], element['pid'], element['tid'])
+
+def get_running_thread_first_cpu(thread_list):
+    for element in thread_list:
+        if element['running'] is not None and element['running'] == 0:
+            return long(element['id'])
+
+    # As a fallback, just return the first thread in the list
+    return long(thread_list[0]['id'])

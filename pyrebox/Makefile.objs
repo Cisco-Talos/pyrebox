@@ -31,6 +31,7 @@ obj-y += process_mgr.o
 obj-y += utils.o
 obj-y += pyrebox.o
 obj-y += qemu_glue.o
+obj-y += qemu_glue_gdbstub.o
 obj-y += api.o
 obj-y += qemu_commands.o
 obj-y += callbacks.o
@@ -47,6 +48,7 @@ pyrebox.o-cflags := $(PYTHON_CFLAGS) $(SLEUTHKIT_CFLAGS)
 utils.o-cflags := $(PYTHON_CFLAGS) $(SLEUTHKIT_CFLAGS)
 process_mgr.o-cflags := -std=c++11 $(PYTHON_CFLAGS) $(SLEUTHKIT_CFLAGS)
 qemu_glue.o-cflags := $(PYTHON_CFLAGS) $(SLEUTHKIT_CFLAGS)
+qemu_glue_gdbstub.o-cflags := $(PYTHON_CFLAGS) $(SLEUTHKIT_CFLAGS)
 callbacks.o-cflags := -std=c++11 $(PYTHON_CFLAGS) $(SLEUTHKIT_CFLAGS)
 api.o-cflags := -std=c++11 $(PYTHON_CFLAGS) $(SLEUTHKIT_CFLAGS)
 qemu_commands.o-cflags := $(PYTHON_CFLAGS) $(SLEUTHKIT_CFLAGS)

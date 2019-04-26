@@ -28,4 +28,5 @@ void unload_module(Monitor* mon, const QDict* qdict);
 void reload_module(Monitor* mon, const QDict* qdict);
 void list_modules(Monitor* mon, const QDict* qdict);
 void pyrebox_shell(Monitor* mon, const QDict* qdict);
+void pyrebox_gdbserver(Monitor* mon, const QDict* qdict);
 #endif

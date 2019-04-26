@@ -56,3 +56,10 @@
 	.params		= "",
 	.help		= "Start a pyrebox shell"
 },
+{
+	.name		= "pyrebox_gdbserver",
+	.args_type	= "port:i?",
+	.cmd	= pyrebox_gdbserver,
+	.params		= "[port]",
+	.help		= "Start a PyREBox gdbserver on a given port"
+},
