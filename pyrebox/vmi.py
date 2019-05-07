@@ -278,6 +278,7 @@ def get_thread_description(thread_id, thread_list):
     for element in thread_list:
         if element['id'] == thread_id:
             return "%s(%x) - %x" % (element['process_name'], element['pid'], element['tid'])
+    return ""
 
 def get_running_thread_first_cpu(thread_list):
     for element in thread_list:
@@ -286,3 +287,9 @@ def get_running_thread_first_cpu(thread_list):
 
     # As a fallback, just return the first thread in the list
     return long(thread_list[0]['id'])
+
+def does_thread_exist(thread_id, thread_list):
+    for element in thread_list:
+        if element['id'] == thread_id:
+            return True
+    return False
