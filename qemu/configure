@@ -4069,7 +4069,7 @@ EOF
           git_submodules="${git_submodules} dtc"
       fi
       if test -d "${source_path}/dtc/libfdt" || test -e "${source_path}/../.git" ; then
-          fdt=yes
+          fdt=git
           dtc_internal="yes"
           mkdir -p dtc
           if [ "$pwd_is_source_path" != "y" ] ; then
