@@ -18,12 +18,13 @@
 #include "qemu/osdep.h"
 #include "qapi/error.h"
 #include "block/block_int.h"
+#include "block/qdict.h"
 #include "sysemu/block-backend.h"
 #include "qemu/module.h"
 #include "qemu/option.h"
 #include "qemu/crc32c.h"
 #include "qemu/bswap.h"
-#include "block/vhdx.h"
+#include "vhdx.h"
 #include "migration/blocker.h"
 #include "qemu/uuid.h"
 #include "qapi/qmp/qdict.h"
@@ -155,7 +156,7 @@ uint32_t vhdx_update_checksum(uint8_t *buf, size_t size, int crc_offset)
 
     memset(buf + crc_offset, 0, sizeof(crc));
     crc =  crc32c(0xffffffff, buf, size);
-    cpu_to_le32s(&crc);
+    crc = cpu_to_le32(crc);
     memcpy(buf + crc_offset, &crc, sizeof(crc));
 
     return crc;
@@ -184,7 +185,7 @@ uint32_t vhdx_checksum_calc(uint32_t crc, uint8_t *buf, size_t size,
 /* Validates the checksum of the buffer, with an in-place CRC.
  *
  * Zero is substituted during crc calculation for the original crc field,
- * and the crc field is restored afterwards.  But the buffer will be modifed
+ * and the crc field is restored afterwards.  But the buffer will be modified
  * during the calculation, so this may not be not suitable for multi-threaded
  * use.
  *
@@ -752,8 +753,8 @@ static int vhdx_parse_metadata(BlockDriverState *bs, BDRVVHDXState *s)
         goto exit;
     }
 
-    le32_to_cpus(&s->params.block_size);
-    le32_to_cpus(&s->params.data_bits);
+    s->params.block_size = le32_to_cpu(s->params.block_size);
+    s->params.data_bits = le32_to_cpu(s->params.data_bits);
 
 
     /* We now have the file parameters, so we can tell if this is a
@@ -802,9 +803,9 @@ static int vhdx_parse_metadata(BlockDriverState *bs, BDRVVHDXState *s)
         goto exit;
     }
 
-    le64_to_cpus(&s->virtual_disk_size);
-    le32_to_cpus(&s->logical_sector_size);
-    le32_to_cpus(&s->physical_sector_size);
+    s->virtual_disk_size = le64_to_cpu(s->virtual_disk_size);
+    s->logical_sector_size = le32_to_cpu(s->logical_sector_size);
+    s->physical_sector_size = le32_to_cpu(s->physical_sector_size);
 
     if (s->params.block_size < VHDX_BLOCK_SIZE_MIN ||
         s->params.block_size > VHDX_BLOCK_SIZE_MAX) {
@@ -984,7 +985,7 @@ static int vhdx_open(BlockDriverState *bs, QDict *options, int flags,
     /* endian convert, and verify populated BAT field file offsets against
      * region table and log entries */
     for (i = 0; i < s->bat_entries; i++) {
-        le64_to_cpus(&s->bat[i]);
+        s->bat[i] = le64_to_cpu(s->bat[i]);
         if (payblocks--) {
             /* payload bat entries */
             if ((s->bat[i] & VHDX_BAT_STATE_BIT_MASK) ==
@@ -1126,9 +1127,9 @@ static coroutine_fn int vhdx_co_readv(BlockDriverState *bs, int64_t sector_num,
                 break;
             case PAYLOAD_BLOCK_FULLY_PRESENT:
                 qemu_co_mutex_unlock(&s->lock);
-                ret = bdrv_co_readv(bs->file,
-                                    sinfo.file_offset >> BDRV_SECTOR_BITS,
-                                    sinfo.sectors_avail, &hd_qiov);
+                ret = bdrv_co_preadv(bs->file, sinfo.file_offset,
+                                     sinfo.sectors_avail * BDRV_SECTOR_SIZE,
+                                     &hd_qiov, 0);
                 qemu_co_mutex_lock(&s->lock);
                 if (ret < 0) {
                     goto exit;
@@ -1226,7 +1227,8 @@ int vhdx_user_visible_write(BlockDriverState *bs, BDRVVHDXState *s)
 }
 
 static coroutine_fn int vhdx_co_writev(BlockDriverState *bs, int64_t sector_num,
-                                      int nb_sectors, QEMUIOVector *qiov)
+                                       int nb_sectors, QEMUIOVector *qiov,
+                                       int flags)
 {
     int ret = -ENOTSUP;
     BDRVVHDXState *s = bs->opaque;
@@ -1242,6 +1244,7 @@ static coroutine_fn int vhdx_co_writev(BlockDriverState *bs, int64_t sector_num,
     uint64_t bat_prior_offset = 0;
     bool bat_update = false;
 
+    assert(!flags);
     qemu_iovec_init(&hd_qiov, qiov->niov);
 
     qemu_co_mutex_lock(&s->lock);
@@ -1346,9 +1349,9 @@ static coroutine_fn int vhdx_co_writev(BlockDriverState *bs, int64_t sector_num,
                 }
                 /* block exists, so we can just overwrite it */
                 qemu_co_mutex_unlock(&s->lock);
-                ret = bdrv_co_writev(bs->file,
-                                    sinfo.file_offset >> BDRV_SECTOR_BITS,
-                                    sectors_to_write, &hd_qiov);
+                ret = bdrv_co_pwritev(bs->file, sinfo.file_offset,
+                                      sectors_to_write * BDRV_SECTOR_SIZE,
+                                      &hd_qiov, 0);
                 qemu_co_mutex_lock(&s->lock);
                 if (ret < 0) {
                     goto error_bat_restore;
@@ -1506,7 +1509,7 @@ static int vhdx_create_new_metadata(BlockBackend *blk,
     mt_file_params->block_size = cpu_to_le32(block_size);
     if (type == VHDX_TYPE_FIXED) {
         mt_file_params->data_bits |= VHDX_PARAMS_LEAVE_BLOCKS_ALLOCED;
-        cpu_to_le32s(&mt_file_params->data_bits);
+        mt_file_params->data_bits = cpu_to_le32(mt_file_params->data_bits);
     }
 
     vhdx_guid_generate(&mt_page83->page_83_data);
@@ -1653,7 +1656,7 @@ static int vhdx_create_bat(BlockBackend *blk, BDRVVHDXState *s,
             sinfo.file_offset = ROUND_UP(sinfo.file_offset, MiB);
             vhdx_update_bat_table_entry(blk_bs(blk), s, &sinfo, &unused, &unused,
                                         block_state);
-            cpu_to_le64s(&s->bat[sinfo.bat_idx]);
+            s->bat[sinfo.bat_idx] = cpu_to_le64(s->bat[sinfo.bat_idx]);
             sector_num += s->sectors_per_block;
         }
         ret = blk_pwrite(blk, file_offset, s->bat, length, 0);
@@ -1949,7 +1952,7 @@ static int coroutine_fn vhdx_co_create(BlockdevCreateOptions *opts,
         goto delete_and_exit;
     }
 
-
+    ret = 0;
 delete_and_exit:
     blk_unref(blk);
     bdrv_unref(bs);
@@ -1962,8 +1965,7 @@ static int coroutine_fn vhdx_co_create_opts(const char *filename,
                                             Error **errp)
 {
     BlockdevCreateOptions *create_options = NULL;
-    QDict *qdict = NULL;
-    QObject *qobj;
+    QDict *qdict;
     Visitor *v;
     BlockDriverState *bs = NULL;
     Error *local_err = NULL;
@@ -2002,15 +2004,12 @@ static int coroutine_fn vhdx_co_create_opts(const char *filename,
     qdict_put_str(qdict, "driver", "vhdx");
     qdict_put_str(qdict, "file", bs->node_name);
 
-    qobj = qdict_crumple(qdict, errp);
-    QDECREF(qdict);
-    qdict = qobject_to(QDict, qobj);
-    if (qdict == NULL) {
+    v = qobject_input_visitor_new_flat_confused(qdict, errp);
+    if (!v) {
         ret = -EINVAL;
         goto fail;
     }
 
-    v = qobject_input_visitor_new_keyval(QOBJECT(qdict));
     visit_type_BlockdevCreateOptions(v, NULL, &create_options, &local_err);
     visit_free(v);
 
@@ -2049,7 +2048,7 @@ static int coroutine_fn vhdx_co_create_opts(const char *filename,
     ret = vhdx_co_create(create_options, errp);
 
 fail:
-    QDECREF(qdict);
+    qobject_unref(qdict);
     bdrv_unref(bs);
     qapi_free_BlockdevCreateOptions(create_options);
     return ret;

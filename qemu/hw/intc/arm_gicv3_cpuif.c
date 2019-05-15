@@ -29,11 +29,7 @@ void gicv3_set_gicv3state(CPUState *cpu, GICv3CPUState *s)
 
 static GICv3CPUState *icc_cs_from_env(CPUARMState *env)
 {
-    /* Given the CPU, find the right GICv3CPUState struct.
-     * Since we registered the CPU interface with the EL change hook as
-     * the opaque pointer, we can just directly get from the CPU to it.
-     */
-    return arm_get_el_change_hook_opaque(arm_env_get_cpu(env));
+    return env->gicv3state;
 }
 
 static bool gicv3_use_ns_bank(CPUARMState *env)
@@ -89,7 +85,10 @@ static bool icv_access(CPUARMState *env, int hcr_flags)
      *  * access if NS EL1 and either IMO or FMO == 1:
      *    CTLR, DIR, PMR, RPR
      */
-    return (env->cp15.hcr_el2 & hcr_flags) && arm_current_el(env) == 1
+    uint64_t hcr_el2 = arm_hcr_el2_eff(env);
+    bool flagmatch = hcr_el2 & hcr_flags & (HCR_IMO | HCR_FMO);
+
+    return flagmatch && arm_current_el(env) == 1
         && !arm_is_secure_below_el3(env);
 }
 
@@ -431,7 +430,7 @@ static uint64_t icv_ap_read(CPUARMState *env, const ARMCPRegInfo *ri)
 {
     GICv3CPUState *cs = icc_cs_from_env(env);
     int regno = ri->opc2 & 3;
-    int grp = ri->crm & 1 ? GICV3_G0 : GICV3_G1NS;
+    int grp = (ri->crm & 1) ? GICV3_G1NS : GICV3_G0;
     uint64_t value = cs->ich_apr[grp][regno];
 
     trace_gicv3_icv_ap_read(ri->crm & 1, regno, gicv3_redist_affid(cs), value);
@@ -443,7 +442,7 @@ static void icv_ap_write(CPUARMState *env, const ARMCPRegInfo *ri,
 {
     GICv3CPUState *cs = icc_cs_from_env(env);
     int regno = ri->opc2 & 3;
-    int grp = ri->crm & 1 ? GICV3_G0 : GICV3_G1NS;
+    int grp = (ri->crm & 1) ? GICV3_G1NS : GICV3_G0;
 
     trace_gicv3_icv_ap_write(ri->crm & 1, regno, gicv3_redist_affid(cs), value);
 
@@ -1465,7 +1464,7 @@ static uint64_t icc_ap_read(CPUARMState *env, const ARMCPRegInfo *ri)
     uint64_t value;
 
     int regno = ri->opc2 & 3;
-    int grp = ri->crm & 1 ? GICV3_G0 : GICV3_G1;
+    int grp = (ri->crm & 1) ? GICV3_G1 : GICV3_G0;
 
     if (icv_access(env, grp == GICV3_G0 ? HCR_FMO : HCR_IMO)) {
         return icv_ap_read(env, ri);
@@ -1487,7 +1486,7 @@ static void icc_ap_write(CPUARMState *env, const ARMCPRegInfo *ri,
     GICv3CPUState *cs = icc_cs_from_env(env);
 
     int regno = ri->opc2 & 3;
-    int grp = ri->crm & 1 ? GICV3_G0 : GICV3_G1;
+    int grp = (ri->crm & 1) ? GICV3_G1 : GICV3_G0;
 
     if (icv_access(env, grp == GICV3_G0 ? HCR_FMO : HCR_IMO)) {
         icv_ap_write(env, ri, value);
@@ -1553,8 +1552,9 @@ static void icc_dir_write(CPUARMState *env, const ARMCPRegInfo *ri,
     /* No need to include !IsSecure in route_*_to_el2 as it's only
      * tested in cases where we know !IsSecure is true.
      */
-    route_fiq_to_el2 = env->cp15.hcr_el2 & HCR_FMO;
-    route_irq_to_el2 = env->cp15.hcr_el2 & HCR_FMO;
+    uint64_t hcr_el2 = arm_hcr_el2_eff(env);
+    route_fiq_to_el2 = hcr_el2 & HCR_FMO;
+    route_irq_to_el2 = hcr_el2 & HCR_IMO;
 
     switch (arm_current_el(env)) {
     case 3:
@@ -1896,8 +1896,8 @@ static CPAccessResult gicv3_irqfiq_access(CPUARMState *env,
     if ((env->cp15.scr_el3 & (SCR_FIQ | SCR_IRQ)) == (SCR_FIQ | SCR_IRQ)) {
         switch (el) {
         case 1:
-            if (arm_is_secure_below_el3(env) ||
-                ((env->cp15.hcr_el2 & (HCR_IMO | HCR_FMO)) == 0)) {
+            /* Note that arm_hcr_el2_eff takes secure state into account.  */
+            if ((arm_hcr_el2_eff(env) & (HCR_IMO | HCR_FMO)) == 0) {
                 r = CP_ACCESS_TRAP_EL3;
             }
             break;
@@ -1937,8 +1937,8 @@ static CPAccessResult gicv3_dir_access(CPUARMState *env,
 static CPAccessResult gicv3_sgi_access(CPUARMState *env,
                                        const ARMCPRegInfo *ri, bool isread)
 {
-    if ((env->cp15.hcr_el2 & (HCR_IMO | HCR_FMO)) &&
-        arm_current_el(env) == 1 && !arm_is_secure_below_el3(env)) {
+    if (arm_current_el(env) == 1 &&
+        (arm_hcr_el2_eff(env) & (HCR_IMO | HCR_FMO)) != 0) {
         /* Takes priority over a possible EL3 trap */
         return CP_ACCESS_TRAP_EL2;
     }
@@ -1962,8 +1962,7 @@ static CPAccessResult gicv3_fiq_access(CPUARMState *env,
     if (env->cp15.scr_el3 & SCR_FIQ) {
         switch (el) {
         case 1:
-            if (arm_is_secure_below_el3(env) ||
-                ((env->cp15.hcr_el2 & HCR_FMO) == 0)) {
+            if ((arm_hcr_el2_eff(env) & HCR_FMO) == 0) {
                 r = CP_ACCESS_TRAP_EL3;
             }
             break;
@@ -2002,8 +2001,7 @@ static CPAccessResult gicv3_irq_access(CPUARMState *env,
     if (env->cp15.scr_el3 & SCR_IRQ) {
         switch (el) {
         case 1:
-            if (arm_is_secure_below_el3(env) ||
-                ((env->cp15.hcr_el2 & HCR_IMO) == 0)) {
+            if ((arm_hcr_el2_eff(env) & HCR_IMO) == 0) {
                 r = CP_ACCESS_TRAP_EL3;
             }
             break;
@@ -2296,7 +2294,7 @@ static uint64_t ich_ap_read(CPUARMState *env, const ARMCPRegInfo *ri)
 {
     GICv3CPUState *cs = icc_cs_from_env(env);
     int regno = ri->opc2 & 3;
-    int grp = ri->crm & 1 ? GICV3_G0 : GICV3_G1NS;
+    int grp = (ri->crm & 1) ? GICV3_G1NS : GICV3_G0;
     uint64_t value;
 
     value = cs->ich_apr[grp][regno];
@@ -2309,7 +2307,7 @@ static void ich_ap_write(CPUARMState *env, const ARMCPRegInfo *ri,
 {
     GICv3CPUState *cs = icc_cs_from_env(env);
     int regno = ri->opc2 & 3;
-    int grp = ri->crm & 1 ? GICV3_G0 : GICV3_G1NS;
+    int grp = (ri->crm & 1) ? GICV3_G1NS : GICV3_G0;
 
     trace_gicv3_ich_ap_write(ri->crm & 1, regno, gicv3_redist_affid(cs), value);
 
@@ -2615,9 +2613,7 @@ void gicv3_init_cpuif(GICv3State *s)
          * it might be with code translated by CPU 0 but run by CPU 1, in
          * which case we'd get the wrong value.
          * So instead we define the regs with no ri->opaque info, and
-         * get back to the GICv3CPUState from the ARMCPU by reading back
-         * the opaque pointer from the el_change_hook, which we're going
-         * to need to register anyway.
+         * get back to the GICv3CPUState from the CPUARMState.
          */
         define_arm_cp_regs(cpu, gicv3_cpuif_reginfo);
         if (arm_feature(&cpu->env, ARM_FEATURE_EL2)

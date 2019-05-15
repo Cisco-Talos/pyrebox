@@ -11,7 +11,9 @@
 #include "qemu/osdep.h"
 #include "qapi/error.h"
 #include "hw/virtio/vhost.h"
+#include "hw/virtio/vhost-user.h"
 #include "hw/virtio/vhost-backend.h"
+#include "hw/virtio/virtio.h"
 #include "hw/virtio/virtio-net.h"
 #include "chardev/char-fe.h"
 #include "sysemu/kvm.h"
@@ -25,11 +27,16 @@
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <sys/un.h>
-#include <linux/vhost.h>
+
+#include "standard-headers/linux/vhost_types.h"
+
+#ifdef CONFIG_LINUX
 #include <linux/userfaultfd.h>
+#endif
 
 #define VHOST_MEMORY_MAX_NREGIONS    8
 #define VHOST_USER_F_PROTOCOL_FEATURES 30
+#define VHOST_USER_SLAVE_MAX_FDS     8
 
 /*
  * Maximum size of virtio device config space
@@ -47,6 +54,9 @@ enum VhostUserProtocolFeature {
     VHOST_USER_PROTOCOL_F_CRYPTO_SESSION = 7,
     VHOST_USER_PROTOCOL_F_PAGEFAULT = 8,
     VHOST_USER_PROTOCOL_F_CONFIG = 9,
+    VHOST_USER_PROTOCOL_F_SLAVE_SEND_FD = 10,
+    VHOST_USER_PROTOCOL_F_HOST_NOTIFIER = 11,
+    VHOST_USER_PROTOCOL_F_INFLIGHT_SHMFD = 12,
     VHOST_USER_PROTOCOL_F_MAX
 };
 
@@ -84,6 +94,8 @@ typedef enum VhostUserRequest {
     VHOST_USER_POSTCOPY_ADVISE  = 28,
     VHOST_USER_POSTCOPY_LISTEN  = 29,
     VHOST_USER_POSTCOPY_END     = 30,
+    VHOST_USER_GET_INFLIGHT_FD = 31,
+    VHOST_USER_SET_INFLIGHT_FD = 32,
     VHOST_USER_MAX
 } VhostUserRequest;
 
@@ -91,6 +103,7 @@ typedef enum VhostUserSlaveRequest {
     VHOST_USER_SLAVE_NONE = 0,
     VHOST_USER_SLAVE_IOTLB_MSG = 1,
     VHOST_USER_SLAVE_CONFIG_CHANGE_MSG = 2,
+    VHOST_USER_SLAVE_VRING_HOST_NOTIFIER_MSG = 3,
     VHOST_USER_SLAVE_MAX
 }  VhostUserSlaveRequest;
 
@@ -135,6 +148,19 @@ static VhostUserConfig c __attribute__ ((unused));
                                    + sizeof(c.size) \
                                    + sizeof(c.flags))
 
+typedef struct VhostUserVringArea {
+    uint64_t u64;
+    uint64_t size;
+    uint64_t offset;
+} VhostUserVringArea;
+
+typedef struct VhostUserInflight {
+    uint64_t mmap_size;
+    uint64_t mmap_offset;
+    uint16_t num_queues;
+    uint16_t queue_size;
+} VhostUserInflight;
+
 typedef struct {
     VhostUserRequest request;
 
@@ -156,6 +182,8 @@ typedef union {
         struct vhost_iotlb_msg iotlb;
         VhostUserConfig config;
         VhostUserCryptoSession session;
+        VhostUserVringArea area;
+        VhostUserInflight inflight;
 } VhostUserPayload;
 
 typedef struct VhostUserMsg {
@@ -173,7 +201,8 @@ static VhostUserMsg m __attribute__ ((unused));
 
 struct vhost_user {
     struct vhost_dev *dev;
-    CharBackend *chr;
+    /* Shared between vhost devs of the same virtio device */
+    VhostUserState *user;
     int slave_fd;
     NotifierWithReturn postcopy_notifier;
     struct PostCopyFD  postcopy_fd;
@@ -193,13 +222,13 @@ struct vhost_user {
 
 static bool ioeventfd_enabled(void)
 {
-    return kvm_enabled() && kvm_eventfds_enabled();
+    return !kvm_enabled() || kvm_eventfds_enabled();
 }
 
-static int vhost_user_read(struct vhost_dev *dev, VhostUserMsg *msg)
+static int vhost_user_read_header(struct vhost_dev *dev, VhostUserMsg *msg)
 {
     struct vhost_user *u = dev->opaque;
-    CharBackend *chr = u->chr;
+    CharBackend *chr = u->user->chr;
     uint8_t *p = (uint8_t *) msg;
     int r, size = VHOST_USER_HDR_SIZE;
 
@@ -207,7 +236,7 @@ static int vhost_user_read(struct vhost_dev *dev, VhostUserMsg *msg)
     if (r != size) {
         error_report("Failed to read msg header. Read %d instead of %d."
                      " Original request %d.", r, size, msg->hdr.request);
-        goto fail;
+        return -1;
     }
 
     /* validate received flags */
@@ -215,7 +244,21 @@ static int vhost_user_read(struct vhost_dev *dev, VhostUserMsg *msg)
         error_report("Failed to read msg header."
                 " Flags 0x%x instead of 0x%x.", msg->hdr.flags,
                 VHOST_USER_REPLY_MASK | VHOST_USER_VERSION);
-        goto fail;
+        return -1;
+    }
+
+    return 0;
+}
+
+static int vhost_user_read(struct vhost_dev *dev, VhostUserMsg *msg)
+{
+    struct vhost_user *u = dev->opaque;
+    CharBackend *chr = u->user->chr;
+    uint8_t *p = (uint8_t *) msg;
+    int r, size;
+
+    if (vhost_user_read_header(dev, msg) < 0) {
+        return -1;
     }
 
     /* validate message size is sane */
@@ -223,7 +266,7 @@ static int vhost_user_read(struct vhost_dev *dev, VhostUserMsg *msg)
         error_report("Failed to read msg header."
                 " Size %d exceeds the maximum %zu.", msg->hdr.size,
                 VHOST_USER_PAYLOAD_SIZE);
-        goto fail;
+        return -1;
     }
 
     if (msg->hdr.size) {
@@ -233,14 +276,11 @@ static int vhost_user_read(struct vhost_dev *dev, VhostUserMsg *msg)
         if (r != size) {
             error_report("Failed to read msg payload."
                          " Read %d instead of %d.", r, msg->hdr.size);
-            goto fail;
+            return -1;
         }
     }
 
     return 0;
-
-fail:
-    return -1;
 }
 
 static int process_message_reply(struct vhost_dev *dev,
@@ -285,7 +325,7 @@ static int vhost_user_write(struct vhost_dev *dev, VhostUserMsg *msg,
                             int *fds, int fd_num)
 {
     struct vhost_user *u = dev->opaque;
-    CharBackend *chr = u->chr;
+    CharBackend *chr = u->user->chr;
     int ret, size = VHOST_USER_HDR_SIZE + msg->hdr.size;
 
     /*
@@ -360,8 +400,6 @@ static int vhost_user_set_mem_table_postcopy(struct vhost_dev *dev,
     int fds[VHOST_MEMORY_MAX_NREGIONS];
     int i, fd;
     size_t fd_num = 0;
-    bool reply_supported = virtio_has_feature(dev->protocol_features,
-                                              VHOST_USER_PROTOCOL_F_REPLY_ACK);
     VhostUserMsg msg_reply;
     int region_i, msg_i;
 
@@ -369,10 +407,6 @@ static int vhost_user_set_mem_table_postcopy(struct vhost_dev *dev,
         .hdr.request = VHOST_USER_SET_MEM_TABLE,
         .hdr.flags = VHOST_USER_VERSION,
     };
-
-    if (reply_supported) {
-        msg.hdr.flags |= VHOST_USER_NEED_REPLY_MASK;
-    }
 
     if (u->region_rb_len < dev->mem->nregions) {
         u->region_rb = g_renew(RAMBlock*, u->region_rb, dev->mem->nregions);
@@ -489,10 +523,6 @@ static int vhost_user_set_mem_table_postcopy(struct vhost_dev *dev,
         return -1;
     }
 
-    if (reply_supported) {
-        return process_message_reply(dev, &msg);
-    }
-
     return 0;
 }
 
@@ -505,8 +535,7 @@ static int vhost_user_set_mem_table(struct vhost_dev *dev,
     size_t fd_num = 0;
     bool do_postcopy = u->postcopy_listen && u->postcopy_fd.handler;
     bool reply_supported = virtio_has_feature(dev->protocol_features,
-                                          VHOST_USER_PROTOCOL_F_REPLY_ACK) &&
-                                          !do_postcopy;
+                                              VHOST_USER_PROTOCOL_F_REPLY_ACK);
 
     if (do_postcopy) {
         /* Postcopy has enough differences that it's best done in it's own
@@ -636,9 +665,37 @@ static int vhost_user_set_vring_num(struct vhost_dev *dev,
     return vhost_set_vring(dev, VHOST_USER_SET_VRING_NUM, ring);
 }
 
+static void vhost_user_host_notifier_restore(struct vhost_dev *dev,
+                                             int queue_idx)
+{
+    struct vhost_user *u = dev->opaque;
+    VhostUserHostNotifier *n = &u->user->notifier[queue_idx];
+    VirtIODevice *vdev = dev->vdev;
+
+    if (n->addr && !n->set) {
+        virtio_queue_set_host_notifier_mr(vdev, queue_idx, &n->mr, true);
+        n->set = true;
+    }
+}
+
+static void vhost_user_host_notifier_remove(struct vhost_dev *dev,
+                                            int queue_idx)
+{
+    struct vhost_user *u = dev->opaque;
+    VhostUserHostNotifier *n = &u->user->notifier[queue_idx];
+    VirtIODevice *vdev = dev->vdev;
+
+    if (n->addr && n->set) {
+        virtio_queue_set_host_notifier_mr(vdev, queue_idx, &n->mr, false);
+        n->set = false;
+    }
+}
+
 static int vhost_user_set_vring_base(struct vhost_dev *dev,
                                      struct vhost_vring_state *ring)
 {
+    vhost_user_host_notifier_restore(dev, ring->index);
+
     return vhost_set_vring(dev, VHOST_USER_SET_VRING_BASE, ring);
 }
 
@@ -671,6 +728,8 @@ static int vhost_user_get_vring_base(struct vhost_dev *dev,
         .payload.state = *ring,
         .hdr.size = sizeof(msg.payload.state),
     };
+
+    vhost_user_host_notifier_remove(dev, ring->index);
 
     if (vhost_user_write(dev, &msg, NULL, 0) < 0) {
         return -1;
@@ -845,6 +904,66 @@ static int vhost_user_slave_handle_config_change(struct vhost_dev *dev)
     return ret;
 }
 
+static int vhost_user_slave_handle_vring_host_notifier(struct vhost_dev *dev,
+                                                       VhostUserVringArea *area,
+                                                       int fd)
+{
+    int queue_idx = area->u64 & VHOST_USER_VRING_IDX_MASK;
+    size_t page_size = qemu_real_host_page_size;
+    struct vhost_user *u = dev->opaque;
+    VhostUserState *user = u->user;
+    VirtIODevice *vdev = dev->vdev;
+    VhostUserHostNotifier *n;
+    void *addr;
+    char *name;
+
+    if (!virtio_has_feature(dev->protocol_features,
+                            VHOST_USER_PROTOCOL_F_HOST_NOTIFIER) ||
+        vdev == NULL || queue_idx >= virtio_get_num_queues(vdev)) {
+        return -1;
+    }
+
+    n = &user->notifier[queue_idx];
+
+    if (n->addr) {
+        virtio_queue_set_host_notifier_mr(vdev, queue_idx, &n->mr, false);
+        object_unparent(OBJECT(&n->mr));
+        munmap(n->addr, page_size);
+        n->addr = NULL;
+    }
+
+    if (area->u64 & VHOST_USER_VRING_NOFD_MASK) {
+        return 0;
+    }
+
+    /* Sanity check. */
+    if (area->size != page_size) {
+        return -1;
+    }
+
+    addr = mmap(NULL, page_size, PROT_READ | PROT_WRITE, MAP_SHARED,
+                fd, area->offset);
+    if (addr == MAP_FAILED) {
+        return -1;
+    }
+
+    name = g_strdup_printf("vhost-user/host-notifier@%p mmaps[%d]",
+                           user, queue_idx);
+    memory_region_init_ram_device_ptr(&n->mr, OBJECT(vdev), name,
+                                      page_size, addr);
+    g_free(name);
+
+    if (virtio_queue_set_host_notifier_mr(vdev, queue_idx, &n->mr, true)) {
+        munmap(addr, page_size);
+        return -1;
+    }
+
+    n->addr = addr;
+    n->set = true;
+
+    return 0;
+}
+
 static void slave_read(void *opaque)
 {
     struct vhost_dev *dev = opaque;
@@ -852,12 +971,47 @@ static void slave_read(void *opaque)
     VhostUserHeader hdr = { 0, };
     VhostUserPayload payload = { 0, };
     int size, ret = 0;
+    struct iovec iov;
+    struct msghdr msgh;
+    int fd[VHOST_USER_SLAVE_MAX_FDS];
+    char control[CMSG_SPACE(sizeof(fd))];
+    struct cmsghdr *cmsg;
+    int i, fdsize = 0;
+
+    memset(&msgh, 0, sizeof(msgh));
+    msgh.msg_iov = &iov;
+    msgh.msg_iovlen = 1;
+    msgh.msg_control = control;
+    msgh.msg_controllen = sizeof(control);
+
+    memset(fd, -1, sizeof(fd));
 
     /* Read header */
-    size = read(u->slave_fd, &hdr, VHOST_USER_HDR_SIZE);
+    iov.iov_base = &hdr;
+    iov.iov_len = VHOST_USER_HDR_SIZE;
+
+    do {
+        size = recvmsg(u->slave_fd, &msgh, 0);
+    } while (size < 0 && (errno == EINTR || errno == EAGAIN));
+
     if (size != VHOST_USER_HDR_SIZE) {
         error_report("Failed to read from slave.");
         goto err;
+    }
+
+    if (msgh.msg_flags & MSG_CTRUNC) {
+        error_report("Truncated message.");
+        goto err;
+    }
+
+    for (cmsg = CMSG_FIRSTHDR(&msgh); cmsg != NULL;
+         cmsg = CMSG_NXTHDR(&msgh, cmsg)) {
+            if (cmsg->cmsg_level == SOL_SOCKET &&
+                cmsg->cmsg_type == SCM_RIGHTS) {
+                    fdsize = cmsg->cmsg_len - CMSG_LEN(0);
+                    memcpy(fd, CMSG_DATA(cmsg), fdsize);
+                    break;
+            }
     }
 
     if (hdr.size > VHOST_USER_PAYLOAD_SIZE) {
@@ -868,7 +1022,10 @@ static void slave_read(void *opaque)
     }
 
     /* Read payload */
-    size = read(u->slave_fd, &payload, hdr.size);
+    do {
+        size = read(u->slave_fd, &payload, hdr.size);
+    } while (size < 0 && (errno == EINTR || errno == EAGAIN));
+
     if (size != hdr.size) {
         error_report("Failed to read payload from slave.");
         goto err;
@@ -881,9 +1038,20 @@ static void slave_read(void *opaque)
     case VHOST_USER_SLAVE_CONFIG_CHANGE_MSG :
         ret = vhost_user_slave_handle_config_change(dev);
         break;
+    case VHOST_USER_SLAVE_VRING_HOST_NOTIFIER_MSG:
+        ret = vhost_user_slave_handle_vring_host_notifier(dev, &payload.area,
+                                                          fd[0]);
+        break;
     default:
         error_report("Received unexpected msg type.");
         ret = -EINVAL;
+    }
+
+    /* Close the remaining file descriptors. */
+    for (i = 0; i < fdsize; i++) {
+        if (fd[i] != -1) {
+            close(fd[i]);
+        }
     }
 
     /*
@@ -905,7 +1073,10 @@ static void slave_read(void *opaque)
         iovec[1].iov_base = &payload;
         iovec[1].iov_len = hdr.size;
 
-        size = writev(u->slave_fd, iovec, ARRAY_SIZE(iovec));
+        do {
+            size = writev(u->slave_fd, iovec, ARRAY_SIZE(iovec));
+        } while (size < 0 && (errno == EINTR || errno == EAGAIN));
+
         if (size != VHOST_USER_HDR_SIZE + hdr.size) {
             error_report("Failed to send msg reply to slave.");
             goto err;
@@ -918,6 +1089,11 @@ err:
     qemu_set_fd_handler(u->slave_fd, NULL, NULL, NULL);
     close(u->slave_fd);
     u->slave_fd = -1;
+    for (i = 0; i < fdsize; i++) {
+        if (fd[i] != -1) {
+            close(fd[i]);
+        }
+    }
     return;
 }
 
@@ -969,6 +1145,7 @@ out:
     return ret;
 }
 
+#ifdef CONFIG_LINUX
 /*
  * Called back from the postcopy fault thread when a fault is received on our
  * ufd.
@@ -1036,6 +1213,7 @@ static int vhost_user_postcopy_waker(struct PostCopyFD *pcfd, RAMBlock *rb,
     trace_vhost_user_postcopy_waker_nomatch(qemu_ram_get_idstr(rb), offset);
     return 0;
 }
+#endif
 
 /*
  * Called at the start of an inbound postcopy on reception of the
@@ -1043,8 +1221,9 @@ static int vhost_user_postcopy_waker(struct PostCopyFD *pcfd, RAMBlock *rb,
  */
 static int vhost_user_postcopy_advise(struct vhost_dev *dev, Error **errp)
 {
+#ifdef CONFIG_LINUX
     struct vhost_user *u = dev->opaque;
-    CharBackend *chr = u->chr;
+    CharBackend *chr = u->user->chr;
     int ufd;
     VhostUserMsg msg = {
         .hdr.request = VHOST_USER_POSTCOPY_ADVISE,
@@ -1076,7 +1255,7 @@ static int vhost_user_postcopy_advise(struct vhost_dev *dev, Error **errp)
         error_setg(errp, "%s: Failed to get ufd", __func__);
         return -1;
     }
-    fcntl(ufd, F_SETFL, O_NONBLOCK);
+    qemu_set_nonblock(ufd);
 
     /* register ufd with userfault thread */
     u->postcopy_fd.fd = ufd;
@@ -1086,6 +1265,10 @@ static int vhost_user_postcopy_advise(struct vhost_dev *dev, Error **errp)
     u->postcopy_fd.idstr = "vhost-user"; /* Need to find unique name */
     postcopy_register_shared_ufd(&u->postcopy_fd);
     return 0;
+#else
+    error_setg(errp, "Postcopy not supported on non-Linux systems");
+    return -1;
+#endif
 }
 
 /*
@@ -1139,6 +1322,7 @@ static int vhost_user_postcopy_end(struct vhost_dev *dev, Error **errp)
         return ret;
     }
     postcopy_unregister_shared_ufd(&u->postcopy_fd);
+    close(u->postcopy_fd.fd);
     u->postcopy_fd.handler = NULL;
 
     trace_vhost_user_postcopy_end_exit();
@@ -1182,7 +1366,7 @@ static int vhost_user_postcopy_notifier(NotifierWithReturn *notifier,
     return 0;
 }
 
-static int vhost_user_init(struct vhost_dev *dev, void *opaque)
+static int vhost_user_backend_init(struct vhost_dev *dev, void *opaque)
 {
     uint64_t features, protocol_features;
     struct vhost_user *u;
@@ -1191,7 +1375,7 @@ static int vhost_user_init(struct vhost_dev *dev, void *opaque)
     assert(dev->vhost_ops->backend_type == VHOST_BACKEND_TYPE_USER);
 
     u = g_new0(struct vhost_user, 1);
-    u->chr = opaque;
+    u->user = opaque;
     u->slave_fd = -1;
     u->dev = dev;
     dev->opaque = u;
@@ -1267,7 +1451,7 @@ static int vhost_user_init(struct vhost_dev *dev, void *opaque)
     return 0;
 }
 
-static int vhost_user_cleanup(struct vhost_dev *dev)
+static int vhost_user_backend_cleanup(struct vhost_dev *dev)
 {
     struct vhost_user *u;
 
@@ -1277,6 +1461,12 @@ static int vhost_user_cleanup(struct vhost_dev *dev)
     if (u->postcopy_notifier.notify) {
         postcopy_remove_notifier(&u->postcopy_notifier);
         u->postcopy_notifier.notify = NULL;
+    }
+    u->postcopy_listen = false;
+    if (u->postcopy_fd.handler) {
+        postcopy_unregister_shared_ufd(&u->postcopy_fd);
+        close(u->postcopy_fd.fd);
+        u->postcopy_fd.handler = NULL;
     }
     if (u->slave_fd >= 0) {
         qemu_set_fd_handler(u->slave_fd, NULL, NULL, NULL);
@@ -1316,7 +1506,7 @@ static bool vhost_user_requires_shm_log(struct vhost_dev *dev)
 
 static int vhost_user_migration_done(struct vhost_dev *dev, char* mac_addr)
 {
-    VhostUserMsg msg = { 0 };
+    VhostUserMsg msg = { };
 
     assert(dev->vhost_ops->backend_type == VHOST_BACKEND_TYPE_USER);
 
@@ -1581,10 +1771,142 @@ vhost_user_crypto_close_session(struct vhost_dev *dev, uint64_t session_id)
     return 0;
 }
 
+static bool vhost_user_mem_section_filter(struct vhost_dev *dev,
+                                          MemoryRegionSection *section)
+{
+    bool result;
+
+    result = memory_region_get_fd(section->mr) >= 0;
+
+    return result;
+}
+
+static int vhost_user_get_inflight_fd(struct vhost_dev *dev,
+                                      uint16_t queue_size,
+                                      struct vhost_inflight *inflight)
+{
+    void *addr;
+    int fd;
+    struct vhost_user *u = dev->opaque;
+    CharBackend *chr = u->user->chr;
+    VhostUserMsg msg = {
+        .hdr.request = VHOST_USER_GET_INFLIGHT_FD,
+        .hdr.flags = VHOST_USER_VERSION,
+        .payload.inflight.num_queues = dev->nvqs,
+        .payload.inflight.queue_size = queue_size,
+        .hdr.size = sizeof(msg.payload.inflight),
+    };
+
+    if (!virtio_has_feature(dev->protocol_features,
+                            VHOST_USER_PROTOCOL_F_INFLIGHT_SHMFD)) {
+        return 0;
+    }
+
+    if (vhost_user_write(dev, &msg, NULL, 0) < 0) {
+        return -1;
+    }
+
+    if (vhost_user_read(dev, &msg) < 0) {
+        return -1;
+    }
+
+    if (msg.hdr.request != VHOST_USER_GET_INFLIGHT_FD) {
+        error_report("Received unexpected msg type. "
+                     "Expected %d received %d",
+                     VHOST_USER_GET_INFLIGHT_FD, msg.hdr.request);
+        return -1;
+    }
+
+    if (msg.hdr.size != sizeof(msg.payload.inflight)) {
+        error_report("Received bad msg size.");
+        return -1;
+    }
+
+    if (!msg.payload.inflight.mmap_size) {
+        return 0;
+    }
+
+    fd = qemu_chr_fe_get_msgfd(chr);
+    if (fd < 0) {
+        error_report("Failed to get mem fd");
+        return -1;
+    }
+
+    addr = mmap(0, msg.payload.inflight.mmap_size, PROT_READ | PROT_WRITE,
+                MAP_SHARED, fd, msg.payload.inflight.mmap_offset);
+
+    if (addr == MAP_FAILED) {
+        error_report("Failed to mmap mem fd");
+        close(fd);
+        return -1;
+    }
+
+    inflight->addr = addr;
+    inflight->fd = fd;
+    inflight->size = msg.payload.inflight.mmap_size;
+    inflight->offset = msg.payload.inflight.mmap_offset;
+    inflight->queue_size = queue_size;
+
+    return 0;
+}
+
+static int vhost_user_set_inflight_fd(struct vhost_dev *dev,
+                                      struct vhost_inflight *inflight)
+{
+    VhostUserMsg msg = {
+        .hdr.request = VHOST_USER_SET_INFLIGHT_FD,
+        .hdr.flags = VHOST_USER_VERSION,
+        .payload.inflight.mmap_size = inflight->size,
+        .payload.inflight.mmap_offset = inflight->offset,
+        .payload.inflight.num_queues = dev->nvqs,
+        .payload.inflight.queue_size = inflight->queue_size,
+        .hdr.size = sizeof(msg.payload.inflight),
+    };
+
+    if (!virtio_has_feature(dev->protocol_features,
+                            VHOST_USER_PROTOCOL_F_INFLIGHT_SHMFD)) {
+        return 0;
+    }
+
+    if (vhost_user_write(dev, &msg, &inflight->fd, 1) < 0) {
+        return -1;
+    }
+
+    return 0;
+}
+
+bool vhost_user_init(VhostUserState *user, CharBackend *chr, Error **errp)
+{
+    if (user->chr) {
+        error_setg(errp, "Cannot initialize vhost-user state");
+        return false;
+    }
+    user->chr = chr;
+    return true;
+}
+
+void vhost_user_cleanup(VhostUserState *user)
+{
+    int i;
+
+    if (!user->chr) {
+        return;
+    }
+
+    for (i = 0; i < VIRTIO_QUEUE_MAX; i++) {
+        if (user->notifier[i].addr) {
+            object_unparent(OBJECT(&user->notifier[i].mr));
+            munmap(user->notifier[i].addr, qemu_real_host_page_size);
+            user->notifier[i].addr = NULL;
+        }
+    }
+    user->chr = NULL;
+}
+
 const VhostOps user_ops = {
         .backend_type = VHOST_BACKEND_TYPE_USER,
-        .vhost_backend_init = vhost_user_init,
-        .vhost_backend_cleanup = vhost_user_cleanup,
+        .vhost_backend_init = vhost_user_backend_init,
+        .vhost_backend_cleanup = vhost_user_backend_cleanup,
         .vhost_backend_memslots_limit = vhost_user_memslots_limit,
         .vhost_set_log_base = vhost_user_set_log_base,
         .vhost_set_mem_table = vhost_user_set_mem_table,
@@ -1611,4 +1933,7 @@ const VhostOps user_ops = {
         .vhost_set_config = vhost_user_set_config,
         .vhost_crypto_create_session = vhost_user_crypto_create_session,
         .vhost_crypto_close_session = vhost_user_crypto_close_session,
+        .vhost_backend_mem_section_filter = vhost_user_mem_section_filter,
+        .vhost_get_inflight_fd = vhost_user_get_inflight_fd,
+        .vhost_set_inflight_fd = vhost_user_set_inflight_fd,
 };

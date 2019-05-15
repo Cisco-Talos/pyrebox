@@ -43,6 +43,7 @@ struct %(c_name)s {
 def gen_struct_members(members):
     ret = ''
     for memb in members:
+        ret += gen_if(memb.ifcond)
         if memb.optional:
             ret += mcgen('''
     bool has_%(c_name)s;
@@ -52,10 +53,11 @@ def gen_struct_members(members):
     %(c_type)s %(c_name)s;
 ''',
                      c_type=memb.type.c_type(), c_name=c_name(memb.name))
+        ret += gen_endif(memb.ifcond)
     return ret
 
 
-def gen_object(name, base, members, variants):
+def gen_object(name, ifcond, base, members, variants):
     if name in objects_seen:
         return ''
     objects_seen.add(name)
@@ -64,11 +66,14 @@ def gen_object(name, base, members, variants):
     if variants:
         for v in variants.variants:
             if isinstance(v.type, QAPISchemaObjectType):
-                ret += gen_object(v.type.name, v.type.base,
+                ret += gen_object(v.type.name, v.type.ifcond, v.type.base,
                                   v.type.local_members, v.type.variants)
 
     ret += mcgen('''
 
+''')
+    ret += gen_if(ifcond)
+    ret += mcgen('''
 struct %(c_name)s {
 ''',
                  c_name=c_name(name))
@@ -101,6 +106,7 @@ struct %(c_name)s {
     ret += mcgen('''
 };
 ''')
+    ret += gen_endif(ifcond)
 
     return ret
 
@@ -125,11 +131,15 @@ def gen_variants(variants):
                 c_name=c_name(variants.tag_member.name))
 
     for var in variants.variants:
+        if var.type.name == 'q_empty':
+            continue
+        ret += gen_if(var.ifcond)
         ret += mcgen('''
         %(c_type)s %(c_name)s;
 ''',
                      c_type=var.type.c_unboxed_type(),
                      c_name=c_name(var.name))
+        ret += gen_endif(var.ifcond)
 
     ret += mcgen('''
     } u;
@@ -173,7 +183,7 @@ class QAPISchemaGenTypeVisitor(QAPISchemaModularCVisitor):
         QAPISchemaModularCVisitor.__init__(
             self, prefix, 'qapi-types', ' * Schema-defined QAPI types',
             __doc__)
-        self._add_module(None, ' * Built-in QAPI types')
+        self._add_system_module(None, ' * Built-in QAPI types')
         self._genc.preamble_add(mcgen('''
 #include "qemu/osdep.h"
 #include "qapi/dealloc-visitor.h"
@@ -184,7 +194,7 @@ class QAPISchemaGenTypeVisitor(QAPISchemaModularCVisitor):
 #include "qapi/util.h"
 '''))
 
-    def _begin_module(self, name):
+    def _begin_user_module(self, name):
         types = self._module_basename('qapi-types', name)
         visit = self._module_basename('qapi-visit', name)
         self._genc.preamble_add(mcgen('''
@@ -206,34 +216,40 @@ class QAPISchemaGenTypeVisitor(QAPISchemaModularCVisitor):
         self._genh.add(gen_type_cleanup_decl(name))
         self._genc.add(gen_type_cleanup(name))
 
-    def visit_enum_type(self, name, info, values, prefix):
-        self._genh.preamble_add(gen_enum(name, values, prefix))
-        self._genc.add(gen_enum_lookup(name, values, prefix))
+    def visit_enum_type(self, name, info, ifcond, members, prefix):
+        with ifcontext(ifcond, self._genh, self._genc):
+            self._genh.preamble_add(gen_enum(name, members, prefix))
+            self._genc.add(gen_enum_lookup(name, members, prefix))
 
-    def visit_array_type(self, name, info, element_type):
-        self._genh.preamble_add(gen_fwd_object_or_array(name))
-        self._genh.add(gen_array(name, element_type))
-        self._gen_type_cleanup(name)
+    def visit_array_type(self, name, info, ifcond, element_type):
+        with ifcontext(ifcond, self._genh, self._genc):
+            self._genh.preamble_add(gen_fwd_object_or_array(name))
+            self._genh.add(gen_array(name, element_type))
+            self._gen_type_cleanup(name)
 
-    def visit_object_type(self, name, info, base, members, variants):
+    def visit_object_type(self, name, info, ifcond, base, members, variants):
         # Nothing to do for the special empty builtin
         if name == 'q_empty':
             return
-        self._genh.preamble_add(gen_fwd_object_or_array(name))
-        self._genh.add(gen_object(name, base, members, variants))
-        if base and not base.is_implicit():
-            self._genh.add(gen_upcast(name, base))
-        # TODO Worth changing the visitor signature, so we could
-        # directly use rather than repeat type.is_implicit()?
-        if not name.startswith('q_'):
-            # implicit types won't be directly allocated/freed
-            self._gen_type_cleanup(name)
+        with ifcontext(ifcond, self._genh):
+            self._genh.preamble_add(gen_fwd_object_or_array(name))
+        self._genh.add(gen_object(name, ifcond, base, members, variants))
+        with ifcontext(ifcond, self._genh, self._genc):
+            if base and not base.is_implicit():
+                self._genh.add(gen_upcast(name, base))
+            # TODO Worth changing the visitor signature, so we could
+            # directly use rather than repeat type.is_implicit()?
+            if not name.startswith('q_'):
+                # implicit types won't be directly allocated/freed
+                self._gen_type_cleanup(name)
 
-    def visit_alternate_type(self, name, info, variants):
-        self._genh.preamble_add(gen_fwd_object_or_array(name))
-        self._genh.add(gen_object(name, None,
+    def visit_alternate_type(self, name, info, ifcond, variants):
+        with ifcontext(ifcond, self._genh):
+            self._genh.preamble_add(gen_fwd_object_or_array(name))
+        self._genh.add(gen_object(name, ifcond, None,
                                   [variants.tag_member], variants))
-        self._gen_type_cleanup(name)
+        with ifcontext(ifcond, self._genh, self._genc):
+            self._gen_type_cleanup(name)
 
 
 def gen_types(schema, output_dir, prefix, opt_builtins):

@@ -231,6 +231,11 @@ static void qemu_net_client_destructor(NetClientState *nc)
 {
     g_free(nc);
 }
+static ssize_t qemu_deliver_packet_iov(NetClientState *sender,
+                                       unsigned flags,
+                                       const struct iovec *iov,
+                                       int iovcnt,
+                                       void *opaque);
 
 static void qemu_net_client_setup(NetClientState *nc,
                                   NetClientInfo *info,
@@ -558,7 +563,7 @@ static ssize_t filter_receive_iov(NetClientState *nc,
             }
         }
     } else {
-        QTAILQ_FOREACH_REVERSE(nf, &nc->filters, NetFilterHead, next) {
+        QTAILQ_FOREACH_REVERSE(nf, &nc->filters, next) {
             ret = qemu_netfilter_receive(nf, direction, sender, flags, iov,
                                          iovcnt, sent_cb);
             if (ret) {
@@ -663,9 +668,9 @@ ssize_t qemu_send_packet_async(NetClientState *sender,
                                              buf, size, sent_cb);
 }
 
-void qemu_send_packet(NetClientState *nc, const uint8_t *buf, int size)
+ssize_t qemu_send_packet(NetClientState *nc, const uint8_t *buf, int size)
 {
-    qemu_send_packet_async(nc, buf, size, NULL);
+    return qemu_send_packet_async(nc, buf, size, NULL);
 }
 
 ssize_t qemu_send_packet_raw(NetClientState *nc, const uint8_t *buf, int size)
@@ -705,14 +710,15 @@ static ssize_t nc_sendv_compat(NetClientState *nc, const struct iovec *iov,
     return ret;
 }
 
-ssize_t qemu_deliver_packet_iov(NetClientState *sender,
-                                unsigned flags,
-                                const struct iovec *iov,
-                                int iovcnt,
-                                void *opaque)
+static ssize_t qemu_deliver_packet_iov(NetClientState *sender,
+                                       unsigned flags,
+                                       const struct iovec *iov,
+                                       int iovcnt,
+                                       void *opaque)
 {
     NetClientState *nc = opaque;
     int ret;
+
 
     if (nc->link_down) {
         return iov_size(iov, iovcnt);
@@ -740,10 +746,15 @@ ssize_t qemu_sendv_packet_async(NetClientState *sender,
                                 NetPacketSent *sent_cb)
 {
     NetQueue *queue;
+    size_t size = iov_size(iov, iovcnt);
     int ret;
 
+    if (size > NET_BUFSIZE) {
+        return size;
+    }
+
     if (sender->link_down || !sender->peer) {
-        return iov_size(iov, iovcnt);
+        return size;
     }
 
     /* Let filters handle the packet first */
@@ -950,7 +961,7 @@ static int (* const net_client_init_fun[NET_CLIENT_DRIVER__MAX])(
         [NET_CLIENT_DRIVER_BRIDGE]    = net_init_bridge,
 #endif
         [NET_CLIENT_DRIVER_HUBPORT]   = net_init_hubport,
-#ifdef CONFIG_VHOST_NET_USED
+#ifdef CONFIG_VHOST_NET_USER
         [NET_CLIENT_DRIVER_VHOST_USER] = net_init_vhost_user,
 #endif
 #ifdef CONFIG_L2TPV3
@@ -965,7 +976,6 @@ static int net_client_init1(const void *object, bool is_netdev, Error **errp)
     const Netdev *netdev;
     const char *name;
     NetClientState *peer = NULL;
-    static bool vlan_warned;
 
     if (is_netdev) {
         netdev = object;
@@ -984,6 +994,10 @@ static int net_client_init1(const void *object, bool is_netdev, Error **errp)
         netdev = &legacy;
         /* missing optional values have been initialized to "all bits zero" */
         name = net->has_id ? net->id : net->name;
+
+        if (net->has_name) {
+            warn_report("The 'name' parameter is deprecated, use 'id' instead");
+        }
 
         /* Map the old options to the new flat type */
         switch (opts->type) {
@@ -1036,15 +1050,10 @@ static int net_client_init1(const void *object, bool is_netdev, Error **errp)
             return -1;
         }
 
-        /* Do not add to a vlan if it's a nic with a netdev= parameter. */
+        /* Do not add to a hub if it's a nic with a netdev= parameter. */
         if (netdev->type != NET_CLIENT_DRIVER_NIC ||
             !opts->u.nic.has_netdev) {
-            peer = net_hub_add_port(net->has_vlan ? net->vlan : 0, NULL, NULL);
-        }
-
-        if (net->has_vlan && !vlan_warned) {
-            error_report("'vlan' is deprecated. Please use 'netdev' instead.");
-            vlan_warned = true;
+            peer = net_hub_add_port(0, NULL, NULL);
         }
     }
 
@@ -1099,7 +1108,9 @@ static int net_client_init(QemuOpts *opts, bool is_netdev, Error **errp)
     int ret = -1;
     Visitor *v = opts_visitor_new(opts);
 
-    if (is_netdev && is_help_option(qemu_opt_get(opts, "type"))) {
+    const char *type = qemu_opt_get(opts, "type");
+
+    if (is_netdev && type && is_help_option(type)) {
         show_netdevs();
         exit(0);
     } else {
@@ -1335,6 +1346,25 @@ void hmp_info_network(Monitor *mon, const QDict *qdict)
     }
 }
 
+void colo_notify_filters_event(int event, Error **errp)
+{
+    NetClientState *nc;
+    NetFilterState *nf;
+    NetFilterClass *nfc = NULL;
+    Error *local_err = NULL;
+
+    QTAILQ_FOREACH(nc, &net_clients, next) {
+        QTAILQ_FOREACH(nf, &nc->filters, next) {
+            nfc = NETFILTER_GET_CLASS(OBJECT(nf));
+            nfc->handle_event(nf, event, &local_err);
+            if (local_err) {
+                error_propagate(errp, local_err);
+                return;
+            }
+        }
+    }
+}
+
 void qmp_set_link(const char *name, bool up, Error **errp)
 {
     NetClientState *ncs[MAX_QUEUE_NUM];
@@ -1365,7 +1395,7 @@ void qmp_set_link(const char *name, bool up, Error **errp)
          * If the peer is a HUBPORT or a backend, we do not change the
          * link status.
          *
-         * This behavior is compatible with qemu vlans where there could be
+         * This behavior is compatible with qemu hubs where there could be
          * multiple clients that can still communicate with each other in
          * disconnected mode. For now maintain this compatibility.
          */
@@ -1502,11 +1532,12 @@ static int net_param_nic(void *dummy, QemuOpts *opts, Error **errp)
         g_free(mac);
         if (ret) {
             error_setg(errp, "invalid syntax for ethernet address");
-            return -1;
+            goto out;
         }
         if (is_multicast_ether_addr(ni->macaddr.a)) {
             error_setg(errp, "NIC cannot have multicast MAC address");
-            return -1;
+            ret = -1;
+            goto out;
         }
     }
     qemu_macaddr_default_if_unset(&ni->macaddr);
@@ -1518,6 +1549,7 @@ static int net_param_nic(void *dummy, QemuOpts *opts, Error **errp)
         nb_nics++;
     }
 
+out:
     g_free(nd_id);
     return ret;
 }

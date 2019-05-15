@@ -7,7 +7,7 @@
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
  * License as published by the Free Software Foundation; either
- * version 2 of the License, or (at your option) any later version.
+ * version 2.1 of the License, or (at your option) any later version.
  *
  * This library is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -25,36 +25,7 @@
 
 void HELPER(rfe)(CPUOpenRISCState *env)
 {
-    OpenRISCCPU *cpu = openrisc_env_get_cpu(env);
-    CPUState *cs = CPU(cpu);
-#ifndef CONFIG_USER_ONLY
-    int need_flush_tlb = (cpu->env.sr & (SR_SM | SR_IME | SR_DME)) ^
-                         (cpu->env.esr & (SR_SM | SR_IME | SR_DME));
-#endif
-    cpu->env.pc = cpu->env.epcr;
-    cpu_set_sr(&cpu->env, cpu->env.esr);
-    cpu->env.lock_addr = -1;
-
-#ifndef CONFIG_USER_ONLY
-    if (cpu->env.sr & SR_DME) {
-        cpu->env.tlb->cpu_openrisc_map_address_data =
-            &cpu_openrisc_get_phys_data;
-    } else {
-        cpu->env.tlb->cpu_openrisc_map_address_data =
-            &cpu_openrisc_get_phys_nommu;
-    }
-
-    if (cpu->env.sr & SR_IME) {
-        cpu->env.tlb->cpu_openrisc_map_address_code =
-            &cpu_openrisc_get_phys_code;
-    } else {
-        cpu->env.tlb->cpu_openrisc_map_address_code =
-            &cpu_openrisc_get_phys_nommu;
-    }
-
-    if (need_flush_tlb) {
-        tlb_flush(cs);
-    }
-#endif
-    cs->interrupt_request |= CPU_INTERRUPT_EXITTB;
+    env->pc = env->epcr;
+    env->lock_addr = -1;
+    cpu_set_sr(env, env->esr);
 }

@@ -10,6 +10,7 @@
 #include "migration/cpu.h"
 #include "qapi/error.h"
 #include "kvm_ppc.h"
+#include "exec/helper-proto.h"
 
 static int cpu_load_old(QEMUFile *f, void *opaque, int version_id)
 {
@@ -17,7 +18,10 @@ static int cpu_load_old(QEMUFile *f, void *opaque, int version_id)
     CPUPPCState *env = &cpu->env;
     unsigned int i, j;
     target_ulong sdr1;
-    uint32_t fpscr;
+    uint32_t fpscr, vscr;
+#if defined(TARGET_PPC64)
+    int32_t slb_nr;
+#endif
     target_ulong xer;
 
     for (i = 0; i < 32; i++)
@@ -42,14 +46,14 @@ static int cpu_load_old(QEMUFile *f, void *opaque, int version_id)
             uint64_t l;
         } u;
         u.l = qemu_get_be64(f);
-        env->fpr[i] = u.d;
+        *cpu_fpr_ptr(env, i) = u.d;
     }
     qemu_get_be32s(f, &fpscr);
     env->fpscr = fpscr;
     qemu_get_sbe32s(f, &env->access_type);
 #if defined(TARGET_PPC64)
     qemu_get_betls(f, &env->spr[SPR_ASR]);
-    qemu_get_sbe32s(f, &env->slb_nr);
+    qemu_get_sbe32s(f, &slb_nr);
 #endif
     qemu_get_betls(f, &sdr1);
     for (i = 0; i < 32; i++)
@@ -81,7 +85,8 @@ static int cpu_load_old(QEMUFile *f, void *opaque, int version_id)
     if (!cpu->vhyp) {
         ppc_store_sdr1(env, sdr1);
     }
-    qemu_get_be32s(f, &env->vscr);
+    qemu_get_be32s(f, &vscr);
+    helper_mtvscr(env, vscr);
     qemu_get_be64s(f, &env->spe_acc);
     qemu_get_be32s(f, &env->spe_fscr);
     qemu_get_betls(f, &env->msr_mask);
@@ -107,7 +112,8 @@ static int cpu_load_old(QEMUFile *f, void *opaque, int version_id)
     return 0;
 }
 
-static int get_avr(QEMUFile *f, void *pv, size_t size, VMStateField *field)
+static int get_avr(QEMUFile *f, void *pv, size_t size,
+                   const VMStateField *field)
 {
     ppc_avr_t *v = pv;
 
@@ -117,8 +123,8 @@ static int get_avr(QEMUFile *f, void *pv, size_t size, VMStateField *field)
     return 0;
 }
 
-static int put_avr(QEMUFile *f, void *pv, size_t size, VMStateField *field,
-                   QJSON *vmdesc)
+static int put_avr(QEMUFile *f, void *pv, size_t size,
+                   const VMStateField *field, QJSON *vmdesc)
 {
     ppc_avr_t *v = pv;
 
@@ -134,10 +140,72 @@ static const VMStateInfo vmstate_info_avr = {
 };
 
 #define VMSTATE_AVR_ARRAY_V(_f, _s, _n, _v)                       \
-    VMSTATE_ARRAY(_f, _s, _n, _v, vmstate_info_avr, ppc_avr_t)
+    VMSTATE_SUB_ARRAY(_f, _s, 32, _n, _v, vmstate_info_avr, ppc_avr_t)
 
 #define VMSTATE_AVR_ARRAY(_f, _s, _n)                             \
     VMSTATE_AVR_ARRAY_V(_f, _s, _n, 0)
+
+static int get_fpr(QEMUFile *f, void *pv, size_t size,
+                   const VMStateField *field)
+{
+    ppc_vsr_t *v = pv;
+
+    v->VsrD(0) = qemu_get_be64(f);
+
+    return 0;
+}
+
+static int put_fpr(QEMUFile *f, void *pv, size_t size,
+                   const VMStateField *field, QJSON *vmdesc)
+{
+    ppc_vsr_t *v = pv;
+
+    qemu_put_be64(f, v->VsrD(0));
+    return 0;
+}
+
+static const VMStateInfo vmstate_info_fpr = {
+    .name = "fpr",
+    .get  = get_fpr,
+    .put  = put_fpr,
+};
+
+#define VMSTATE_FPR_ARRAY_V(_f, _s, _n, _v)                       \
+    VMSTATE_SUB_ARRAY(_f, _s, 0, _n, _v, vmstate_info_fpr, ppc_vsr_t)
+
+#define VMSTATE_FPR_ARRAY(_f, _s, _n)                             \
+    VMSTATE_FPR_ARRAY_V(_f, _s, _n, 0)
+
+static int get_vsr(QEMUFile *f, void *pv, size_t size,
+                   const VMStateField *field)
+{
+    ppc_vsr_t *v = pv;
+
+    v->VsrD(1) = qemu_get_be64(f);
+
+    return 0;
+}
+
+static int put_vsr(QEMUFile *f, void *pv, size_t size,
+                   const VMStateField *field, QJSON *vmdesc)
+{
+    ppc_vsr_t *v = pv;
+
+    qemu_put_be64(f, v->VsrD(1));
+    return 0;
+}
+
+static const VMStateInfo vmstate_info_vsr = {
+    .name = "vsr",
+    .get  = get_vsr,
+    .put  = put_vsr,
+};
+
+#define VMSTATE_VSR_ARRAY_V(_f, _s, _n, _v)                       \
+    VMSTATE_SUB_ARRAY(_f, _s, 0, _n, _v, vmstate_info_vsr, ppc_vsr_t)
+
+#define VMSTATE_VSR_ARRAY(_f, _s, _n)                             \
+    VMSTATE_VSR_ARRAY_V(_f, _s, _n, 0)
 
 static bool cpu_pre_2_8_migration(void *opaque, int version_id)
 {
@@ -145,6 +213,15 @@ static bool cpu_pre_2_8_migration(void *opaque, int version_id)
 
     return cpu->pre_2_8_migration;
 }
+
+#if defined(TARGET_PPC64)
+static bool cpu_pre_3_0_migration(void *opaque, int version_id)
+{
+    PowerPCCPU *cpu = opaque;
+
+    return cpu->pre_3_0_migration;
+}
+#endif
 
 static int cpu_pre_save(void *opaque)
 {
@@ -200,8 +277,18 @@ static int cpu_pre_save(void *opaque)
             ;
         cpu->mig_msr_mask = env->msr_mask & ~metamask;
         cpu->mig_insns_flags = env->insns_flags & insns_compat_mask;
+        /* CPU models supported by old machines all have PPC_MEM_TLBIE,
+         * so we set it unconditionally to allow backward migration from
+         * a POWER9 host to a POWER8 host.
+         */
+        cpu->mig_insns_flags |= PPC_MEM_TLBIE;
         cpu->mig_insns_flags2 = env->insns_flags2 & insns_compat_mask2;
         cpu->mig_nb_BATs = env->nb_BATs;
+    }
+    if (cpu->pre_3_0_migration) {
+        if (cpu->hash64_opts) {
+            cpu->mig_slb_nr = cpu->hash64_opts->slb_size;
+        }
     }
 
     return 0;
@@ -331,7 +418,7 @@ static const VMStateDescription vmstate_fpu = {
     .minimum_version_id = 1,
     .needed = fpu_needed,
     .fields = (VMStateField[]) {
-        VMSTATE_FLOAT64_ARRAY(env.fpr, PowerPCCPU, 32),
+        VMSTATE_FPR_ARRAY(env.vsr, PowerPCCPU, 32),
         VMSTATE_UINTTL(env.fpscr, PowerPCCPU),
         VMSTATE_END_OF_LIST()
     },
@@ -344,14 +431,50 @@ static bool altivec_needed(void *opaque)
     return (cpu->env.insns_flags & PPC_ALTIVEC);
 }
 
+static int get_vscr(QEMUFile *f, void *opaque, size_t size,
+                    const VMStateField *field)
+{
+    PowerPCCPU *cpu = opaque;
+    helper_mtvscr(&cpu->env, qemu_get_be32(f));
+    return 0;
+}
+
+static int put_vscr(QEMUFile *f, void *opaque, size_t size,
+                    const VMStateField *field, QJSON *vmdesc)
+{
+    PowerPCCPU *cpu = opaque;
+    qemu_put_be32(f, helper_mfvscr(&cpu->env));
+    return 0;
+}
+
+static const VMStateInfo vmstate_vscr = {
+    .name = "cpu/altivec/vscr",
+    .get = get_vscr,
+    .put = put_vscr,
+};
+
 static const VMStateDescription vmstate_altivec = {
     .name = "cpu/altivec",
     .version_id = 1,
     .minimum_version_id = 1,
     .needed = altivec_needed,
     .fields = (VMStateField[]) {
-        VMSTATE_AVR_ARRAY(env.avr, PowerPCCPU, 32),
-        VMSTATE_UINT32(env.vscr, PowerPCCPU),
+        VMSTATE_AVR_ARRAY(env.vsr, PowerPCCPU, 32),
+        /*
+         * Save the architecture value of the vscr, not the internally
+         * expanded version.  Since this architecture value does not
+         * exist in memory to be stored, this requires a but of hoop
+         * jumping.  We want OFFSET=0 so that we effectively pass CPU
+         * to the helper functions.
+         */
+        {
+            .name = "vscr",
+            .version_id = 0,
+            .size = sizeof(uint32_t),
+            .info = &vmstate_vscr,
+            .flags = VMS_SINGLE,
+            .offset = 0
+        },
         VMSTATE_END_OF_LIST()
     },
 };
@@ -369,7 +492,7 @@ static const VMStateDescription vmstate_vsx = {
     .minimum_version_id = 1,
     .needed = vsx_needed,
     .fields = (VMStateField[]) {
-        VMSTATE_UINT64_ARRAY(env.vsr, PowerPCCPU, 32),
+        VMSTATE_VSR_ARRAY(env.vsr, PowerPCCPU, 32),
         VMSTATE_END_OF_LIST()
     },
 };
@@ -430,7 +553,8 @@ static const VMStateDescription vmstate_sr = {
 };
 
 #ifdef TARGET_PPC64
-static int get_slbe(QEMUFile *f, void *pv, size_t size, VMStateField *field)
+static int get_slbe(QEMUFile *f, void *pv, size_t size,
+                    const VMStateField *field)
 {
     ppc_slb_t *v = pv;
 
@@ -440,8 +564,8 @@ static int get_slbe(QEMUFile *f, void *pv, size_t size, VMStateField *field)
     return 0;
 }
 
-static int put_slbe(QEMUFile *f, void *pv, size_t size, VMStateField *field,
-                    QJSON *vmdesc)
+static int put_slbe(QEMUFile *f, void *pv, size_t size,
+                    const VMStateField *field, QJSON *vmdesc)
 {
     ppc_slb_t *v = pv;
 
@@ -478,7 +602,7 @@ static int slb_post_load(void *opaque, int version_id)
 
     /* We've pulled in the raw esid and vsid values from the migration
      * stream, but we need to recompute the page size pointers */
-    for (i = 0; i < env->slb_nr; i++) {
+    for (i = 0; i < cpu->hash64_opts->slb_size; i++) {
         if (ppc_store_slb(cpu, i, env->slb[i].esid, env->slb[i].vsid) < 0) {
             /* Migration source had bad values in its SLB */
             return -1;
@@ -495,7 +619,7 @@ static const VMStateDescription vmstate_slb = {
     .needed = slb_needed,
     .post_load = slb_post_load,
     .fields = (VMStateField[]) {
-        VMSTATE_INT32_EQUAL(env.slb_nr, PowerPCCPU, NULL),
+        VMSTATE_INT32_TEST(mig_slb_nr, PowerPCCPU, cpu_pre_3_0_migration),
         VMSTATE_SLB_ARRAY(env.slb, PowerPCCPU, MAX_SLB_ENTRIES),
         VMSTATE_END_OF_LIST()
     }

@@ -102,27 +102,61 @@ to make sure the state of VM in Secondary side is always consistent with VM in
 Primary side.
 
 COLO Proxy:
-Delivers packets to Primary and Seconday, and then compare the responses from
+Delivers packets to Primary and Secondary, and then compare the responses from
 both side. Then decide whether to start a checkpoint according to some rules.
-Please refer to docs/colo-proxy.txt for more informations.
+Please refer to docs/colo-proxy.txt for more information.
 
 Note:
 HeartBeat has not been implemented yet, so you need to trigger failover process
 by using 'x-colo-lost-heartbeat' command.
 
+== COLO operation status ==
+
++-----------------+
+|                 |
+|    Start COLO   |
+|                 |
++--------+--------+
+         |
+         |  Main qmp command:
+         |  migrate-set-capabilities with x-colo
+         |  migrate
+         |
+         v
++--------+--------+
+|                 |
+|  COLO running   |
+|                 |
++--------+--------+
+         |
+         |  Main qmp command:
+         |  x-colo-lost-heartbeat
+         |  or
+         |  some error happened
+         v
++--------+--------+
+|                 |  send qmp event:
+|  COLO failover  |  COLO_EXIT
+|                 |
++-----------------+
+
+COLO use the qmp command to switch and report operation status.
+The diagram just shows the main qmp command, you can get the detail
+in test procedure.
+
 == Test procedure ==
 1. Startup qemu
 Primary:
-# qemu-kvm -enable-kvm -m 2048 -smp 2 -qmp stdio -vnc :7 -name primary \
-  -device piix3-usb-uhci \
+# qemu-system-x86_64 -accel kvm -m 2048 -smp 2 -qmp stdio -name primary \
+  -device piix3-usb-uhci -vnc :7 \
   -device usb-tablet -netdev tap,id=hn0,vhost=off \
   -device virtio-net-pci,id=net-pci0,netdev=hn0 \
   -drive if=virtio,id=primary-disk0,driver=quorum,read-pattern=fifo,vote-threshold=1,\
          children.0.file.filename=1.raw,\
          children.0.driver=raw -S
 Secondary:
-# qemu-kvm -enable-kvm -m 2048 -smp 2 -qmp stdio -vnc :7 -name secondary \
-  -device piix3-usb-uhci \
+# qemu-system-x86_64 -accel kvm -m 2048 -smp 2 -qmp stdio -name secondary \
+  -device piix3-usb-uhci -vnc :7 \
   -device usb-tablet -netdev tap,id=hn0,vhost=off \
   -device virtio-net-pci,id=net-pci0,netdev=hn0 \
   -drive if=none,id=secondary-disk0,file.filename=1.raw,driver=raw,node-name=node0 \
@@ -139,7 +173,7 @@ Secondary:
 { 'execute': 'nbd-server-start',
   'arguments': {'addr': {'type': 'inet', 'data': {'host': 'xx.xx.xx.xx', 'port': '8889'} } }
 }
-{'execute': 'nbd-server-add', 'arguments': {'device': 'secondeary-disk0', 'writable': true } }
+{'execute': 'nbd-server-add', 'arguments': {'device': 'secondary-disk0', 'writable': true } }
 
 Note:
   a. The qmp command nbd-server-start and nbd-server-add must be run

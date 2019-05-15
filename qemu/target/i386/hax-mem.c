@@ -11,7 +11,6 @@
 #include "qemu/osdep.h"
 #include "cpu.h"
 #include "exec/address-spaces.h"
-#include "exec/exec-all.h"
 #include "qemu/error-report.h"
 
 #include "target/i386/hax-i386.h"
@@ -57,7 +56,7 @@ typedef struct HAXMapping {
  * send to the kernel only the removal of the pages from the MMIO hole after
  * having computed locally the result of the deletion and additions.
  */
-static QTAILQ_HEAD(HAXMappingListHead, HAXMapping) mappings =
+static QTAILQ_HEAD(, HAXMapping) mappings =
     QTAILQ_HEAD_INITIALIZER(mappings);
 
 /**

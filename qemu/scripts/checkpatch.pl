@@ -7,6 +7,7 @@
 
 use strict;
 use warnings;
+use Term::ANSIColor qw(:constants);
 
 my $P = $0;
 $P =~ s@.*/@@g;
@@ -26,6 +27,7 @@ my $tst_only;
 my $emacs = 0;
 my $terse = 0;
 my $file = undef;
+my $color = "auto";
 my $no_warnings = 0;
 my $summary = 1;
 my $mailback = 0;
@@ -64,12 +66,22 @@ Options:
                              is all off)
   --test-only=WORD           report only warnings/errors containing WORD
                              literally
+  --color[=WHEN]             Use colors 'always', 'never', or only when output
+                             is a terminal ('auto'). Default is 'auto'.
   -h, --help, --version      display this help and exit
 
 When FILE is - read standard input.
 EOM
 
 	exit($exitcode);
+}
+
+# Perl's Getopt::Long allows options to take optional arguments after a space.
+# Prevent --color by itself from consuming other arguments
+foreach (@ARGV) {
+	if ($_ eq "--color" || $_ eq "-color") {
+		$_ = "--color=$color";
+	}
 }
 
 GetOptions(
@@ -89,6 +101,8 @@ GetOptions(
 
 	'debug=s'	=> \%debug,
 	'test-only=s'	=> \$tst_only,
+	'color=s'       => \$color,
+	'no-color'      => sub { $color = 'never'; },
 	'h|help'	=> \$help,
 	'version'	=> \$help
 ) or help(1);
@@ -142,6 +156,16 @@ if (($chk_patch && $chk_branch) ||
 }
 if (!$chk_patch && !$chk_branch && !$file) {
 	die "One of --file, --branch, --patch is required\n";
+}
+
+if ($color =~ /^always$/i) {
+	$color = 1;
+} elsif ($color =~ /^never$/i) {
+	$color = 0;
+} elsif ($color =~ /^auto$/i) {
+	$color = (-t STDOUT);
+} else {
+	die "Invalid color mode: $color\n";
 }
 
 my $dbg_values = 0;
@@ -202,7 +226,6 @@ our $Attribute	= qr{
 			QEMU_NORETURN|
 			QEMU_WARN_UNUSED_RESULT|
 			QEMU_SENTINEL|
-			QEMU_ARTIFICIAL|
 			QEMU_PACKED|
 			GCC_FMT_ATTR
 		  }x;
@@ -224,9 +247,8 @@ our $NonptrType;
 our $Type;
 our $Declare;
 
-our $UTF8	= qr {
-	[\x09\x0A\x0D\x20-\x7E]              # ASCII
-	| [\xC2-\xDF][\x80-\xBF]             # non-overlong 2-byte
+our $NON_ASCII_UTF8	= qr{
+	[\xC2-\xDF][\x80-\xBF]               # non-overlong 2-byte
 	|  \xE0[\xA0-\xBF][\x80-\xBF]        # excluding overlongs
 	| [\xE1-\xEC\xEE\xEF][\x80-\xBF]{2}  # straight 3-byte
 	|  \xED[\x80-\x9F][\x80-\xBF]        # excluding surrogates
@@ -235,9 +257,15 @@ our $UTF8	= qr {
 	|  \xF4[\x80-\x8F][\x80-\xBF]{2}     # plane 16
 }x;
 
+our $UTF8	= qr{
+	[\x09\x0A\x0D\x20-\x7E]              # ASCII
+	| $NON_ASCII_UTF8
+}x;
+
 # There are still some false positives, but this catches most
 # common cases.
 our $typeTypedefs = qr{(?x:
+        (?![KMGTPE]iB)                      # IEC binary prefix (do not match)
         [A-Z][A-Z\d_]*[a-z][A-Za-z\d_]*     # camelcase
         | [A-Z][A-Z\d_]*AIOCB               # all uppercase
         | [A-Z][A-Z\d_]*CPU                 # all uppercase
@@ -265,7 +293,36 @@ our @typeList = (
 	qr{${Ident}_handler_fn},
 	qr{target_(?:u)?long},
 	qr{hwaddr},
+        # external libraries
 	qr{xml${Ident}},
+	qr{xen\w+_handle},
+	# Glib definitions
+	qr{gchar},
+	qr{gshort},
+	qr{glong},
+	qr{gint},
+	qr{gboolean},
+	qr{guchar},
+	qr{gushort},
+	qr{gulong},
+	qr{guint},
+	qr{gfloat},
+	qr{gdouble},
+	qr{gpointer},
+	qr{gconstpointer},
+	qr{gint8},
+	qr{guint8},
+	qr{gint16},
+	qr{guint16},
+	qr{gint32},
+	qr{guint32},
+	qr{gint64},
+	qr{guint64},
+	qr{gsize},
+	qr{gssize},
+	qr{goffset},
+	qr{gintptr},
+	qr{guintptr},
 );
 
 # This can be modified by sub possible.  Since it can be empty, be careful
@@ -306,13 +363,18 @@ my @lines = ();
 my $vname;
 if ($chk_branch) {
 	my @patches;
+	my %git_commits = ();
 	my $HASH;
-	open($HASH, "-|", "git", "log", "--format=%H", $ARGV[0]) ||
-		die "$P: git log --format=%H $ARGV[0] failed - $!\n";
+	open($HASH, "-|", "git", "log", "--reverse", "--no-merges", "--format=%H %s", $ARGV[0]) ||
+		die "$P: git log --reverse --no-merges --format='%H %s' $ARGV[0] failed - $!\n";
 
-	while (<$HASH>) {
-		chomp;
-		push @patches, $_;
+	for my $line (<$HASH>) {
+		$line =~ /^([0-9a-fA-F]{40,40}) (.*)$/;
+		next if (!defined($1) || !defined($2));
+		my $sha1 = $1;
+		my $subject = $2;
+		push(@patches, $sha1);
+		$git_commits{$sha1} = $subject;
 	}
 
 	close $HASH;
@@ -320,21 +382,33 @@ if ($chk_branch) {
 	die "$P: no revisions returned for revlist '$chk_branch'\n"
 	    unless @patches;
 
+	my $i = 1;
+	my $num_patches = @patches;
 	for my $hash (@patches) {
 		my $FILE;
 		open($FILE, '-|', "git", "show", $hash) ||
 			die "$P: git show $hash - $!\n";
-		$vname = $hash;
 		while (<$FILE>) {
 			chomp;
 			push(@rawlines, $_);
 		}
 		close($FILE);
+		$vname = substr($hash, 0, 12) . ' (' . $git_commits{$hash} . ')';
+		if ($num_patches > 1 && $quiet == 0) {
+			my $prefix = "$i/$num_patches";
+			$prefix = BLUE . BOLD . $prefix . RESET if $color;
+			print "$prefix Checking commit $vname\n";
+			$vname = "Patch $i/$num_patches";
+		} else {
+			$vname = "Commit " . $vname;
+		}
 		if (!process($hash)) {
 			$exit = 1;
+			print "\n" if ($num_patches > 1 && $quiet == 0);
 		}
 		@rawlines = ();
 		@lines = ();
+		$i++;
 	}
 } else {
 	for my $filename (@ARGV) {
@@ -353,6 +427,7 @@ if ($chk_branch) {
 		} else {
 			$vname = $filename;
 		}
+		print "Checking $filename...\n" if @ARGV > 1 && $quiet == 0;
 		while (<$FILE>) {
 			chomp;
 			push(@rawlines, $_);
@@ -1098,11 +1173,10 @@ sub possible {
 			case|
 			else|
 			asm|__asm__|
-			do|
-			\#|
-			\#\#
+			do
 		)(?:\s|$)|
-		^(?:typedef|struct|enum)\b
+		^(?:typedef|struct|enum)\b|
+		^\#
 	    )}x;
 	warn "CHECK<$possible> ($line)\n" if ($dbg_possible > 2);
 	if ($possible !~ $notPermitted) {
@@ -1112,7 +1186,7 @@ sub possible {
 		if ($possible =~ /^\s*$/) {
 
 		} elsif ($possible =~ /\s/) {
-			$possible =~ s/\s*$Type\s*//g;
+			$possible =~ s/\s*(?:$Type|\#\#)\s*//g;
 			for my $modifier (split(' ', $possible)) {
 				if ($modifier !~ $notPermitted) {
 					warn "MODIFIER: $modifier ($possible) ($line)\n" if ($dbg_possible);
@@ -1133,14 +1207,23 @@ sub possible {
 my $prefix = '';
 
 sub report {
-	if (defined $tst_only && $_[0] !~ /\Q$tst_only\E/) {
+	my ($level, $msg) = @_;
+	if (defined $tst_only && $msg !~ /\Q$tst_only\E/) {
 		return 0;
 	}
-	my $line = $prefix . $_[0];
 
-	$line = (split('\n', $line))[0] . "\n" if ($terse);
+	my $output = '';
+	$output .= BOLD if $color;
+	$output .= $prefix;
+	$output .= RED if $color && $level eq 'ERROR';
+	$output .= MAGENTA if $color && $level eq 'WARNING';
+	$output .= $level . ':';
+	$output .= RESET if $color;
+	$output .= ' ' . $msg . "\n";
 
-	push(our @report, $line);
+	$output = (split('\n', $output))[0] . "\n" if ($terse);
+
+	push(our @report, $output);
 
 	return 1;
 }
@@ -1148,13 +1231,13 @@ sub report_dump {
 	our @report;
 }
 sub ERROR {
-	if (report("ERROR: $_[0]\n")) {
+	if (report("ERROR", $_[0])) {
 		our $clean = 0;
 		our $cnt_error++;
 	}
 }
 sub WARN {
-	if (report("WARNING: $_[0]\n")) {
+	if (report("WARNING", $_[0])) {
 		our $clean = 0;
 		our $cnt_warn++;
 	}
@@ -1177,6 +1260,11 @@ sub process {
 	our $clean = 1;
 	my $signoff = 0;
 	my $is_patch = 0;
+
+	my $in_header_lines = $file ? 0 : 1;
+	my $in_commit_log = 0;		#Scanning lines before patch
+	my $reported_maintainer_file = 0;
+	my $non_utf8_charset = 0;
 
 	our @report = ();
 	our $cnt_lines = 0;
@@ -1329,11 +1417,10 @@ sub process {
 		# extract the filename as it passes
 		if ($line =~ /^diff --git.*?(\S+)$/) {
 			$realfile = $1;
-			$realfile =~ s@^([^/]*)/@@;
-
+			$realfile =~ s@^([^/]*)/@@ if (!$file);
 		} elsif ($line =~ /^\+\+\+\s+(\S+)/) {
 			$realfile = $1;
-			$realfile =~ s@^([^/]*)/@@;
+			$realfile =~ s@^([^/]*)/@@ if (!$file);
 
 			$p1_prefix = $1;
 			if (!$file && $tree && $p1_prefix ne '' &&
@@ -1365,10 +1452,16 @@ sub process {
 			$is_patch = 1;
 		}
 
+		if ($line =~ /^Author: .*via Qemu-devel.*<qemu-devel\@nongnu.org>/) {
+		    ERROR("Author email address is mangled by the mailing list\n" . $herecurr);
+		}
+
 #check the patch for a signoff:
 		if ($line =~ /^\s*signed-off-by:/i) {
 			# This is a signoff, if ugly, so do not double report.
 			$signoff++;
+			$in_commit_log = 0;
+
 			if (!($line =~ /^\s*Signed-off-by:/)) {
 				ERROR("The correct form is \"Signed-off-by\"\n" .
 					$herecurr);
@@ -1377,6 +1470,22 @@ sub process {
 				ERROR("space required after Signed-off-by:\n" .
 					$herecurr);
 			}
+		}
+
+# Check if MAINTAINERS is being updated.  If so, there's probably no need to
+# emit the "does MAINTAINERS need updating?" message on file add/move/delete
+		if ($line =~ /^\s*MAINTAINERS\s*\|/) {
+			$reported_maintainer_file = 1;
+		}
+
+# Check for added, moved or deleted files
+		if (!$reported_maintainer_file && !$in_commit_log &&
+		    ($line =~ /^(?:new|deleted) file mode\s*\d+\s*$/ ||
+		     $line =~ /^rename (?:from|to) [\w\/\.\-]+\s*$/ ||
+		     ($line =~ /\{\s*([\w\/\.\-]*)\s*\=\>\s*([\w\/\.\-]*)\s*\}/ &&
+		      (defined($1) || defined($2))))) {
+			$reported_maintainer_file = 1;
+			WARN("added, moved or deleted file(s), does MAINTAINERS need updating?\n" . $herecurr);
 		}
 
 # Check for wrappage within a valid hunk of the file
@@ -1395,6 +1504,28 @@ sub process {
 			my $hereptr = "$hereline$ptr\n";
 
 			ERROR("Invalid UTF-8, patch and commit message should be encoded in UTF-8\n" . $hereptr);
+		}
+
+# Check if it's the start of a commit log
+# (not a header line and we haven't seen the patch filename)
+		if ($in_header_lines && $realfile =~ /^$/ &&
+		    !($rawline =~ /^\s+\S/ ||
+		      $rawline =~ /^(commit\b|from\b|[\w-]+:).*$/i)) {
+			$in_header_lines = 0;
+			$in_commit_log = 1;
+		}
+
+# Check if there is UTF-8 in a commit log when a mail header has explicitly
+# declined it, i.e defined some charset where it is missing.
+		if ($in_header_lines &&
+		    $rawline =~ /^Content-Type:.+charset="(.+)".*$/ &&
+		    $1 !~ /utf-8/i) {
+			$non_utf8_charset = 1;
+		}
+
+		if ($in_commit_log && $non_utf8_charset && $realfile =~ /^$/ &&
+		    $rawline =~ /$NON_ASCII_UTF8/) {
+			WARN("8-bit UTF-8 used in possible commit log\n" . $herecurr);
 		}
 
 # ignore non-hunk lines and lines being removed
@@ -1488,6 +1619,54 @@ sub process {
 
 # check we are in a valid C source file if not then ignore this hunk
 		next if ($realfile !~ /\.(h|c|cpp)$/);
+
+# Block comment styles
+
+		# Block comments use /* on a line of its own
+		if ($rawline !~ m@^\+.*/\*.*\*/[ \t]*$@ &&	#inline /*...*/
+		    $rawline =~ m@^\+.*/\*\*?+[ \t]*[^ \t]@) { # /* or /** non-blank
+			WARN("Block comments use a leading /* on a separate line\n" . $herecurr);
+		}
+
+# Block comments use * on subsequent lines
+		if ($prevline =~ /$;[ \t]*$/ &&			#ends in comment
+		    $prevrawline =~ /^\+.*?\/\*/ &&		#starting /*
+		    $prevrawline !~ /\*\/[ \t]*$/ &&		#no trailing */
+		    $rawline =~ /^\+/ &&			#line is new
+		    $rawline !~ /^\+[ \t]*\*/) {		#no leading *
+			WARN("Block comments use * on subsequent lines\n" . $hereprev);
+		}
+
+# Block comments use */ on trailing lines
+		if ($rawline !~ m@^\+[ \t]*\*/[ \t]*$@ &&	#trailing */
+		    $rawline !~ m@^\+.*/\*.*\*/[ \t]*$@ &&	#inline /*...*/
+		    $rawline !~ m@^\+.*\*{2,}/[ \t]*$@ &&	#trailing **/
+		    $rawline =~ m@^\+[ \t]*.+\*\/[ \t]*$@) {	#non blank */
+			WARN("Block comments use a trailing */ on a separate line\n" . $herecurr);
+		}
+
+# Block comment * alignment
+		if ($prevline =~ /$;[ \t]*$/ &&			#ends in comment
+		    $line =~ /^\+[ \t]*$;/ &&			#leading comment
+		    $rawline =~ /^\+[ \t]*\*/ &&		#leading *
+		    (($prevrawline =~ /^\+.*?\/\*/ &&		#leading /*
+		      $prevrawline !~ /\*\/[ \t]*$/) ||		#no trailing */
+		     $prevrawline =~ /^\+[ \t]*\*/)) {		#leading *
+			my $oldindent;
+			$prevrawline =~ m@^\+([ \t]*/?)\*@;
+			if (defined($1)) {
+				$oldindent = expand_tabs($1);
+			} else {
+				$prevrawline =~ m@^\+(.*/?)\*@;
+				$oldindent = expand_tabs($1);
+			}
+			$rawline =~ m@^\+([ \t]*)\*@;
+			my $newindent = $1;
+			$newindent = expand_tabs($newindent);
+			if (length($oldindent) ne length($newindent)) {
+				WARN("Block comments should align the * on each line\n" . $hereprev);
+			}
+		}
 
 # Check for potential 'bare' types
 		my ($stat, $cond, $line_nr_next, $remain_next, $off_next,
@@ -1852,9 +2031,8 @@ sub process {
 			my ($where, $prefix) = ($-[1], $1);
 			if ($prefix !~ /$Type\s+$/ &&
 			    ($where != 0 || $prefix !~ /^.\s+$/) &&
-			    $prefix !~ /{\s+$/ &&
 			    $prefix !~ /\#\s*define[^(]*\([^)]*\)\s+$/ &&
-			    $prefix !~ /,\s+$/) {
+			    $prefix !~ /[,{:]\s+$/) {
 				ERROR("space prohibited before open square bracket '['\n" . $herecurr);
 			}
 		}
@@ -2130,6 +2308,11 @@ sub process {
 			if ($name ne 'EOF' && $name ne 'ERROR') {
 				ERROR("return of an errno should typically be -ve (return -$1)\n" . $herecurr);
 			}
+		}
+
+		if ($line =~ /^.\s*(Q(?:S?LIST|SIMPLEQ|TAILQ)_HEAD)\s*\(\s*[^,]/ &&
+		    $line !~ /^.typedef/) {
+		    ERROR("named $1 should be typedefed separately\n" . $herecurr);
 		}
 
 # Need a space before open parenthesis after if, while etc
@@ -2672,7 +2855,8 @@ sub process {
 				info_vreport|
 				error_report|
 				warn_report|
-				info_report}x;
+				info_report|
+				g_test_message}x;
 
 	if ($rawline =~ /\b(?:$qemu_error_funcs)\s*\(.*\".*\\n/) {
 		ERROR("Error messages should not contain newlines\n" . $herecurr);
@@ -2736,29 +2920,30 @@ sub process {
 		}
 	}
 
+	if ($is_patch && $chk_signoff && $signoff == 0) {
+		ERROR("Missing Signed-off-by: line(s)\n");
+	}
+
 	# If we have no input at all, then there is nothing to report on
 	# so just keep quiet.
 	if ($#rawlines == -1) {
-		exit(0);
+		return 1;
 	}
 
 	# In mailback mode only produce a report in the negative, for
 	# things that appear to be patches.
 	if ($mailback && ($clean == 1 || !$is_patch)) {
-		exit(0);
+		return 1;
 	}
 
 	# This is not a patch, and we are are in 'no-patch' mode so
 	# just keep quiet.
 	if (!$chk_patch && !$is_patch) {
-		exit(0);
+		return 1;
 	}
 
 	if (!$is_patch) {
 		ERROR("Does not appear to be a unified-diff format patch\n");
-	}
-	if ($is_patch && $chk_signoff && $signoff == 0) {
-		ERROR("Missing Signed-off-by: line(s)\n");
 	}
 
 	print report_dump();

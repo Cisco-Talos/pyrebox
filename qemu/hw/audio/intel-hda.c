@@ -23,6 +23,7 @@
 #include "hw/pci/msi.h"
 #include "qemu/timer.h"
 #include "qemu/bitops.h"
+#include "qemu/log.h"
 #include "hw/audio/soundhw.h"
 #include "intel-hda.h"
 #include "intel-hda-defs.h"
@@ -405,13 +406,6 @@ static bool intel_hda_xfer(HDACodecDevice *dev, uint32_t stnr, bool output,
         return false;
     }
     if (st->bpl == NULL) {
-        return false;
-    }
-    if (st->ctl & (1 << 26)) {
-        /*
-         * Wait with the next DMA xfer until the guest
-         * has acked the buffer completion interrupt
-         */
         return false;
     }
 
@@ -934,6 +928,11 @@ static void intel_hda_reg_write(IntelHDAState *d, const IntelHDAReg *reg, uint32
     uint32_t old;
 
     if (!reg) {
+        return;
+    }
+    if (!reg->wmask) {
+        qemu_log_mask(LOG_GUEST_ERROR, "intel-hda: write to r/o reg %s\n",
+                      reg->name);
         return;
     }
 

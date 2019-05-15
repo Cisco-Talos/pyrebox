@@ -18,6 +18,7 @@
  */
 
 #include "qemu/osdep.h"
+#include "qapi/error.h"
 #include "hw/sysbus.h"
 #include "monitor/monitor.h"
 #include "exec/address-spaces.h"
@@ -200,15 +201,13 @@ void sysbus_init_ioports(SysBusDevice *dev, uint32_t ioport, uint32_t size)
     }
 }
 
-static int sysbus_device_init(DeviceState *dev)
+/* The purpose of preserving this empty realize function
+ * is to prevent the parent_realize field of some subclasses
+ * from being set to NULL to break the normal init/realize
+ * of some devices.
+ */
+static void sysbus_realize(DeviceState *dev, Error **errp)
 {
-    SysBusDevice *sd = SYS_BUS_DEVICE(dev);
-    SysBusDeviceClass *sbc = SYS_BUS_DEVICE_GET_CLASS(sd);
-
-    if (!sbc->init) {
-        return 0;
-    }
-    return sbc->init(sd);
 }
 
 DeviceState *sysbus_create_varargs(const char *name,
@@ -289,16 +288,8 @@ static char *sysbus_get_fw_dev_path(DeviceState *dev)
 {
     SysBusDevice *s = SYS_BUS_DEVICE(dev);
     SysBusDeviceClass *sbc = SYS_BUS_DEVICE_GET_CLASS(s);
-    /* for the explicit unit address fallback case: */
     char *addr, *fw_dev_path;
 
-    if (s->num_mmio) {
-        return g_strdup_printf("%s@" TARGET_FMT_plx, qdev_fw_name(dev),
-                               s->mmio[0].addr);
-    }
-    if (s->num_pio) {
-        return g_strdup_printf("%s@i%04x", qdev_fw_name(dev), s->pio[0]);
-    }
     if (sbc->explicit_ofw_unit_address) {
         addr = sbc->explicit_ofw_unit_address(s);
         if (addr) {
@@ -306,6 +297,13 @@ static char *sysbus_get_fw_dev_path(DeviceState *dev)
             g_free(addr);
             return fw_dev_path;
         }
+    }
+    if (s->num_mmio) {
+        return g_strdup_printf("%s@" TARGET_FMT_plx, qdev_fw_name(dev),
+                               s->mmio[0].addr);
+    }
+    if (s->num_pio) {
+        return g_strdup_printf("%s@i%04x", qdev_fw_name(dev), s->pio[0]);
     }
     return g_strdup(qdev_fw_name(dev));
 }
@@ -324,7 +322,7 @@ MemoryRegion *sysbus_address_space(SysBusDevice *dev)
 static void sysbus_device_class_init(ObjectClass *klass, void *data)
 {
     DeviceClass *k = DEVICE_CLASS(klass);
-    k->init = sysbus_device_init;
+    k->realize = sysbus_realize;
     k->bus_type = TYPE_SYSTEM_BUS;
     /*
      * device_add plugs devices into a suitable bus.  For "real" buses,
@@ -359,9 +357,6 @@ static void main_system_bus_create(void)
     qbus_create_inplace(main_system_bus, system_bus_info.instance_size,
                         TYPE_SYSTEM_BUS, NULL, "main-system-bus");
     OBJECT(main_system_bus)->free = g_free;
-    object_property_add_child(container_get(qdev_get_machine(),
-                                            "/unattached"),
-                              "sysbus", OBJECT(main_system_bus), NULL);
 }
 
 BusState *sysbus_get_default(void)
@@ -370,6 +365,14 @@ BusState *sysbus_get_default(void)
         main_system_bus_create();
     }
     return main_system_bus;
+}
+
+void sysbus_init_child_obj(Object *parent, const char *childname, void *child,
+                           size_t childsize, const char *childtype)
+{
+    object_initialize_child(parent, childname, child, childsize, childtype,
+                            &error_abort, NULL);
+    qdev_set_parent_bus(DEVICE(child), sysbus_get_default());
 }
 
 static void sysbus_register_types(void)

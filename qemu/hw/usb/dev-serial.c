@@ -14,7 +14,7 @@
 #include "qemu/cutils.h"
 #include "qemu/error-report.h"
 #include "hw/usb.h"
-#include "hw/usb/desc.h"
+#include "desc.h"
 #include "chardev/char-serial.h"
 #include "chardev/char-fe.h"
 
@@ -514,7 +514,7 @@ static USBDevice *usb_braille_init(USBBus *bus, const char *unused)
     USBDevice *dev;
     Chardev *cdrv;
 
-    cdrv = qemu_chr_new("braille", "braille");
+    cdrv = qemu_chr_new("braille", "braille", NULL);
     if (!cdrv)
         return NULL;
 

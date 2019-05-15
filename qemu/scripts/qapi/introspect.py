@@ -18,6 +18,20 @@ def to_qlit(obj, level=0, suppress_first_indent=False):
     def indent(level):
         return level * 4 * ' '
 
+    if isinstance(obj, tuple):
+        ifobj, extra = obj
+        ifcond = extra.get('if')
+        comment = extra.get('comment')
+        ret = ''
+        if comment:
+            ret += indent(level) + '/* %s */\n' % comment
+        if ifcond:
+            ret += gen_if(ifcond)
+        ret += to_qlit(ifobj, level)
+        if ifcond:
+            ret += '\n' + gen_endif(ifcond)
+        return ret
+
     ret = ''
     if not suppress_first_indent:
         ret += indent(level)
@@ -26,11 +40,11 @@ def to_qlit(obj, level=0, suppress_first_indent=False):
     elif isinstance(obj, str):
         ret += 'QLIT_QSTR(' + to_c_string(obj) + ')'
     elif isinstance(obj, list):
-        elts = [to_qlit(elt, level + 1)
+        elts = [to_qlit(elt, level + 1).strip('\n')
                 for elt in obj]
         elts.append(indent(level + 1) + "{}")
         ret += 'QLIT_QLIST(((QLitObject[]) {\n'
-        ret += ',\n'.join(elts) + '\n'
+        ret += '\n'.join(elts) + '\n'
         ret += indent(level) + '}))'
     elif isinstance(obj, dict):
         elts = []
@@ -45,6 +59,8 @@ def to_qlit(obj, level=0, suppress_first_indent=False):
         ret += 'QLIT_QBOOL(%s)' % ('true' if obj else 'false')
     else:
         assert False                # not implemented
+    if level > 0:
+        ret += ','
     return ret
 
 
@@ -75,13 +91,9 @@ class QAPISchemaGenIntrospectVisitor(QAPISchemaMonolithicCVisitor):
 
     def visit_end(self):
         # visit the types that are actually used
-        qlits = self._qlits
-        self._qlits = []
         for typ in self._used_types:
             typ.visit(self)
         # generate C
-        # TODO can generate awfully long lines
-        qlits.extend(self._qlits)
         name = c_name(self._prefix, protect=False) + 'qmp_schema_qlit'
         self._genh.add(mcgen('''
 #include "qapi/qmp/qlit.h"
@@ -93,7 +105,7 @@ extern const QLitObject %(c_name)s;
 const QLitObject %(c_name)s = %(c_string)s;
 ''',
                              c_name=c_name(name),
-                             c_string=to_qlit(qlits)))
+                             c_string=to_qlit(self._qlits)))
         self._schema = None
         self._qlits = []
         self._used_types = []
@@ -121,25 +133,37 @@ const QLitObject %(c_name)s = %(c_string)s;
         if typ not in self._used_types:
             self._used_types.append(typ)
         # Clients should examine commands and events, not types.  Hide
-        # type names to reduce the temptation.  Also saves a few
-        # characters.
+        # type names as integers to reduce the temptation.  Also, it
+        # saves a few characters on the wire.
         if isinstance(typ, QAPISchemaBuiltinType):
             return typ.name
         if isinstance(typ, QAPISchemaArrayType):
             return '[' + self._use_type(typ.element_type) + ']'
         return self._name(typ.name)
 
-    def _gen_qlit(self, name, mtype, obj):
+    def _gen_qlit(self, name, mtype, obj, ifcond):
+        extra = {}
         if mtype not in ('command', 'event', 'builtin', 'array'):
+            if not self._unmask:
+                # Output a comment to make it easy to map masked names
+                # back to the source when reading the generated output.
+                extra['comment'] = '"%s" = %s' % (self._name(name), name)
             name = self._name(name)
         obj['name'] = name
         obj['meta-type'] = mtype
-        self._qlits.append(obj)
+        if ifcond:
+            extra['if'] = ifcond
+        if extra:
+            self._qlits.append((obj, extra))
+        else:
+            self._qlits.append(obj)
 
     def _gen_member(self, member):
         ret = {'name': member.name, 'type': self._use_type(member.type)}
         if member.optional:
             ret['default'] = None
+        if member.ifcond:
+            ret = (ret, {'if': member.ifcond})
         return ret
 
     def _gen_variants(self, tag_name, variants):
@@ -147,42 +171,50 @@ const QLitObject %(c_name)s = %(c_string)s;
                 'variants': [self._gen_variant(v) for v in variants]}
 
     def _gen_variant(self, variant):
-        return {'case': variant.name, 'type': self._use_type(variant.type)}
+        return ({'case': variant.name, 'type': self._use_type(variant.type)},
+                {'if': variant.ifcond})
 
     def visit_builtin_type(self, name, info, json_type):
-        self._gen_qlit(name, 'builtin', {'json-type': json_type})
+        self._gen_qlit(name, 'builtin', {'json-type': json_type}, [])
 
-    def visit_enum_type(self, name, info, values, prefix):
-        self._gen_qlit(name, 'enum', {'values': values})
+    def visit_enum_type(self, name, info, ifcond, members, prefix):
+        self._gen_qlit(name, 'enum',
+                       {'values':
+                        [(m.name, {'if': m.ifcond}) for m in members]},
+                       ifcond)
 
-    def visit_array_type(self, name, info, element_type):
+    def visit_array_type(self, name, info, ifcond, element_type):
         element = self._use_type(element_type)
-        self._gen_qlit('[' + element + ']', 'array', {'element-type': element})
+        self._gen_qlit('[' + element + ']', 'array', {'element-type': element},
+                       ifcond)
 
-    def visit_object_type_flat(self, name, info, members, variants):
+    def visit_object_type_flat(self, name, info, ifcond, members, variants):
         obj = {'members': [self._gen_member(m) for m in members]}
         if variants:
             obj.update(self._gen_variants(variants.tag_member.name,
                                           variants.variants))
-        self._gen_qlit(name, 'object', obj)
+        self._gen_qlit(name, 'object', obj, ifcond)
 
-    def visit_alternate_type(self, name, info, variants):
+    def visit_alternate_type(self, name, info, ifcond, variants):
         self._gen_qlit(name, 'alternate',
-                       {'members': [{'type': self._use_type(m.type)}
-                                    for m in variants.variants]})
+                       {'members': [
+                           ({'type': self._use_type(m.type)}, {'if': m.ifcond})
+                           for m in variants.variants]}, ifcond)
 
-    def visit_command(self, name, info, arg_type, ret_type,
-                      gen, success_response, boxed, allow_oob):
+    def visit_command(self, name, info, ifcond, arg_type, ret_type, gen,
+                      success_response, boxed, allow_oob, allow_preconfig):
         arg_type = arg_type or self._schema.the_empty_object_type
         ret_type = ret_type or self._schema.the_empty_object_type
-        self._gen_qlit(name, 'command',
-                       {'arg-type': self._use_type(arg_type),
-                        'ret-type': self._use_type(ret_type),
-                        'allow-oob': allow_oob})
+        obj = {'arg-type': self._use_type(arg_type),
+               'ret-type': self._use_type(ret_type)}
+        if allow_oob:
+            obj['allow-oob'] = allow_oob
+        self._gen_qlit(name, 'command', obj, ifcond)
 
-    def visit_event(self, name, info, arg_type, boxed):
+    def visit_event(self, name, info, ifcond, arg_type, boxed):
         arg_type = arg_type or self._schema.the_empty_object_type
-        self._gen_qlit(name, 'event', {'arg-type': self._use_type(arg_type)})
+        self._gen_qlit(name, 'event', {'arg-type': self._use_type(arg_type)},
+                       ifcond)
 
 
 def gen_introspect(schema, output_dir, prefix, opt_unmask):

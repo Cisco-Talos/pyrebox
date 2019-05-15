@@ -685,11 +685,16 @@ qio_channel_socket_close(QIOChannel *ioc,
                          Error **errp)
 {
     QIOChannelSocket *sioc = QIO_CHANNEL_SOCKET(ioc);
+    int rc = 0;
 
     if (sioc->fd != -1) {
 #ifdef WIN32
         WSAEventSelect(sioc->fd, NULL, 0);
 #endif
+        if (qio_channel_has_feature(ioc, QIO_CHANNEL_FEATURE_LISTEN)) {
+            socket_listen_cleanup(sioc->fd, errp);
+        }
+
         if (closesocket(sioc->fd) < 0) {
             sioc->fd = -1;
             error_setg_errno(errp, errno,
@@ -698,7 +703,7 @@ qio_channel_socket_close(QIOChannel *ioc,
         }
         sioc->fd = -1;
     }
-    return 0;
+    return rc;
 }
 
 static int

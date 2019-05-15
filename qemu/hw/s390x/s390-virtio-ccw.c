@@ -28,13 +28,14 @@
 #include "hw/s390x/storage-keys.h"
 #include "hw/s390x/storage-attributes.h"
 #include "hw/s390x/event-facility.h"
-#include "hw/compat.h"
 #include "ipl.h"
 #include "hw/s390x/s390-virtio-ccw.h"
 #include "hw/s390x/css-bridge.h"
+#include "hw/s390x/ap-bridge.h"
 #include "migration/register.h"
 #include "cpu_models.h"
 #include "hw/nmi.h"
+#include "hw/s390x/tod.h"
 
 S390CPU *s390_cpu_addr2state(uint16_t cpu_addr)
 {
@@ -93,7 +94,7 @@ static const char *const reset_dev_types[] = {
     "diag288",
 };
 
-void subsystem_reset(void)
+static void subsystem_reset(void)
 {
     DeviceState *dev;
     int i;
@@ -187,58 +188,6 @@ static void s390_memory_init(ram_addr_t mem_size)
     s390_stattrib_init();
 }
 
-#define S390_TOD_CLOCK_VALUE_MISSING    0x00
-#define S390_TOD_CLOCK_VALUE_PRESENT    0x01
-
-static void gtod_save(QEMUFile *f, void *opaque)
-{
-    uint64_t tod_low;
-    uint8_t tod_high;
-    int r;
-
-    r = s390_get_clock(&tod_high, &tod_low);
-    if (r) {
-        warn_report("Unable to get guest clock for migration: %s",
-                    strerror(-r));
-        error_printf("Guest clock will not be migrated "
-                     "which could cause the guest to hang.");
-        qemu_put_byte(f, S390_TOD_CLOCK_VALUE_MISSING);
-        return;
-    }
-
-    qemu_put_byte(f, S390_TOD_CLOCK_VALUE_PRESENT);
-    qemu_put_byte(f, tod_high);
-    qemu_put_be64(f, tod_low);
-}
-
-static int gtod_load(QEMUFile *f, void *opaque, int version_id)
-{
-    uint64_t tod_low;
-    uint8_t tod_high;
-    int r;
-
-    if (qemu_get_byte(f) == S390_TOD_CLOCK_VALUE_MISSING) {
-        warn_report("Guest clock was not migrated. This could "
-                    "cause the guest to hang.");
-        return 0;
-    }
-
-    tod_high = qemu_get_byte(f);
-    tod_low = qemu_get_be64(f);
-
-    r = s390_set_clock(&tod_high, &tod_low);
-    if (r) {
-        error_report("Unable to set KVM guest TOD clock: %s", strerror(-r));
-    }
-
-    return r;
-}
-
-static SaveVMHandlers savevm_gtod = {
-    .save_state = gtod_save,
-    .load_state = gtod_load,
-};
-
 static void s390_init_ipl_dev(const char *kernel_filename,
                               const char *kernel_cmdline,
                               const char *initrd_filename, const char *firmware,
@@ -288,6 +237,15 @@ static void s390_create_virtio_net(BusState *bus, const char *name)
     }
 }
 
+static void s390_create_sclpconsole(const char *type, Chardev *chardev)
+{
+    DeviceState *dev;
+
+    dev = qdev_create(sclp_get_event_facility_bus(), type);
+    qdev_prop_set_chr(dev, "chardev", chardev);
+    qdev_init_nofail(dev);
+}
+
 static void ccw_init(MachineState *machine)
 {
     int ret;
@@ -305,16 +263,15 @@ static void ccw_init(MachineState *machine)
     /* init the SIGP facility */
     s390_init_sigp();
 
+    /* create AP bridge and bus(es) */
+    s390_init_ap();
+
     /* get a BUS */
     css_bus = virtual_css_bus_init();
     s390_init_ipl_dev(machine->kernel_filename, machine->kernel_cmdline,
                       machine->initrd_filename, "s390-ccw.img",
                       "s390-netboot.img", true);
 
-    /*
-     * We cannot easily make the pci host bridge conditional as older QEMUs
-     * always created it. Doing so would break migration across QEMU versions.
-     */
     dev = qdev_create(NULL, TYPE_S390_PCI_HOST_BRIDGE);
     object_property_add_child(qdev_get_machine(), TYPE_S390_PCI_HOST_BRIDGE,
                               OBJECT(dev), NULL);
@@ -324,19 +281,8 @@ static void ccw_init(MachineState *machine)
     virtio_ccw_register_hcalls();
 
     s390_enable_css_support(s390_cpu_addr2state(0));
-    /*
-     * Non mcss-e enabled guests only see the devices from the default
-     * css, which is determined by the value of the squash_mcss property.
-     */
-    if (css_bus->squash_mcss) {
-        ret = css_create_css_image(0, true);
-    } else {
-        ret = css_create_css_image(VIRTUAL_CSSID, true);
-    }
-    if (qemu_opt_get(qemu_get_machine_opts(), "s390-squash-mcss")) {
-        warn_report("The machine property 's390-squash-mcss' is deprecated"
-                    " (obsoleted by lifting the cssid restrictions).");
-    }
+
+    ret = css_create_css_image(VIRTUAL_CSSID, true);
 
     assert(ret == 0);
     if (css_migration_enabled()) {
@@ -346,8 +292,16 @@ static void ccw_init(MachineState *machine)
     /* Create VirtIO network adapters */
     s390_create_virtio_net(BUS(css_bus), "virtio-net-ccw");
 
-    /* Register savevm handler for guest TOD clock */
-    register_savevm_live(NULL, "todclock", 0, 1, &savevm_gtod, NULL);
+    /* init consoles */
+    if (serial_hd(0)) {
+        s390_create_sclpconsole("sclpconsole", serial_hd(0));
+    }
+    if (serial_hd(1)) {
+        s390_create_sclpconsole("sclplmconsole", serial_hd(1));
+    }
+
+    /* init the TOD clock */
+    s390_init_tod();
 }
 
 static void s390_cpu_plug(HotplugHandler *hotplug_dev,
@@ -364,17 +318,54 @@ static void s390_cpu_plug(HotplugHandler *hotplug_dev,
     }
 }
 
+static inline void s390_do_cpu_ipl(CPUState *cs, run_on_cpu_data arg)
+{
+    S390CPU *cpu = S390_CPU(cs);
+
+    s390_ipl_prepare_cpu(cpu);
+    s390_cpu_set_state(S390_CPU_STATE_OPERATING, cpu);
+}
+
 static void s390_machine_reset(void)
 {
-    S390CPU *ipl_cpu = S390_CPU(qemu_get_cpu(0));
+    enum s390_reset reset_type;
+    CPUState *cs, *t;
 
+    /* get the reset parameters, reset them once done */
+    s390_ipl_get_reset_request(&cs, &reset_type);
+
+    /* all CPUs are paused and synchronized at this point */
     s390_cmma_reset();
-    qemu_devices_reset();
-    s390_crypto_reset();
 
-    /* all cpus are stopped - configure and start the ipl cpu only */
-    s390_ipl_prepare_cpu(ipl_cpu);
-    s390_cpu_set_state(S390_CPU_STATE_OPERATING, ipl_cpu);
+    switch (reset_type) {
+    case S390_RESET_EXTERNAL:
+    case S390_RESET_REIPL:
+        qemu_devices_reset();
+        s390_crypto_reset();
+
+        /* configure and start the ipl CPU only */
+        run_on_cpu(cs, s390_do_cpu_ipl, RUN_ON_CPU_NULL);
+        break;
+    case S390_RESET_MODIFIED_CLEAR:
+        CPU_FOREACH(t) {
+            run_on_cpu(t, s390_do_cpu_full_reset, RUN_ON_CPU_NULL);
+        }
+        subsystem_reset();
+        s390_crypto_reset();
+        run_on_cpu(cs, s390_do_cpu_load_normal, RUN_ON_CPU_NULL);
+        break;
+    case S390_RESET_LOAD_NORMAL:
+        CPU_FOREACH(t) {
+            run_on_cpu(t, s390_do_cpu_reset, RUN_ON_CPU_NULL);
+        }
+        subsystem_reset();
+        run_on_cpu(cs, s390_do_cpu_initial_reset, RUN_ON_CPU_NULL);
+        run_on_cpu(cs, s390_do_cpu_load_normal, RUN_ON_CPU_NULL);
+        break;
+    default:
+        g_assert_not_reached();
+    }
+    s390_ipl_clear_reset_request();
 }
 
 static void s390_machine_device_plug(HotplugHandler *hotplug_dev,
@@ -464,18 +455,18 @@ static void ccw_machine_class_init(ObjectClass *oc, void *data)
     s390mc->ri_allowed = true;
     s390mc->cpu_model_allowed = true;
     s390mc->css_migration_enabled = true;
+    s390mc->hpage_1m_allowed = true;
     mc->init = ccw_init;
     mc->reset = s390_machine_reset;
     mc->hot_add_cpu = s390_hot_add_cpu;
     mc->block_default_type = IF_VIRTIO;
     mc->no_cdrom = 1;
     mc->no_floppy = 1;
-    mc->no_serial = 1;
     mc->no_parallel = 1;
     mc->no_sdcard = 1;
-    mc->use_sclp = 1;
     mc->max_cpus = S390_MAX_CPUS;
     mc->has_hotpluggable_cpus = true;
+    assert(!mc->get_hotplug_handler);
     mc->get_hotplug_handler = s390_get_hotplug_handler;
     mc->cpu_index_to_instance_props = s390_cpu_index_to_props;
     mc->possible_cpu_arch_ids = s390_possible_cpu_arch_ids;
@@ -544,6 +535,12 @@ bool cpu_model_allowed(void)
     return get_machine_class()->cpu_model_allowed;
 }
 
+bool hpage_1m_allowed(void)
+{
+    /* for "none" machine this results in true */
+    return get_machine_class()->hpage_1m_allowed;
+}
+
 static char *machine_get_loadparm(Object *obj, Error **errp)
 {
     S390CcwMachineState *ms = S390_CCW_MACHINE(obj);
@@ -573,21 +570,6 @@ static void machine_set_loadparm(Object *obj, const char *val, Error **errp)
         ms->loadparm[i] = ' '; /* pad right with spaces */
     }
 }
-static inline bool machine_get_squash_mcss(Object *obj, Error **errp)
-{
-    S390CcwMachineState *ms = S390_CCW_MACHINE(obj);
-
-    return ms->s390_squash_mcss;
-}
-
-static inline void machine_set_squash_mcss(Object *obj, bool value,
-                                           Error **errp)
-{
-    S390CcwMachineState *ms = S390_CCW_MACHINE(obj);
-
-    ms->s390_squash_mcss = value;
-}
-
 static inline void s390_machine_initfn(Object *obj)
 {
     object_property_add_bool(obj, "aes-key-wrap",
@@ -612,13 +594,6 @@ static inline void s390_machine_initfn(Object *obj)
             " to upper case) to pass to machine loader, boot manager,"
             " and guest kernel",
             NULL);
-    object_property_add_bool(obj, "s390-squash-mcss",
-                             machine_get_squash_mcss,
-                             machine_set_squash_mcss, NULL);
-    object_property_set_description(obj, "s390-squash-mcss", "(deprecated) "
-            "enable/disable squashing subchannels into the default css",
-            NULL);
-    object_property_set_bool(obj, false, "s390-squash-mcss", NULL);
 }
 
 static const TypeInfo ccw_machine_info = {
@@ -671,99 +646,59 @@ bool css_migration_enabled(void)
     }                                                                         \
     type_init(ccw_machine_register_##suffix)
 
-#define CCW_COMPAT_2_11 \
-        HW_COMPAT_2_11 \
-        {\
-            .driver   = TYPE_SCLP_EVENT_FACILITY,\
-            .property = "allow_all_mask_sizes",\
-            .value    = "off",\
-        },
+static void ccw_machine_4_0_instance_options(MachineState *machine)
+{
+}
 
-#define CCW_COMPAT_2_10 \
-        HW_COMPAT_2_10
+static void ccw_machine_4_0_class_options(MachineClass *mc)
+{
+}
+DEFINE_CCW_MACHINE(4_0, "4.0", true);
 
-#define CCW_COMPAT_2_9 \
-        HW_COMPAT_2_9 \
-        {\
-            .driver   = TYPE_S390_STATTRIB,\
-            .property = "migration-enabled",\
-            .value    = "off",\
-        },
+static void ccw_machine_3_1_instance_options(MachineState *machine)
+{
+    static const S390FeatInit qemu_cpu_feat = { S390_FEAT_LIST_QEMU_V3_1 };
+    ccw_machine_4_0_instance_options(machine);
+    s390_cpudef_featoff_greater(14, 1, S390_FEAT_MULTIPLE_EPOCH);
+    s390_cpudef_group_featoff_greater(14, 1, S390_FEAT_GROUP_MULTIPLE_EPOCH_PTFF);
+    s390_set_qemu_cpu_model(0x2827, 12, 2, qemu_cpu_feat);
+}
 
-#define CCW_COMPAT_2_8 \
-        HW_COMPAT_2_8 \
-        {\
-            .driver   = TYPE_S390_FLIC_COMMON,\
-            .property = "adapter_routes_max_batch",\
-            .value    = "64",\
-        },
+static void ccw_machine_3_1_class_options(MachineClass *mc)
+{
+    ccw_machine_4_0_class_options(mc);
+    compat_props_add(mc->compat_props, hw_compat_3_1, hw_compat_3_1_len);
+}
+DEFINE_CCW_MACHINE(3_1, "3.1", false);
 
-#define CCW_COMPAT_2_7 \
-        HW_COMPAT_2_7
+static void ccw_machine_3_0_instance_options(MachineState *machine)
+{
+    ccw_machine_3_1_instance_options(machine);
+}
 
-#define CCW_COMPAT_2_6 \
-        HW_COMPAT_2_6 \
-        {\
-            .driver   = TYPE_S390_IPL,\
-            .property = "iplbext_migration",\
-            .value    = "off",\
-        }, {\
-            .driver   = TYPE_VIRTUAL_CSS_BRIDGE,\
-            .property = "css_dev_path",\
-            .value    = "off",\
-        },
+static void ccw_machine_3_0_class_options(MachineClass *mc)
+{
+    S390CcwMachineClass *s390mc = S390_MACHINE_CLASS(mc);
 
-#define CCW_COMPAT_2_5 \
-        HW_COMPAT_2_5
-
-#define CCW_COMPAT_2_4 \
-        HW_COMPAT_2_4 \
-        {\
-            .driver   = TYPE_S390_SKEYS,\
-            .property = "migration-enabled",\
-            .value    = "off",\
-        },{\
-            .driver   = "virtio-blk-ccw",\
-            .property = "max_revision",\
-            .value    = "0",\
-        },{\
-            .driver   = "virtio-balloon-ccw",\
-            .property = "max_revision",\
-            .value    = "0",\
-        },{\
-            .driver   = "virtio-serial-ccw",\
-            .property = "max_revision",\
-            .value    = "0",\
-        },{\
-            .driver   = "virtio-9p-ccw",\
-            .property = "max_revision",\
-            .value    = "0",\
-        },{\
-            .driver   = "virtio-rng-ccw",\
-            .property = "max_revision",\
-            .value    = "0",\
-        },{\
-            .driver   = "virtio-net-ccw",\
-            .property = "max_revision",\
-            .value    = "0",\
-        },{\
-            .driver   = "virtio-scsi-ccw",\
-            .property = "max_revision",\
-            .value    = "0",\
-        },{\
-            .driver   = "vhost-scsi-ccw",\
-            .property = "max_revision",\
-            .value    = "0",\
-        },
+    s390mc->hpage_1m_allowed = false;
+    ccw_machine_3_1_class_options(mc);
+    compat_props_add(mc->compat_props, hw_compat_3_0, hw_compat_3_0_len);
+}
+DEFINE_CCW_MACHINE(3_0, "3.0", false);
 
 static void ccw_machine_2_12_instance_options(MachineState *machine)
 {
+    ccw_machine_3_0_instance_options(machine);
+    s390_cpudef_featoff_greater(11, 1, S390_FEAT_PPA15);
+    s390_cpudef_featoff_greater(11, 1, S390_FEAT_BPB);
 }
 
 static void ccw_machine_2_12_class_options(MachineClass *mc)
 {
+    ccw_machine_3_0_class_options(mc);
+    compat_props_add(mc->compat_props, hw_compat_2_12, hw_compat_2_12_len);
 }
-DEFINE_CCW_MACHINE(2_12, "2.12", true);
+DEFINE_CCW_MACHINE(2_12, "2.12", false);
 
 static void ccw_machine_2_11_instance_options(MachineState *machine)
 {
@@ -776,8 +711,13 @@ static void ccw_machine_2_11_instance_options(MachineState *machine)
 
 static void ccw_machine_2_11_class_options(MachineClass *mc)
 {
+    static GlobalProperty compat[] = {
+        { TYPE_SCLP_EVENT_FACILITY, "allow_all_mask_sizes", "off", },
+    };
+
     ccw_machine_2_12_class_options(mc);
-    SET_MACHINE_COMPAT(mc, CCW_COMPAT_2_11);
+    compat_props_add(mc->compat_props, hw_compat_2_11, hw_compat_2_11_len);
+    compat_props_add(mc->compat_props, compat, G_N_ELEMENTS(compat));
 }
 DEFINE_CCW_MACHINE(2_11, "2.11", false);
 
@@ -789,7 +729,7 @@ static void ccw_machine_2_10_instance_options(MachineState *machine)
 static void ccw_machine_2_10_class_options(MachineClass *mc)
 {
     ccw_machine_2_11_class_options(mc);
-    SET_MACHINE_COMPAT(mc, CCW_COMPAT_2_10);
+    compat_props_add(mc->compat_props, hw_compat_2_10, hw_compat_2_10_len);
 }
 DEFINE_CCW_MACHINE(2_10, "2.10", false);
 
@@ -806,9 +746,13 @@ static void ccw_machine_2_9_instance_options(MachineState *machine)
 static void ccw_machine_2_9_class_options(MachineClass *mc)
 {
     S390CcwMachineClass *s390mc = S390_MACHINE_CLASS(mc);
+    static GlobalProperty compat[] = {
+        { TYPE_S390_STATTRIB, "migration-enabled", "off", },
+    };
 
     ccw_machine_2_10_class_options(mc);
-    SET_MACHINE_COMPAT(mc, CCW_COMPAT_2_9);
+    compat_props_add(mc->compat_props, hw_compat_2_9, hw_compat_2_9_len);
+    compat_props_add(mc->compat_props, compat, G_N_ELEMENTS(compat));
     s390mc->css_migration_enabled = false;
 }
 DEFINE_CCW_MACHINE(2_9, "2.9", false);
@@ -820,8 +764,13 @@ static void ccw_machine_2_8_instance_options(MachineState *machine)
 
 static void ccw_machine_2_8_class_options(MachineClass *mc)
 {
+    static GlobalProperty compat[] = {
+        { TYPE_S390_FLIC_COMMON, "adapter_routes_max_batch", "64", },
+    };
+
     ccw_machine_2_9_class_options(mc);
-    SET_MACHINE_COMPAT(mc, CCW_COMPAT_2_8);
+    compat_props_add(mc->compat_props, hw_compat_2_8, hw_compat_2_8_len);
+    compat_props_add(mc->compat_props, compat, G_N_ELEMENTS(compat));
 }
 DEFINE_CCW_MACHINE(2_8, "2.8", false);
 
@@ -836,7 +785,7 @@ static void ccw_machine_2_7_class_options(MachineClass *mc)
 
     s390mc->cpu_model_allowed = false;
     ccw_machine_2_8_class_options(mc);
-    SET_MACHINE_COMPAT(mc, CCW_COMPAT_2_7);
+    compat_props_add(mc->compat_props, hw_compat_2_7, hw_compat_2_7_len);
 }
 DEFINE_CCW_MACHINE(2_7, "2.7", false);
 
@@ -848,10 +797,15 @@ static void ccw_machine_2_6_instance_options(MachineState *machine)
 static void ccw_machine_2_6_class_options(MachineClass *mc)
 {
     S390CcwMachineClass *s390mc = S390_MACHINE_CLASS(mc);
+    static GlobalProperty compat[] = {
+        { TYPE_S390_IPL, "iplbext_migration", "off", },
+         { TYPE_VIRTUAL_CSS_BRIDGE, "css_dev_path", "off", },
+    };
 
     s390mc->ri_allowed = false;
     ccw_machine_2_7_class_options(mc);
-    SET_MACHINE_COMPAT(mc, CCW_COMPAT_2_6);
+    compat_props_add(mc->compat_props, hw_compat_2_6, hw_compat_2_6_len);
+    compat_props_add(mc->compat_props, compat, G_N_ELEMENTS(compat));
 }
 DEFINE_CCW_MACHINE(2_6, "2.6", false);
 
@@ -863,7 +817,7 @@ static void ccw_machine_2_5_instance_options(MachineState *machine)
 static void ccw_machine_2_5_class_options(MachineClass *mc)
 {
     ccw_machine_2_6_class_options(mc);
-    SET_MACHINE_COMPAT(mc, CCW_COMPAT_2_5);
+    compat_props_add(mc->compat_props, hw_compat_2_5, hw_compat_2_5_len);
 }
 DEFINE_CCW_MACHINE(2_5, "2.5", false);
 
@@ -874,8 +828,21 @@ static void ccw_machine_2_4_instance_options(MachineState *machine)
 
 static void ccw_machine_2_4_class_options(MachineClass *mc)
 {
+    static GlobalProperty compat[] = {
+        { TYPE_S390_SKEYS, "migration-enabled", "off", },
+        { "virtio-blk-ccw", "max_revision", "0", },
+        { "virtio-balloon-ccw", "max_revision", "0", },
+        { "virtio-serial-ccw", "max_revision", "0", },
+        { "virtio-9p-ccw", "max_revision", "0", },
+        { "virtio-rng-ccw", "max_revision", "0", },
+        { "virtio-net-ccw", "max_revision", "0", },
+        { "virtio-scsi-ccw", "max_revision", "0", },
+        { "vhost-scsi-ccw", "max_revision", "0", },
+    };
+
     ccw_machine_2_5_class_options(mc);
-    SET_MACHINE_COMPAT(mc, CCW_COMPAT_2_4);
+    compat_props_add(mc->compat_props, hw_compat_2_4, hw_compat_2_4_len);
+    compat_props_add(mc->compat_props, compat, G_N_ELEMENTS(compat));
 }
 DEFINE_CCW_MACHINE(2_4, "2.4", false);
 

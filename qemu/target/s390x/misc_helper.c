@@ -7,7 +7,7 @@
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
  * License as published by the Free Software Foundation; either
- * version 2 of the License, or (at your option) any later version.
+ * version 2.1 of the License, or (at your option) any later version.
  *
  * This library is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -26,9 +26,11 @@
 #include "qemu/host-utils.h"
 #include "exec/helper-proto.h"
 #include "qemu/timer.h"
-#include "exec/address-spaces.h"
 #include "exec/exec-all.h"
 #include "exec/cpu_ldst.h"
+#include "qapi/error.h"
+#include "tcg_s390x.h"
+#include "s390-tod.h"
 
 #if !defined(CONFIG_USER_ONLY)
 #include "sysemu/cpus.h"
@@ -40,6 +42,7 @@
 #include "hw/s390x/ioinst.h"
 #include "hw/s390x/s390-pci-inst.h"
 #include "hw/boards.h"
+#include "hw/s390x/tod.h"
 #endif
 
 /* #define DEBUG_HELPER */
@@ -74,8 +77,28 @@ uint64_t HELPER(stpt)(CPUS390XState *env)
 #endif
 }
 
-#ifndef CONFIG_USER_ONLY
+/* Store Clock */
+uint64_t HELPER(stck)(CPUS390XState *env)
+{
+#ifdef CONFIG_USER_ONLY
+    struct timespec ts;
+    uint64_t ns;
 
+    clock_gettime(CLOCK_REALTIME, &ts);
+    ns = ts.tv_sec * NANOSECONDS_PER_SECOND + ts.tv_nsec;
+
+    return TOD_UNIX_EPOCH + time2tod(ns);
+#else
+    S390TODState *td = s390_get_todstate();
+    S390TODClass *tdc = S390_TOD_GET_CLASS(td);
+    S390TOD tod;
+
+    tdc->get(td, &tod, &error_abort);
+    return tod.low;
+#endif
+}
+
+#ifndef CONFIG_USER_ONLY
 /* SCLP service call */
 uint32_t HELPER(servc)(CPUS390XState *env, uint64_t r1, uint64_t r2)
 {
@@ -136,33 +159,61 @@ void HELPER(spx)(CPUS390XState *env, uint64_t a1)
     tlb_flush_page(cs, TARGET_PAGE_SIZE);
 }
 
-/* Store Clock */
-uint64_t HELPER(stck)(CPUS390XState *env)
+static void update_ckc_timer(CPUS390XState *env)
 {
+    S390TODState *td = s390_get_todstate();
     uint64_t time;
 
-    time = env->tod_offset +
-        time2tod(qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) - env->tod_basetime);
+    /* stop the timer and remove pending CKC IRQs */
+    timer_del(env->tod_timer);
+    g_assert(qemu_mutex_iothread_locked());
+    env->pending_int &= ~INTERRUPT_EXT_CLOCK_COMPARATOR;
 
-    return time;
-}
-
-/* Set Clock Comparator */
-void HELPER(sckc)(CPUS390XState *env, uint64_t time)
-{
-    if (time == -1ULL) {
+    /* the tod has to exceed the ckc, this can never happen if ckc is all 1's */
+    if (env->ckc == -1ULL) {
         return;
     }
 
-    env->ckc = time;
-
     /* difference between origins */
-    time -= env->tod_offset;
+    time = env->ckc - td->base.low;
 
     /* nanoseconds */
     time = tod2time(time);
 
-    timer_mod(env->tod_timer, env->tod_basetime + time);
+    timer_mod(env->tod_timer, time);
+}
+
+/* Set Clock Comparator */
+void HELPER(sckc)(CPUS390XState *env, uint64_t ckc)
+{
+    env->ckc = ckc;
+
+    qemu_mutex_lock_iothread();
+    update_ckc_timer(env);
+    qemu_mutex_unlock_iothread();
+}
+
+void tcg_s390_tod_updated(CPUState *cs, run_on_cpu_data opaque)
+{
+    S390CPU *cpu = S390_CPU(cs);
+
+    update_ckc_timer(&cpu->env);
+}
+
+/* Set Clock */
+uint32_t HELPER(sck)(CPUS390XState *env, uint64_t tod_low)
+{
+    S390TODState *td = s390_get_todstate();
+    S390TODClass *tdc = S390_TOD_GET_CLASS(td);
+    S390TOD tod = {
+        .high = 0,
+        .low = tod_low,
+    };
+
+    qemu_mutex_lock_iothread();
+    tdc->set(td, &tod, &error_abort);
+    qemu_mutex_unlock_iothread();
+    return 0;
 }
 
 /* Set Tod Programmable Field */
@@ -206,7 +257,7 @@ uint32_t HELPER(stsi)(CPUS390XState *env, uint64_t a0, uint64_t r0, uint64_t r1)
     const MachineState *ms = MACHINE(qdev_get_machine());
     uint16_t total_cpus = 0, conf_cpus = 0, reserved_cpus = 0;
     S390CPU *cpu = s390_env_get_cpu(env);
-    SysIB sysib = { 0 };
+    SysIB sysib = { };
     int i, cc = 0;
 
     if ((r0 & STSI_R0_FC_MASK) > STSI_R0_FC_LEVEL_3) {

@@ -20,7 +20,6 @@
 struct TypeImpl;
 typedef struct TypeImpl *Type;
 
-typedef struct ObjectClass ObjectClass;
 typedef struct Object Object;
 
 typedef struct TypeInfo TypeInfo;
@@ -455,10 +454,8 @@ struct Object
  *   parent class initialization has occurred, but before the class itself
  *   is initialized.  This is the function to use to undo the effects of
  *   memcpy from the parent class to the descendants.
- * @class_finalize: This function is called during class destruction and is
- *   meant to release and dynamic parameters allocated by @class_init.
- * @class_data: Data to pass to the @class_init, @class_base_init and
- *   @class_finalize functions.  This can be useful when building dynamic
+ * @class_data: Data to pass to the @class_init,
+ *   @class_base_init. This can be useful when building dynamic
  *   classes.
  * @interfaces: The list of interfaces associated with this type.  This
  *   should point to a static array that's terminated with a zero filled
@@ -479,7 +476,6 @@ struct TypeInfo
 
     void (*class_init)(ObjectClass *klass, void *data);
     void (*class_base_init)(ObjectClass *klass, void *data);
-    void (*class_finalize)(ObjectClass *klass, void *data);
     void *class_data;
 
     InterfaceInfo *interfaces;
@@ -679,6 +675,12 @@ Object *object_new_with_propv(const char *typename,
                               Error **errp,
                               va_list vargs);
 
+void object_apply_global_props(Object *obj, const GPtrArray *props,
+                               Error **errp);
+void object_set_machine_compat_props(GPtrArray *compat_props);
+void object_set_accelerator_compat_props(GPtrArray *compat_props);
+void object_apply_compat_props(Object *obj);
+
 /**
  * object_set_props:
  * @obj: the object instance to set properties on
@@ -747,6 +749,47 @@ int object_set_propv(Object *obj,
  * and will be finalized when the last reference is dropped.
  */
 void object_initialize(void *obj, size_t size, const char *typename);
+
+/**
+ * object_initialize_child:
+ * @parentobj: The parent object to add a property to
+ * @propname: The name of the property
+ * @childobj: A pointer to the memory to be used for the object.
+ * @size: The maximum size available at @childobj for the object.
+ * @type: The name of the type of the object to instantiate.
+ * @errp: If an error occurs, a pointer to an area to store the error
+ * @...: list of property names and values
+ *
+ * This function will initialize an object. The memory for the object should
+ * have already been allocated. The object will then be added as child property
+ * to a parent with object_property_add_child() function. The returned object
+ * has a reference count of 1 (for the "child<...>" property from the parent),
+ * so the object will be finalized automatically when the parent gets removed.
+ *
+ * The variadic parameters are a list of pairs of (propname, propvalue)
+ * strings. The propname of %NULL indicates the end of the property list.
+ * If the object implements the user creatable interface, the object will
+ * be marked complete once all the properties have been processed.
+ */
+void object_initialize_child(Object *parentobj, const char *propname,
+                             void *childobj, size_t size, const char *type,
+                             Error **errp, ...) QEMU_SENTINEL;
+
+/**
+ * object_initialize_childv:
+ * @parentobj: The parent object to add a property to
+ * @propname: The name of the property
+ * @childobj: A pointer to the memory to be used for the object.
+ * @size: The maximum size available at @childobj for the object.
+ * @type: The name of the type of the object to instantiate.
+ * @errp: If an error occurs, a pointer to an area to store the error
+ * @vargs: list of property names and values
+ *
+ * See object_initialize_child() for documentation.
+ */
+void object_initialize_childv(Object *parentobj, const char *propname,
+                              void *childobj, size_t size, const char *type,
+                              Error **errp, va_list vargs);
 
 /**
  * object_dynamic_cast:
@@ -1103,6 +1146,11 @@ char *object_property_get_str(Object *obj, const char *name,
  * @errp: returns an error if this function fails
  *
  * Writes an object's canonical path to a property.
+ *
+ * If the link property was created with
+ * <code>OBJ_PROP_LINK_STRONG</code> bit, the old target object is
+ * unreferenced, and a reference is added to the new target object.
+ *
  */
 void object_property_set_link(Object *obj, Object *value,
                               const char *name, Error **errp);
@@ -1302,6 +1350,7 @@ Object *object_get_internal_root(void);
  *
  * Returns: The final component in the object's canonical path.  The canonical
  * path is the path within the composition tree starting from the root.
+ * %NULL if the object doesn't have a parent (and thus a canonical path).
  */
 gchar *object_get_canonical_path_component(Object *obj);
 
@@ -1376,7 +1425,7 @@ Object *object_resolve_path_component(Object *parent, const gchar *part);
  * @obj: the object to add a property to
  * @name: the name of the property
  * @child: the child object
- * @errp: if an error occurs, a pointer to an area to store the area
+ * @errp: if an error occurs, a pointer to an area to store the error
  *
  * Child properties form the composition tree.  All objects need to be a child
  * of another object.  Objects can only be a child of one object.
@@ -1393,7 +1442,7 @@ void object_property_add_child(Object *obj, const char *name,
 
 typedef enum {
     /* Unref the link pointer when the property is deleted */
-    OBJ_PROP_LINK_UNREF_ON_RELEASE = 0x1,
+    OBJ_PROP_LINK_STRONG = 0x1,
 } ObjectPropertyLinkFlags;
 
 /**
@@ -1414,7 +1463,7 @@ void object_property_allow_set_link(const Object *, const char *,
  * @child: a pointer to where the link object reference is stored
  * @check: callback to veto setting or NULL if the property is read-only
  * @flags: additional options for the link
- * @errp: if an error occurs, a pointer to an area to store the area
+ * @errp: if an error occurs, a pointer to an area to store the error
  *
  * Links establish relationships between objects.  Links are unidirectional
  * although two links can be combined to form a bidirectional relationship
@@ -1431,8 +1480,9 @@ void object_property_allow_set_link(const Object *, const char *,
  * link property.  The reference count for <code>*@child</code> is
  * managed by the property from after the function returns till the
  * property is deleted with object_property_del().  If the
- * <code>@flags</code> <code>OBJ_PROP_LINK_UNREF_ON_RELEASE</code> bit is set,
- * the reference count is decremented when the property is deleted.
+ * <code>@flags</code> <code>OBJ_PROP_LINK_STRONG</code> bit is set,
+ * the reference count is decremented when the property is deleted or
+ * modified.
  */
 void object_property_add_link(Object *obj, const char *name,
                               const char *type, Object **child,

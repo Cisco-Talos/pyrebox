@@ -40,6 +40,7 @@
 #include "sysemu/blockdev.h"
 #include "sysemu/sysemu.h"
 #include "qemu/log.h"
+#include "trace.h"
 
 /********************************************************/
 /* debug Floppy devices */
@@ -396,16 +397,9 @@ static int pick_geometry(FDrive *drv)
                            nb_sectors,
                            FloppyDriveType_str(parse->drive));
         }
+        assert(type_match != -1 && "misconfigured fd_format");
         match = type_match;
     }
-
-    /* No match of any kind found -- fd_format is misconfigured, abort. */
-    if (match == -1) {
-        error_setg(&error_abort, "No candidate geometries present in table "
-                   " for floppy drive type '%s'",
-                   FloppyDriveType_str(drv->drive));
-    }
-
     parse = &(fd_formats[match]);
 
  out:
@@ -934,7 +928,7 @@ static uint32_t fdctrl_read (void *opaque, uint32_t reg)
         retval = (uint32_t)(-1);
         break;
     }
-    FLOPPY_DPRINTF("read reg%d: 0x%02x\n", reg & 7, retval);
+    trace_fdc_ioport_read(reg, retval);
 
     return retval;
 }
@@ -943,9 +937,8 @@ static void fdctrl_write (void *opaque, uint32_t reg, uint32_t value)
 {
     FDCtrl *fdctrl = opaque;
 
-    FLOPPY_DPRINTF("write reg%d: 0x%02x\n", reg & 7, value);
-
     reg &= 7;
+    trace_fdc_ioport_write(reg, value);
     switch (reg) {
     case FD_REG_DOR:
         fdctrl_write_dor(fdctrl, value);
@@ -1624,7 +1617,7 @@ static void fdctrl_stop_transfer(FDCtrl *fdctrl, uint8_t status0,
     fdctrl->fifo[5] = cur_drv->sect;
     fdctrl->fifo[6] = FD_SECTOR_SC;
     fdctrl->data_dir = FD_DIR_READ;
-    if (!(fdctrl->msr & FD_MSR_NONDMA)) {
+    if (fdctrl->dma_chann != -1 && !(fdctrl->msr & FD_MSR_NONDMA)) {
         IsaDmaClass *k = ISADMA_GET_CLASS(fdctrl->dma);
         k->release_DREQ(fdctrl->dma, fdctrl->dma_chann);
     }

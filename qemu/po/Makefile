@@ -36,14 +36,14 @@ clean:
 
 install: $(OBJS)
 	for obj in $(OBJS); do \
-	    base=`basename $$obj .mo`; \
+	    base=$$(basename $$obj .mo); \
 	    $(INSTALL) -d $(DESTDIR)$(prefix)/share/locale/$$base/LC_MESSAGES; \
 	    $(INSTALL) -m644 $$obj $(DESTDIR)$(prefix)/share/locale/$$base/LC_MESSAGES/qemu.mo; \
 	done
 
 $(PO_PATH)/messages.po: $(SRC_PATH)/ui/gtk.c
 	$(call quiet-command, ( cd $(SRC_PATH) && \
-          xgettext -o - --from-code=UTF-8 --foreign-user \
+          xgettext -o - --from-code=UTF-8 --foreign-user --no-location \
 	    --package-name=QEMU --package-version=$(VERSION) \
 	    --msgid-bugs-address=qemu-devel@nongnu.org -k_ -C ui/gtk.c | \
 	  sed -e s/CHARSET/UTF-8/) >$@,"GEN","$@")

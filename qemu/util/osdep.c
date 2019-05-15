@@ -29,7 +29,7 @@
 #include <sys/statvfs.h>
 /* See MySQL bug #7156 (http://bugs.mysql.com/bug.php?id=7156) for
    discussion about Solaris header problems */
-extern int madvise(caddr_t, size_t, int);
+extern int madvise(char *, size_t, int);
 #endif
 
 #include "qemu-common.h"
@@ -302,7 +302,8 @@ int qemu_open(const char *name, int flags, ...)
         }
 
         fd = monitor_fdset_get_fd(fdset_id, flags);
-        if (fd == -1) {
+        if (fd < 0) {
+            errno = -fd;
             return -1;
         }
 
@@ -469,8 +470,8 @@ void fips_set_state(bool requested)
 
 #ifdef _FIPS_DEBUG
     fprintf(stderr, "FIPS mode %s (requested %s)\n",
-	    (fips_enabled ? "enabled" : "disabled"),
-	    (requested ? "enabled" : "disabled"));
+            (fips_enabled ? "enabled" : "disabled"),
+            (requested ? "enabled" : "disabled"));
 #endif
 }
 
@@ -503,20 +504,6 @@ int socket_init(void)
     return 0;
 }
 
-#if !GLIB_CHECK_VERSION(2, 31, 0)
-/* Ensure that glib is running in multi-threaded mode
- * Old versions of glib require explicit initialization.  Failure to do
- * this results in the single-threaded code paths being taken inside
- * glib.  For example, the g_slice allocator will not be thread-safe
- * and cause crashes.
- */
-static void __attribute__((constructor)) thread_init(void)
-{
-    if (!g_thread_supported()) {
-       g_thread_init(NULL);
-    }
-}
-#endif
 
 #ifndef CONFIG_IOVEC
 /* helper function for iov_send_recv() */

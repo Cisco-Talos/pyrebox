@@ -54,7 +54,7 @@ static QCryptoTLSCreds *test_tls_creds_create(QCryptoTLSCredsEndpoint endpoint,
         "sanity-check", "yes",
         NULL);
 
-    if (*errp) {
+    if (!creds) {
         return NULL;
     }
     return QCRYPTO_TLS_CREDS(creds);
@@ -74,7 +74,6 @@ static void test_tls_creds(const void *opaque)
     struct QCryptoTLSCredsTestData *data =
         (struct QCryptoTLSCredsTestData *)opaque;
     QCryptoTLSCreds *creds;
-    Error *err = NULL;
 
 #define CERT_DIR "tests/test-crypto-tlscredsx509-certs/"
     mkdir(CERT_DIR, 0700);
@@ -113,17 +112,11 @@ static void test_tls_creds(const void *opaque)
          QCRYPTO_TLS_CREDS_ENDPOINT_SERVER :
          QCRYPTO_TLS_CREDS_ENDPOINT_CLIENT),
         CERT_DIR,
-        &err);
+        data->expectFail ? NULL : &error_abort);
 
     if (data->expectFail) {
-        error_free(err);
         g_assert(creds == NULL);
     } else {
-        if (err) {
-            g_printerr("Failed to generate creds: %s\n",
-                       error_get_pretty(err));
-            error_free(err);
-        }
         g_assert(creds != NULL);
     }
 
@@ -290,14 +283,8 @@ int main(int argc, char **argv)
                  true, true, GNUTLS_KP_TLS_WWW_SERVER, NULL,
                  0, 0);
 
-    /* Technically a CA cert with basic constraints
-     * key purpose == key signing + non-critical should
-     * be rejected. GNUTLS < 3.1 does not reject it and
-     * we don't anticipate them changing this behaviour
-     */
     TLS_TEST_REG(badca1, true, cacert4req.filename, servercert4req.filename,
-                (GNUTLS_VERSION_MAJOR == 3 && GNUTLS_VERSION_MINOR >= 1) ||
-                GNUTLS_VERSION_MAJOR > 3);
+                 true);
     TLS_TEST_REG(badca2, true,
                  cacert5req.filename, servercert5req.filename, true);
     TLS_TEST_REG(badca3, true,

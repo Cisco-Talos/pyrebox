@@ -4,6 +4,7 @@
 #include "target/ppc/cpu-qom.h"
 
 void ppc_set_irq(PowerPCCPU *cpu, int n_IRQ, int level);
+PowerPCCPU *ppc_get_vcpu_by_pir(int pir);
 
 /* PowerPC hardware exceptions management helpers */
 typedef void (*clk_setup_cb)(void *opaque, uint32_t freq);
@@ -73,6 +74,7 @@ static inline void ppc40x_irq_init(PowerPCCPU *cpu) {}
 static inline void ppc6xx_irq_init(PowerPCCPU *cpu) {}
 static inline void ppc970_irq_init(PowerPCCPU *cpu) {}
 static inline void ppcPOWER7_irq_init(PowerPCCPU *cpu) {}
+static inline void ppcPOWER9_irq_init(PowerPCCPU *cpu) {}
 static inline void ppce500_irq_init(PowerPCCPU *cpu) {}
 #else
 void ppc40x_irq_init(PowerPCCPU *cpu);
@@ -80,6 +82,7 @@ void ppce500_irq_init(PowerPCCPU *cpu);
 void ppc6xx_irq_init(PowerPCCPU *cpu);
 void ppc970_irq_init(PowerPCCPU *cpu);
 void ppcPOWER7_irq_init(PowerPCCPU *cpu);
+void ppcPOWER9_irq_init(PowerPCCPU *cpu);
 #endif
 
 /* PPC machines for OpenBIOS */
@@ -100,6 +103,8 @@ enum {
 #define FW_CFG_PPC_KVM_PID      (FW_CFG_ARCH_LOCAL + 0x07)
 #define FW_CFG_PPC_NVRAM_ADDR   (FW_CFG_ARCH_LOCAL + 0x08)
 #define FW_CFG_PPC_BUSFREQ      (FW_CFG_ARCH_LOCAL + 0x09)
+#define FW_CFG_PPC_NVRAM_FLAT   (FW_CFG_ARCH_LOCAL + 0x0a)
+#define FW_CFG_PPC_VIACONFIG    (FW_CFG_ARCH_LOCAL + 0x0b)
 
 #define PPC_SERIAL_MM_BAUDBASE 399193
 

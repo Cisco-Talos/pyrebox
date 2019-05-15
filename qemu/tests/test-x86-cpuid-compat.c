@@ -19,7 +19,7 @@ static char *get_cpu0_qom_path(void)
 
     cpu0 = qobject_to(QDict, qlist_peek(ret));
     path = g_strdup(qdict_get_str(cpu0, "qom_path"));
-    QDECREF(resp);
+    qobject_unref(resp);
     return path;
 }
 
@@ -30,21 +30,19 @@ static QObject *qom_get(const char *path, const char *prop)
                       "                 'property': %s } }",
                       path, prop);
     QObject *ret = qdict_get(resp, "return");
-    qobject_incref(ret);
-    QDECREF(resp);
+    qobject_ref(ret);
+    qobject_unref(resp);
     return ret;
 }
 
-#ifdef CONFIG_HAS_GLIB_SUBPROCESS_TESTS
 static bool qom_get_bool(const char *path, const char *prop)
 {
     QBool *value = qobject_to(QBool, qom_get(path, prop));
     bool b = qbool_get_bool(value);
 
-    QDECREF(value);
+    qobject_unref(value);
     return b;
 }
-#endif
 
 typedef struct CpuidTestArgs {
     const char *cmdline;
@@ -66,7 +64,7 @@ static void test_cpuid_prop(const void *data)
     g_assert_cmpint(val, ==, args->expected_value);
     qtest_end();
 
-    QDECREF(value);
+    qobject_unref(value);
     g_free(path);
 }
 
@@ -142,8 +140,8 @@ static void test_feature_flag(const void *data)
 
     g_assert(!!(value & (1U << args->bitnr)) == args->expected_value);
 
-    QDECREF(present);
-    QDECREF(filtered);
+    qobject_unref(present);
+    qobject_unref(filtered);
     g_free(path);
 }
 
@@ -168,7 +166,6 @@ static FeatureTestArgs *add_feature_test(const char *name, const char *cmdline,
     return args;
 }
 
-#ifdef CONFIG_HAS_GLIB_SUBPROCESS_TESTS
 static void test_plus_minus_subprocess(void)
 {
     char *path;
@@ -210,17 +207,14 @@ static void test_plus_minus(void)
                               "Don't mix both \"+cx8\" and \"cx8=off\"*");
     g_test_trap_assert_stdout("");
 }
-#endif
 
 int main(int argc, char **argv)
 {
     g_test_init(&argc, &argv, NULL);
 
-#ifdef CONFIG_HAS_GLIB_SUBPROCESS_TESTS
     g_test_add_func("/x86/cpuid/parsing-plus-minus/subprocess",
                     test_plus_minus_subprocess);
     g_test_add_func("/x86/cpuid/parsing-plus-minus", test_plus_minus);
-#endif
 
     /* Original level values for CPU models: */
     add_cpuid_test("x86/cpuid/phenom/level",

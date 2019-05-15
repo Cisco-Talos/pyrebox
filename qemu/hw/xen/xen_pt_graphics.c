@@ -5,7 +5,7 @@
 #include "qapi/error.h"
 #include "xen_pt.h"
 #include "xen-host-pci-device.h"
-#include "hw/xen/xen_backend.h"
+#include "hw/xen/xen-legacy-backend.h"
 
 static unsigned long igd_guest_opregion;
 static unsigned long igd_host_opregion;
@@ -132,7 +132,7 @@ int xen_pt_unregister_vga_regions(XenHostPCIDevice *dev)
 static void *get_vgabios(XenPCIPassthroughState *s, int *size,
                        XenHostPCIDevice *dev)
 {
-    return pci_assign_dev_load_option_rom(&s->dev, OBJECT(&s->dev), size,
+    return pci_assign_dev_load_option_rom(&s->dev, size,
                                           dev->domain, dev->bus,
                                           dev->dev, dev->func);
 }
@@ -185,8 +185,19 @@ void xen_pt_setup_vga(XenPCIPassthroughState *s, XenHostPCIDevice *dev,
         return;
     }
 
+    if (bios_size < sizeof(struct rom_header)) {
+        error_setg(errp, "VGA: VBIOS image corrupt (too small)");
+        return;
+    }
+
     /* Currently we fixed this address as a primary. */
     rom = (struct rom_header *)bios;
+
+    if (rom->pcioffset + sizeof(struct pci_data) > bios_size) {
+        error_setg(errp, "VGA: VBIOS image corrupt (bad pcioffset field)");
+        return;
+    }
+
     pd = (void *)(bios + (unsigned char)rom->pcioffset);
 
     /* We may need to fixup Device Identification. */
@@ -194,6 +205,11 @@ void xen_pt_setup_vga(XenPCIPassthroughState *s, XenHostPCIDevice *dev,
         pd->device = s->real_device.device_id;
 
         len = rom->size * 512;
+        if (len > bios_size) {
+            error_setg(errp, "VGA: VBIOS image corrupt (bad size field)");
+            return;
+        }
+
         /* Then adjust the bios checksum */
         for (c = (char *)bios; c < ((char *)bios + len); c++) {
             checksum += *c;

@@ -94,16 +94,17 @@ void helper_debug(CPUMBState *env)
 {
     int i;
 
-    qemu_log("PC=%8.8x\n", env->sregs[SR_PC]);
-    qemu_log("rmsr=%x resr=%x rear=%x debug[%x] imm=%x iflags=%x\n",
+    qemu_log("PC=%" PRIx64 "\n", env->sregs[SR_PC]);
+    qemu_log("rmsr=%" PRIx64 " resr=%" PRIx64 " rear=%" PRIx64 " "
+             "debug[%x] imm=%x iflags=%x\n",
              env->sregs[SR_MSR], env->sregs[SR_ESR], env->sregs[SR_EAR],
              env->debug, env->imm, env->iflags);
-    qemu_log("btaken=%d btarget=%x mode=%s(saved=%s) eip=%d ie=%d\n",
+    qemu_log("btaken=%d btarget=%" PRIx64 " mode=%s(saved=%s) eip=%d ie=%d\n",
              env->btaken, env->btarget,
              (env->sregs[SR_MSR] & MSR_UM) ? "user" : "kernel",
              (env->sregs[SR_MSR] & MSR_UMS) ? "user" : "kernel",
-             (env->sregs[SR_MSR] & MSR_EIP),
-             (env->sregs[SR_MSR] & MSR_IE));
+             (bool)(env->sregs[SR_MSR] & MSR_EIP),
+             (bool)(env->sregs[SR_MSR] & MSR_IE));
     for (i = 0; i < 32; i++) {
         qemu_log("r%2.2d=%8.8x ", i, env->regs[i]);
         if ((i + 1) % 4 == 0)
@@ -439,12 +440,14 @@ uint32_t helper_pcmpbf(uint32_t a, uint32_t b)
     return 0;
 }
 
-void helper_memalign(CPUMBState *env, uint32_t addr, uint32_t dr, uint32_t wr,
+void helper_memalign(CPUMBState *env, target_ulong addr,
+                     uint32_t dr, uint32_t wr,
                      uint32_t mask)
 {
     if (addr & mask) {
             qemu_log_mask(CPU_LOG_INT,
-                          "unaligned access addr=%x mask=%x, wr=%d dr=r%d\n",
+                          "unaligned access addr=" TARGET_FMT_lx
+                          " mask=%x, wr=%d dr=r%d\n",
                           addr, mask, wr, dr);
             env->sregs[SR_EAR] = addr;
             env->sregs[SR_ESR] = ESR_EC_UNALIGNED_DATA | (wr << 10) \
@@ -459,10 +462,11 @@ void helper_memalign(CPUMBState *env, uint32_t addr, uint32_t dr, uint32_t wr,
     }
 }
 
-void helper_stackprot(CPUMBState *env, uint32_t addr)
+void helper_stackprot(CPUMBState *env, target_ulong addr)
 {
     if (addr < env->slr || addr > env->shr) {
-        qemu_log_mask(CPU_LOG_INT, "Stack protector violation at %x %x %x\n",
+        qemu_log_mask(CPU_LOG_INT, "Stack protector violation at "
+                      TARGET_FMT_lx " %x %x\n",
                       addr, env->slr, env->shr);
         env->sregs[SR_EAR] = addr;
         env->sregs[SR_ESR] = ESR_EC_STACKPROT;
@@ -472,36 +476,38 @@ void helper_stackprot(CPUMBState *env, uint32_t addr)
 
 #if !defined(CONFIG_USER_ONLY)
 /* Writes/reads to the MMU's special regs end up here.  */
-uint32_t helper_mmu_read(CPUMBState *env, uint32_t rn)
+uint32_t helper_mmu_read(CPUMBState *env, uint32_t ext, uint32_t rn)
 {
-    return mmu_read(env, rn);
+    return mmu_read(env, ext, rn);
 }
 
-void helper_mmu_write(CPUMBState *env, uint32_t rn, uint32_t v)
+void helper_mmu_write(CPUMBState *env, uint32_t ext, uint32_t rn, uint32_t v)
 {
-    mmu_write(env, rn, v);
+    mmu_write(env, ext, rn, v);
 }
 
-void mb_cpu_unassigned_access(CPUState *cs, hwaddr addr,
-                              bool is_write, bool is_exec, int is_asi,
-                              unsigned size)
+void mb_cpu_transaction_failed(CPUState *cs, hwaddr physaddr, vaddr addr,
+                               unsigned size, MMUAccessType access_type,
+                               int mmu_idx, MemTxAttrs attrs,
+                               MemTxResult response, uintptr_t retaddr)
 {
     MicroBlazeCPU *cpu;
     CPUMBState *env;
-
-    qemu_log_mask(CPU_LOG_INT, "Unassigned " TARGET_FMT_plx " wr=%d exe=%d\n",
-             addr, is_write ? 1 : 0, is_exec ? 1 : 0);
-    if (cs == NULL) {
-        return;
-    }
+    qemu_log_mask(CPU_LOG_INT, "Transaction failed: vaddr 0x%" VADDR_PRIx
+                  " physaddr 0x" TARGET_FMT_plx " size %d access type %s\n",
+                  addr, physaddr, size,
+                  access_type == MMU_INST_FETCH ? "INST_FETCH" :
+                  (access_type == MMU_DATA_LOAD ? "DATA_LOAD" : "DATA_STORE"));
     cpu = MICROBLAZE_CPU(cs);
     env = &cpu->env;
+
+    cpu_restore_state(cs, retaddr, true);
     if (!(env->sregs[SR_MSR] & MSR_EE)) {
         return;
     }
 
     env->sregs[SR_EAR] = addr;
-    if (is_exec) {
+    if (access_type == MMU_INST_FETCH) {
         if ((env->pvr.regs[2] & PVR2_IOPB_BUS_EXC_MASK)) {
             env->sregs[SR_ESR] = ESR_EC_INSN_BUS;
             helper_raise_exception(env, EXCP_HW_EXCP);
