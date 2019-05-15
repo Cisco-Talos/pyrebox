@@ -1868,8 +1868,8 @@ fi
 # Consult white-list to determine whether to enable werror
 # by default.  Only enable by default for git builds
 if test -z "$werror" ; then
-    if test -d "$source_path/../.git" -a \
-        \( "$linux" = "yes" -o "$mingw32" = "yes" \) ; then
+    if test -e "$source_path/../.git" && \
+        { test "$linux" = "yes" || test "$mingw32" = "yes"; }; then
         werror="yes"
     else
         werror="no"

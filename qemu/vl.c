@@ -3107,7 +3107,6 @@ int main(int argc, char **argv, char **envp)
             case QEMU_OPTION_conf:
 	        pyrebox_conf_name = optarg;
                 break; 
-            case QEMU_OPTION_nodefconfig:
             case QEMU_OPTION_nouserconfig:
                 userconfig = false;
                 break;

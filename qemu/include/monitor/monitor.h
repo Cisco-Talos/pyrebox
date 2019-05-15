@@ -8,7 +8,7 @@
 
 #include "pyrebox/qemu_commands.h"
 
-extern Monitor *cur_mon;
+extern __thread Monitor *cur_mon;
 
 /* flags for monitor_init */
 /* 0x01 unused */

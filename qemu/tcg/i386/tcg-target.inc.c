@@ -168,7 +168,6 @@ static bool have_lzcnt;
 #endif
 
 static tcg_insn_unit *tb_ret_addr;
-//TODO ZZZZ NOT SURE IF ACTUALLY NEEDED.
 #if TCG_TARGET_REG_BITS == 64 
 static void load_operation(target_ulong vaddr, void* haddr, target_ulong size, CPUState* cpu) {
     helper_qemu_mem_read_callback(cpu, vaddr, (uintptr_t) qemu_ram_addr_from_host((void*)haddr), size);
@@ -189,7 +188,7 @@ static void store_operation_8(target_ulong vaddr, void* haddr, target_ulong data
 #endif
 
 
-static void patch_reloc(tcg_insn_unit *code_ptr, int type,
+static bool patch_reloc(tcg_insn_unit *code_ptr, int type,
                         intptr_t value, intptr_t addend)
 {
     value += addend;

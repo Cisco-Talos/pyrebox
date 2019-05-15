@@ -1301,6 +1301,41 @@ static void gen_exception(DisasContext *s, int trapno, target_ulong cur_eip)
    the instruction is known, but it isn't allowed in the current cpu mode.  */
 static void gen_illegal_opcode(DisasContext *s)
 {
+
+    target_ulong insn_size = s->pc - s->pc_start;
+
+    //Call opcode range callback before exception for illegal opcode is generated
+    if (is_opcode_range_callback_needed((target_ulong)s->saved_opcode,s->pgd)){
+        //Update flags before callback
+        gen_update_cc_op(s);
+        //CPU points to the next instruction
+        TCGv tcg_saved_pc = tcg_temp_new();
+        tcg_gen_movi_tl(tcg_saved_pc, s->saved_pc);
+        TCGv tcg_next_pc = tcg_const_tl(0);
+        TCGv_i32 tcg_opcode = tcg_const_i32(s->saved_opcode);
+        TCGv tcg_insn_size = tcg_temp_new();
+        tcg_gen_movi_tl(tcg_insn_size, insn_size);
+    
+        TCGv_ptr tcg_cpu = tcg_const_ptr((tcg_target_ulong)s->cs);
+        gen_helper_qemu_opcode_range_callback(tcg_cpu,
+        tcg_saved_pc, tcg_next_pc, tcg_opcode, tcg_insn_size);
+        tcg_temp_free(tcg_saved_pc);
+        tcg_temp_free(tcg_next_pc);
+        tcg_temp_free(tcg_insn_size);
+        tcg_temp_free_i32(tcg_opcode);
+        tcg_temp_free_ptr(tcg_cpu);
+
+    }
+    //Pyrebox: trigger cpu loop exit if needed
+    //Update flags. In QEMU flags are only updated when needed (on block
+    //transitions). But for us to be able to exit a block in the middle
+    //of its execution, we need to update flags as well on every instruction
+    //transition
+    gen_update_cc_op(s);
+    TCGv_ptr tcg_cpu = tcg_const_ptr((tcg_target_ulong)s->cs);
+    gen_helper_qemu_trigger_cpu_loop_exit_if_needed(tcg_cpu);
+    tcg_temp_free_ptr(tcg_cpu);
+
     gen_exception(s, EXCP06_ILLOP, s->pc_start - s->cs_base);
 }
 
@@ -2250,7 +2285,7 @@ static inline void gen_goto_tb(DisasContext *s, int tb_num, target_ulong eip)
     if (use_goto_tb(s, pc))  {
         /* jump to same page: we can use a direct jump */
         tcg_gen_goto_tb(tb_num);
-        gen_jmp_im(eip);
+        gen_jmp_im(s, eip);
 
         //Pyrebox: insn end 
         //helper_qemu_insn_end_callback(CPUState* cpu)
@@ -2305,7 +2340,7 @@ static inline void gen_goto_tb(DisasContext *s, int tb_num, target_ulong eip)
 
         }
 
-        tcg_gen_exit_tb((uintptr_t)s->base.tb + tb_num);
+        tcg_gen_exit_tb(s->base.tb, tb_num);
         s->base.is_jmp = DISAS_NORETURN;
     } else {
         /* jump to another page */
@@ -2570,58 +2605,8 @@ static void gen_leave(DisasContext *s)
 
     tcg_gen_addi_tl(s->T1, cpu_regs[R_EBP], 1 << d_ot);
 
-    gen_op_mov_reg_v(d_ot, R_EBP, cpu_T0);
-    gen_op_mov_reg_v(a_ot, R_ESP, cpu_T1);
-}
-
-static void gen_exception(DisasContext *s, int trapno, target_ulong cur_eip)
-{
-    gen_update_cc_op(s);
-    gen_jmp_im(cur_eip);
-    gen_helper_raise_exception(cpu_env, tcg_const_i32(trapno));
-    s->base.is_jmp = DISAS_NORETURN;
-}
-
-/* Generate #UD for the current instruction.  The assumption here is that
-   the instruction is known, but it isn't allowed in the current cpu mode.  */
-static void gen_illegal_opcode(DisasContext *s)
-{
-
-    target_ulong insn_size = s->pc - s->pc_start;
-
-    //Call opcode range callback before exception for illegal opcode is generated
-    if (is_opcode_range_callback_needed((target_ulong)s->saved_opcode,s->pgd)){
-        //Update flags before callback
-        gen_update_cc_op(s);
-        //CPU points to the next instruction
-        TCGv tcg_saved_pc = tcg_temp_new();
-        tcg_gen_movi_tl(tcg_saved_pc, s->saved_pc);
-        TCGv tcg_next_pc = tcg_const_tl(0);
-        TCGv_i32 tcg_opcode = tcg_const_i32(s->saved_opcode);
-        TCGv tcg_insn_size = tcg_temp_new();
-        tcg_gen_movi_tl(tcg_insn_size, insn_size);
-    
-        TCGv_ptr tcg_cpu = tcg_const_ptr((tcg_target_ulong)s->cs);
-        gen_helper_qemu_opcode_range_callback(tcg_cpu,
-        tcg_saved_pc, tcg_next_pc, tcg_opcode, tcg_insn_size);
-        tcg_temp_free(tcg_saved_pc);
-        tcg_temp_free(tcg_next_pc);
-        tcg_temp_free(tcg_insn_size);
-        tcg_temp_free_i32(tcg_opcode);
-        tcg_temp_free_ptr(tcg_cpu);
-
-    }
-    //Pyrebox: trigger cpu loop exit if needed
-    //Update flags. In QEMU flags are only updated when needed (on block
-    //transitions). But for us to be able to exit a block in the middle
-    //of its execution, we need to update flags as well on every instruction
-    //transition
-    gen_update_cc_op(s);
-    TCGv_ptr tcg_cpu = tcg_const_ptr((tcg_target_ulong)s->cs);
-    gen_helper_qemu_trigger_cpu_loop_exit_if_needed(tcg_cpu);
-    tcg_temp_free_ptr(tcg_cpu);
-
-    gen_exception(s, EXCP06_ILLOP, s->pc_start - s->cs_base);
+    gen_op_mov_reg_v(s, d_ot, R_EBP, s->T0);
+    gen_op_mov_reg_v(s, a_ot, R_ESP, s->T1);
 }
 
 /* Similarly, except that the assumption here is that we don't decode
@@ -2837,7 +2822,7 @@ do_gen_eob_worker(DisasContext *s, bool inhibit, bool recheck_tf, bool jr, TCGv 
 
         }
 
-        tcg_gen_exit_tb(0);
+        tcg_gen_exit_tb(NULL, 0);
     }
     s->base.is_jmp = DISAS_NORETURN;
 }
@@ -2876,8 +2861,7 @@ static void gen_jmp_tb(DisasContext *s, target_ulong eip, int tb_num)
     if (s->jmp_opt) {
         gen_goto_tb(s, tb_num, eip);
     } else {
-        //TODO ZZZZ
-        gen_jmp_im(eip);
+        gen_jmp_im(s, eip);
         TCGv tcg_dest = tcg_temp_new();
         tcg_gen_movi_tl(tcg_dest, eip);
         gen_eob(s, tcg_dest);
@@ -5707,8 +5691,7 @@ static target_ulong disas_insn(DisasContext *s, CPUState *cpu)
         gen_movl_seg_T0(s, (b >> 3) & 7);
         gen_pop_update(s, ot);
         if (s->base.is_jmp) {
-            //TODO ZZZZ
-            gen_jmp_im(s->pc - s->cs_base);
+            gen_jmp_im(s, s->pc - s->cs_base);
             TCGv tcg_dest = tcg_temp_new();
             tcg_gen_movi_tl(tcg_dest, s->pc - s->cs_base);
             gen_eob(s, tcg_dest);
@@ -5975,7 +5958,7 @@ static target_ulong disas_insn(DisasContext *s, CPUState *cpu)
         /* then put the data */
         gen_op_mov_reg_v(s, ot, reg, s->T1);
         if (s->base.is_jmp) {
-            gen_jmp_im(s->pc - s->cs_base);
+            gen_jmp_im(s, s->pc - s->cs_base);
             TCGv tcg_dest = tcg_temp_new();
             tcg_gen_movi_tl(tcg_dest, s->pc - s->cs_base);
             gen_eob(s, tcg_dest);
@@ -6782,7 +6765,7 @@ static target_ulong disas_insn(DisasContext *s, CPUState *cpu)
             /* add stack offset */
             gen_stack_update(s, val + (2 << dflag));
 
-            gen_eob(s, cpu_T0);
+            gen_eob(s, s->T0);
         }
         break;
     case 0xcb: /* lret */
@@ -6985,7 +6968,7 @@ static target_ulong disas_insn(DisasContext *s, CPUState *cpu)
             gen_pop_update(s, ot);
             set_cc_op(s, CC_OP_EFLAGS);
             /* abort translation because TF/AC flag may change */
-            gen_jmp_im(s->pc - s->cs_base);
+            gen_jmp_im(s, s->pc - s->cs_base);
             TCGv tcg_dest = tcg_temp_new();
             tcg_gen_movi_tl(tcg_dest, s->pc - s->cs_base);
             gen_eob(s, tcg_dest);
@@ -7404,7 +7387,7 @@ static target_ulong disas_insn(DisasContext *s, CPUState *cpu)
         if (s->vm86 ? s->iopl == 3 : s->cpl <= s->iopl) {
             gen_helper_sti(cpu_env);
             /* interruptions are enabled only the first insn after sti */
-            gen_jmp_im(s->pc - s->cs_base);
+            gen_jmp_im(s, s->pc - s->cs_base);
             TCGv tcg_dest = tcg_temp_new();
             tcg_gen_movi_tl(tcg_dest, s->pc - s->cs_base);
             gen_eob_inhibit_irq(s, true, tcg_dest);
@@ -7728,7 +7711,7 @@ static target_ulong disas_insn(DisasContext *s, CPUState *cpu)
                 goto illegal_op;
             }
             gen_helper_clac(cpu_env);
-            gen_jmp_im(s->pc - s->cs_base);
+            gen_jmp_im(s, s->pc - s->cs_base);
             TCGv tcg_dest2 = tcg_temp_new();
             tcg_gen_movi_tl(tcg_dest2, s->pc - s->cs_base);
             gen_eob(s, tcg_dest2);
@@ -7742,7 +7725,7 @@ static target_ulong disas_insn(DisasContext *s, CPUState *cpu)
                 goto illegal_op;
             }
             gen_helper_stac(cpu_env);
-            gen_jmp_im(s->pc - s->cs_base);
+            gen_jmp_im(s, s->pc - s->cs_base);
             TCGv tcg_dest3 = tcg_temp_new();
             tcg_gen_movi_tl(tcg_dest3, s->pc - s->cs_base);
             gen_eob(s, tcg_dest3);
@@ -7789,7 +7772,7 @@ static target_ulong disas_insn(DisasContext *s, CPUState *cpu)
             tcg_gen_trunc_tl_i32(s->tmp2_i32, cpu_regs[R_ECX]);
             gen_helper_xsetbv(cpu_env, s->tmp2_i32, s->tmp1_i64);
             /* End TB because translation flags may change.  */
-            gen_jmp_im(s->pc - s->cs_base);
+            gen_jmp_im(s, s->pc - s->cs_base);
             TCGv tcg_dest4 = tcg_temp_new();
             tcg_gen_movi_tl(tcg_dest4, s->pc - s->cs_base);
             gen_eob(s, tcg_dest4);
@@ -7861,7 +7844,7 @@ static target_ulong disas_insn(DisasContext *s, CPUState *cpu)
             gen_update_cc_op(s);
             gen_helper_stgi(cpu_env);
             gen_jmp_im(s, s->pc - s->cs_base);
-            gen_eob(s);
+            //gen_eob(s);
             break;
 
         case 0xdd: /* CLGI */
@@ -7970,8 +7953,8 @@ static target_ulong disas_insn(DisasContext *s, CPUState *cpu)
             }
             gen_svm_check_intercept(s, pc_start, SVM_EXIT_WRITE_CR0);
             gen_ldst_modrm(env, s, modrm, MO_16, OR_TMP0, 0);
-            gen_helper_lmsw(cpu_env, cpu_T0);
-            gen_jmp_im(s->pc - s->cs_base);
+            gen_helper_lmsw(cpu_env, s->T0);
+            gen_jmp_im(s, s->pc - s->cs_base);
             TCGv tcg_dest5 = tcg_temp_new();
             tcg_gen_movi_tl(tcg_dest5, s->pc - s->cs_base);
             gen_eob(s, tcg_dest5);
@@ -7987,8 +7970,8 @@ static target_ulong disas_insn(DisasContext *s, CPUState *cpu)
             gen_update_cc_op(s);
             gen_jmp_im(s, pc_start - s->cs_base);
             gen_lea_modrm(env, s, modrm);
-            gen_helper_invlpg(cpu_env, cpu_A0);
-            gen_jmp_im(s->pc - s->cs_base);
+            gen_helper_invlpg(cpu_env, s->A0);
+            gen_jmp_im(s, s->pc - s->cs_base);
             TCGv tcg_dest6 = tcg_temp_new();
             tcg_gen_movi_tl(tcg_dest6, s->pc - s->cs_base);
             gen_eob(s, tcg_dest6);
@@ -8397,7 +8380,7 @@ static target_ulong disas_insn(DisasContext *s, CPUState *cpu)
                     if (tb_cflags(s->base.tb) & CF_USE_ICOUNT) {
                         gen_io_end();
                     }
-                    gen_jmp_im(s->pc - s->cs_base);
+                    gen_jmp_im(s, s->pc - s->cs_base);
                     TCGv tcg_dest = tcg_temp_new();
                     tcg_gen_movi_tl(tcg_dest, s->pc - s->cs_base);
                     gen_eob(s, tcg_dest);
@@ -8441,10 +8424,10 @@ static target_ulong disas_insn(DisasContext *s, CPUState *cpu)
             }
             if (b & 2) {
                 gen_svm_check_intercept(s, pc_start, SVM_EXIT_WRITE_DR0 + reg);
-                gen_op_mov_v_reg(ot, cpu_T0, rm);
-                tcg_gen_movi_i32(cpu_tmp2_i32, reg);
-                gen_helper_set_dr(cpu_env, cpu_tmp2_i32, cpu_T0);
-                gen_jmp_im(s->pc - s->cs_base);
+                gen_op_mov_v_reg(s, ot, s->T0, rm);
+                tcg_gen_movi_i32(s->tmp2_i32, reg);
+                gen_helper_set_dr(cpu_env, s->tmp2_i32, s->T0);
+                gen_jmp_im(s, s->pc - s->cs_base);
                 TCGv tcg_dest = tcg_temp_new();
                 tcg_gen_movi_tl(tcg_dest, s->pc - s->cs_base);
                 gen_eob(s, tcg_dest);
@@ -8465,7 +8448,7 @@ static target_ulong disas_insn(DisasContext *s, CPUState *cpu)
             gen_svm_check_intercept(s, pc_start, SVM_EXIT_WRITE_CR0);
             gen_helper_clts(cpu_env);
             /* abort block because static cpu state changed */
-            gen_jmp_im(s->pc - s->cs_base);
+            gen_jmp_im(s, s->pc - s->cs_base);
             TCGv tcg_dest = tcg_temp_new();
             tcg_gen_movi_tl(tcg_dest, s->pc - s->cs_base);
             gen_eob(s, tcg_dest);
@@ -8566,7 +8549,7 @@ static target_ulong disas_insn(DisasContext *s, CPUState *cpu)
             /* XRSTOR is how MPX is enabled, which changes how
                we translate.  Thus we need to end the TB.  */
             gen_update_cc_op(s);
-            gen_jmp_im(s->pc - s->cs_base);
+            gen_jmp_im(s, s->pc - s->cs_base);
             TCGv tcg_dest = tcg_temp_new();
             tcg_gen_movi_tl(tcg_dest, s->pc - s->cs_base);
             gen_eob(s, tcg_dest);
@@ -8756,7 +8739,7 @@ static target_ulong disas_insn(DisasContext *s, CPUState *cpu)
         //insn end and opcode range callback, so that the cpu context
         //when these callbacks are trigger corresponds to the next
         //instruction, just like for the previous cases.
-        gen_jmp_im(s->pc - s->cs_base);
+        gen_jmp_im(s, s->pc - s->cs_base);
         //Pyrebox: insn end 
         //helper_qemu_insn_end_callback(CPUState* cpu)
         //At this point, we take the pgd from the DisasContext, 
@@ -9060,7 +9043,7 @@ static void i386_tr_tb_stop(DisasContextBase *dcbase, CPUState *cpu)
     DisasContext *dc = container_of(dcbase, DisasContext, base);
 
     if (dc->base.is_jmp == DISAS_TOO_MANY) {
-        gen_jmp_im(dc->base.pc_next - dc->cs_base);
+        gen_jmp_im(dc, dc->base.pc_next - dc->cs_base);
         TCGv tcg_dest = tcg_temp_new();
         tcg_gen_movi_tl(tcg_dest, dc->base.pc_next - dc->cs_base);
         gen_eob(dc, tcg_dest);
