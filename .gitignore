@@ -6,6 +6,7 @@ pyrebox/config.h
 pyrebox.conf
 *.so
 docs/build
+/qemu
 /volatility
 /pyrebox_venv
 /win_agent_32.exe.conf
