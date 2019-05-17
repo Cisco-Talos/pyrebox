@@ -46,3 +46,9 @@
 [submodule "qemu/roms/u-boot-sam460ex"]
     path = qemu/roms/u-boot-sam460ex
     url = git://git.qemu.org/u-boot-sam460ex.git
+[submodule "qemu/slirp"]
+	path = qemu/slirp
+	url = https://github.com/rd235/libslirp
+[submodule "qemu/roms/edk2"]
+	path = qemu/roms/edk2
+	url = https://github.com/tianocore/edk2

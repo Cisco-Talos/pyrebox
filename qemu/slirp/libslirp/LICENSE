@@ -1,0 +1,12 @@
+Most of the slirp implementation code has been taken from Qemu.
+
+The following license rules of QEMU apply to libslirp too.
+
+1) QEMU as a whole is released under the GNU General Public License,
+version 2.
+2) Parts of QEMU have specific licenses which are compatible with the
+GNU General Public License, version 2. Hence each source file contains
+its own licensing information.  Source files with no licensing information
+are released under the GNU General Public License, version 2 or (at your
+option) any later version.
+3) QEMU is a trademark of Fabrice Bellard.
