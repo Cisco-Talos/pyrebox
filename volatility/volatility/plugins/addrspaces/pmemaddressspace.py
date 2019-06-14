@@ -8,14 +8,14 @@ import struct
 import sys
 import api_internal
 
-class PMemAddressSpace(addrspace.BaseAddressSpace):
+class PMemAddressSpace(addrspace.AbstractRunBasedMemory):
     def __init__(self, base, config, **kwargs):
         '''
         Initializes the address space with volatility
         '''
         # Address space setup
         self.as_assert(base == None, "Must be first Address Space")
-        addrspace.BaseAddressSpace.__init__(self, None, config, **kwargs)
+        addrspace.AbstractRunBasedMemory.__init__(self, None, config, **kwargs)
 
     def close(self):
         '''
