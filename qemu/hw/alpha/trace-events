@@ -1,4 +1,0 @@
-# See docs/devel/tracing.txt for syntax documentation.
-
-# hw/alpha/pci.c
-alpha_pci_iack_write(void) ""

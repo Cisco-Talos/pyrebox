@@ -1,4 +1,0 @@
-obj-$(CONFIG_SOFTMMU) += accel.o
-obj-$(CONFIG_KVM) += kvm/
-obj-$(CONFIG_TCG) += tcg/
-obj-y += stubs/

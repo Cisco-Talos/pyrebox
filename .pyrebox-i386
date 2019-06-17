@@ -1,3 +1,0 @@
-#!/usr/bin/env bash
-BASEDIR=$(dirname "$0")
-LD_LIBRARY_PATH=$BASEDIR/sleuthkit/tsk/.libs:$LD_LIBRARY_PATH $BASEDIR/qemu/i386-softmmu/qemu-system-i386 "$@"
