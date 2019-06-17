@@ -6,7 +6,6 @@ import urllib
 import socket
 import struct
 import sys
-import api_internal
 
 class PMemAddressSpace(addrspace.AbstractRunBasedMemory):
     def __init__(self, base, config, **kwargs):
@@ -29,6 +28,7 @@ class PMemAddressSpace(addrspace.AbstractRunBasedMemory):
         '''
         Reads data using PMemAccess
         '''
+        import api_internal
         memory = ''
         try:
             # Split the requests into smaller chunks
@@ -72,6 +72,7 @@ class PMemAddressSpace(addrspace.AbstractRunBasedMemory):
         return longval
 
     def get_memory_size(self):
+        import api_internal
         return api_internal.vol_get_memory_size() or 0
 
     def get_available_addresses(self):
@@ -88,6 +89,7 @@ class PMemAddressSpace(addrspace.AbstractRunBasedMemory):
         '''
         Writes data using PMemAccess
         '''
+        import api_internal
         try:
             length = len(data)
             # Send write request
