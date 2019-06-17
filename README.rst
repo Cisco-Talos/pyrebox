@@ -45,6 +45,9 @@ active development and new cool features are yet to come! The master branch shou
 version, while the dev branches contain the latest, work-in progress features. The following announcement
 list refers to the master branch, and the date when the development changes were merged into master.
 
+- [Jun 17, 2019] Merge of dev branch (Malware monitor 2).
+- [Jun 17, 2019] Mouse movement automation.
+- [Jun 17, 2019] Upgraded volatility.
 - [Oct 17, 2018] Added API function to get system time from windows guests.
 - [Oct 17, 2018] Added support for symbols in BP (breakpoint) class.
 - [Oct 17, 2018] Added symbol cache (host file). See example configuration files (pyrebox.conf.WinXPSP3x86).
