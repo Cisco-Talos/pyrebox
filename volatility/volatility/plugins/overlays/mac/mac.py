@@ -132,12 +132,13 @@ mig_vtypes_32 = {
 
 mig_vtypes_64 = {
     'mig_hash_entry' : [24, {
-         'num'       : [0, ['long long']],
+         'num'       : [0, ['int']],
          'routine'   : [8, ['pointer', ['void']]],
          'size'      : [16, ['int']],  
          'callcount' : [20, ['unsigned int']],  
          }],
 }
+
 
 class MigTypes(obj.ProfileModification):
     conditions = {"os" : lambda x : x in ["mac"]}
@@ -148,6 +149,47 @@ class MigTypes(obj.ProfileModification):
         else:
             profile.vtypes.update(mig_vtypes_64)
 
+# this change was introduced in 10.12 (Sierra), which only has 64 bit versions
+cnode_vtypes = {
+    'cat_attr': [ 0x78, {
+        'ca_fileid': [0x0, ['unsigned int']],
+        'ca_mode': [0x4, ['unsigned short']],
+        'ca_recflags': [0x6, ['unsigned short']],
+        'ca_linkcount': [0x8, ['unsigned int']],
+        'ca_uid': [0xc, ['unsigned int']],
+        'ca_gid': [0x10, ['unsigned int']],
+        'ca_atime': [0x18, ['long']],
+        'ca_atimeondisk': [0x20, ['long']],
+        'ca_mtime': [0x28, ['long']],
+        'ca_ctime': [0x30, ['long']],
+        'ca_itime': [0x38, ['long']],
+        'ca_btime': [0x40, ['long']],
+        'ca_flags': [0x48, ['unsigned int']],
+    }],
+
+    'cnode': [ 0x148, {
+        'c_flag': [0x40, ['unsigned int']],
+        'c_hflag': [0x44, ['unsigned int']],
+        'c_vp': [0x48, ['pointer', ['vnode']]],
+        'c_rsrc_vp': [0x50, ['pointer', ['vnode']]],
+        'c_childhint': [0x68, ['unsigned int']],
+        'c_dirthreadhint': [0x6c, ['unsigned int']],
+        'c_attr': [0x88, ['cat_attr']],
+        'c_dirhinttag': [0x120, ['short']],
+        'c_dirchangecnt': [0x124, ['unsigned int']],
+        'c_touch_acctime': [0x138, ['unsigned char']],
+        'c_touch_chgtime': [0x139, ['unsigned char']],
+        'c_touch_modtime': [0x13a, ['unsigned char']],
+        'c_update_txn': [0x13c, ['unsigned int']],
+    }],
+}
+
+class CNodeTypes(obj.ProfileModification):
+    conditions = {"os" : lambda x : x in ["mac"]}
+
+    def modification(self, profile):
+        if not profile.vtypes.get("cnode"):
+            profile.vtypes.update(cnode_vtypes)
 
 class catfishScan(scan.BaseScanner):
     """ Scanner for Catfish string for Mountain Lion """
@@ -187,20 +229,27 @@ class VolatilityDTB(obj.VolatilityMagic):
     def _get_dtb_m_lion(self):
         tbl = self.obj_vm.profile.sys_map["kernel"]
         config = self.obj_vm.get_config()
-
+        
         if config.SHIFT:
             shift_address = config.SHIFT
         else:
+            ver_addr = tbl["_version"][0][0] - 0xffffff8000000000
+
             scanner = catfishScan(needles = ["Catfish \x00\x00"])
             for catfish_offset in scanner.scan(self.obj_vm):
-                shift_address = catfish_offset - (tbl["_lowGlo"][0][0] % 0xFFFFFF80)
-                break
+                tmp_shift_address = catfish_offset - (tbl["_lowGlo"][0][0] % 0xFFFFFF80)
+                tmp_ver_addr  = ver_addr + tmp_shift_address 
+                
+                test_buf = self.obj_vm.zread(tmp_ver_addr, 16)
+                if test_buf and test_buf.startswith("Darwin"):
+                    shift_address = tmp_shift_address
+                    break
 
         self.obj_vm.profile.shift_address = shift_address
 
         bootpml4 = (tbl["_BootPML4"][0][0] % 0xFFFFFF80) + shift_address
         boot_pml4_dtb = amd64.AMD64PagedMemory(self.obj_vm, config, dtb = bootpml4)
-      
+     
         idlepml4_addr = (tbl['_IdlePML4'][0][0]) + shift_address
         idlepml4_ptr = obj.Object("unsigned int", offset = idlepml4_addr, vm = boot_pml4_dtb)
 
@@ -209,12 +258,12 @@ class VolatilityDTB(obj.VolatilityMagic):
     def generate_suggestions(self):
         profile = self.obj_vm.profile
         bootpml = profile.get_symbol("_BootPML4")
-        
-        if bootpml:        
+
+        if bootpml:
             ret = self._get_dtb_m_lion()
         else:
             ret = self._get_dtb_pre_m_lion()                  
-        
+
         yield ret
 
 class VolatilityMacIntelValidAS(obj.VolatilityMagic):
@@ -288,14 +337,45 @@ class vnode(obj.CType):
 
         return ret
 
-    def get_contents(self):
-        moc  = self.v_un.vu_ubcinfo.ui_control.moc_object
-        memq = moc.memq 
+    '''
+    static inline uintptr_t vm_page_unpack_ptr(uintptr_t p)
+    {
+            if (!p) 
+                    return ((uintptr_t)0);
 
-        cur = memq.m("next").dereference_as("vm_page")
+            if (p & VM_PACKED_FROM_VM_PAGES_ARRAY)
+                    return ((uintptr_t)(&vm_pages[(uint32_t)(p & ~VM_PACKED_FROM_VM_PAGES_ARRAY)]));
+            return (((p << VM_PACKED_POINTER_SHIFT) + (uintptr_t) VM_MIN_KERNEL_AND_KEXT_ADDRESS));
+    }
+    '''
+    def _get_next_page(self, memq):
+        # packed pointer, in 10.12+
+        p = memq.m("next")
+
+        if p == 0 or p == None:
+            ret = None
+        
+        elif self.obj_vm.profile.metadata.get('memory_model', 0) == "64bit" and p.size() == 4:  
+            
+            if p & 0x80000000 != 0:
+                vm_pages_ptr = self.obj_vm.profile.get_symbol("_vm_pages")
+                vm_pages_addr = obj.Object("unsigned long long", offset = vm_pages_ptr, vm = self.obj_vm)
+                ret_addr = vm_pages_addr + ((p & ~0x80000000) * self.obj_vm.profile.get_obj_size("vm_page"))
+            else:
+                ret_addr = (p << 6) + 0xffffff7f80000000  
+
+            ret = obj.Object("vm_page", offset = ret_addr, vm = self.obj_vm)
+        else:
+            ret = p.dereference_as("vm_page")
+
+        return ret
+
+    def get_contents(self):
+        memq = self.v_un.vu_ubcinfo.ui_control.moc_object.memq
+        cur = self._get_next_page(memq)
 
         file_size = self.v_un.vu_ubcinfo.ui_size
-        phys_as = utils.load_as(self.obj_vm.get_config(), astype = 'physical')
+        phys_as   = self.obj_vm.base
 
         idx = 0
         written = 0
@@ -304,13 +384,13 @@ class vnode(obj.CType):
             # the last element of the queue seems to track the size of the queue
             if cur.offset != 0 and cur.offset == idx:
                 break
-                
+            
             if cur.phys_page != 0 and cur.offset >= 0:
                 sz = 4096
 
                 if file_size - written < 4096:
                     sz = file_size - written
-
+                
                 buf = phys_as.zread(cur.phys_page * 4096, sz)
 
                 yield (cur.offset.v(), buf)
@@ -318,7 +398,7 @@ class vnode(obj.CType):
             idx     = idx + 1
             written = written + 4096
 
-            cur = cur.listq.next.dereference_as("vm_page")
+            cur = self._get_next_page(cur.listq)
 
 class fileglob(obj.CType):
     
@@ -411,6 +491,8 @@ class proc(obj.CType):
             htable_type     = "mac64_bash_hash_table"
             nbuckets_offset = self.obj_vm.profile.get_obj_offset(htable_type, "nbuckets") 
 
+        range_end = 4096 - nbuckets_offset - 8
+
         for map in self.get_proc_maps():
             if shared_start <= map.start <= shared_end:
                 continue
@@ -426,42 +508,52 @@ class proc(obj.CType):
             if map.end - map.start > 0x40000000:
                 continue
 
-            off = map.start
+            chunk_off = int(map.start)
+            end       = int(map.end)
 
-            while off < map.end:
-                # test the number of buckets
-                dr = proc_as.read(off + nbuckets_offset, 4)
-                if dr == None:
-                    new_off = (off & ~0xfff) + 0xfff + 1
-                    off = new_off
+            while chunk_off < end: 
+                data = proc_as.read(chunk_off, 4096)
+
+                prev_off = chunk_off
+ 
+                chunk_off = chunk_off + 4096
+
+                if data == None:
                     continue
 
-                test = struct.unpack("<I", dr)[0]
-                if test != 64:
-                    off = off + 1
-                    continue
-
-                htable = obj.Object(htable_type, offset = off, vm = proc_as)
+                off = 0
                 
-                if htable.is_valid():
-                    bucket_array = obj.Object(theType="Array", targetType=addr_type, offset = htable.bucket_array, vm = htable.nbuckets.obj_vm, count = 64)
+                while off < range_end:
+                    read_off = prev_off + off 
 
-                    for bucket_ptr in bucket_array:
-                        bucket = obj.Object(bucket_contents_type, offset = bucket_ptr, vm = htable.nbuckets.obj_vm)
-                        while bucket != None and bucket.times_found > 0:  
-                            pdata = bucket.data 
+                    # test the number of buckets
+                    dr = data[off + nbuckets_offset : off + nbuckets_offset + 4]
+                    test = struct.unpack("<I", dr)[0]
+                    if test != 64:
+                        off = off + 4
+                        continue
 
-                            if pdata == None:
+                    htable = obj.Object(htable_type, offset = read_off, vm = proc_as)
+                    
+                    if htable.is_valid():
+                        bucket_array = obj.Object(theType="Array", targetType=addr_type, offset = htable.bucket_array, vm = htable.nbuckets.obj_vm, count = 64)
+
+                        for bucket_ptr in bucket_array:
+                            bucket = obj.Object(bucket_contents_type, offset = bucket_ptr, vm = htable.nbuckets.obj_vm)
+                            while bucket != None and bucket.times_found > 0:  
+                                pdata = bucket.data 
+
+                                if pdata == None:
+                                    bucket = bucket.next_bucket()
+                                    continue
+
+                                if bucket.key != None and bucket.data != None and pdata.is_valid() and (0 <= pdata.flags <= 2):
+                                    if (len(str(bucket.key)) > 0 or len(str(bucket.data.path)) > 0) and (0 < bucket.times_found <= 1024):
+                                        yield bucket
+
                                 bucket = bucket.next_bucket()
-                                continue
-
-                            if bucket.key != None and bucket.data != None and pdata.is_valid() and (0 <= pdata.flags <= 2):
-                                if len(str(bucket.key)) > 0 or len(str(bucket.data.path)) > 0:
-                                    yield bucket
-
-                            bucket = bucket.next_bucket()
-                
-                off = off + 1
+                    
+                    off = off + 4
 
     def bash_history_entries(self):
         proc_as = self.get_process_address_space()
@@ -547,54 +639,60 @@ class proc(obj.CType):
             if env_start:
                 break
 
-            off = start
-          
             if length >= 0x1000000:
                 continue
+            
+            chunk_offset = start
           
-            while off < end:
+            while chunk_offset < end:
                 if env_start:
                     break
 
-                # check the first index
-                addrstr = proc_as.read(off, self.pack_size)
-                if not addrstr:
-                    off = (off & ~0xfff) + 0xfff + 1
+                data = proc_as.read(chunk_offset, 4096)
+                
+                chunk_offset = chunk_offset + 4096
+                
+                if data == None:
                     continue
-               
-                off = off + 4
  
-                addr = struct.unpack(self.pack_fmt, addrstr)[0]
-                if addr in seen_ptrs:
-                    continue
+                off = 0
+                # read from the buffer
+                while off < 4096 - 4:
+                    addrstr = data[off:off+self.pack_size]
+               
+                    off = off + 4
 
-                seen_ptrs[addr] = 1
-    
-                # check first idx...
-                if addr:
-                    firstaddrstr = proc_as.read(addr, self.pack_size)
-                    if not firstaddrstr or len(firstaddrstr) != self.pack_size:
+                    addr = struct.unpack(self.pack_fmt, addrstr)[0]
+                    if addr in seen_ptrs:
                         continue
-                    firstaddr = struct.unpack(self.pack_fmt, firstaddrstr)[0]
-                    if firstaddr in seen_firsts:
-                        continue
-                    
-                    seen_firsts[firstaddr] = 1
 
-                    buf = proc_as.read(firstaddr, 64)
-                    if not buf:
-                        continue
-                    eqidx = buf.find("=")
-                    if eqidx > 0:
-                        nullidx = buf.find("\x00")
-                        # single char name, =
-                        if nullidx >= eqidx:
-                            env_start = addr
+                    seen_ptrs[addr] = 1
+        
+                    # check first idx...
+                    if addr:
+                        firstaddrstr = proc_as.read(addr, self.pack_size)
+                        if not firstaddrstr or len(firstaddrstr) != self.pack_size:
+                            continue
+                        firstaddr = struct.unpack(self.pack_fmt, firstaddrstr)[0]
+                        if firstaddr in seen_firsts:
+                            continue
+                        
+                        seen_firsts[firstaddr] = 1
 
-                            if not dynamic_env_hint:
-                                dynamic_env_hint = [start, end, length]
+                        buf = proc_as.read(firstaddr, 64)
+                        if not buf:
+                            continue
+                        eqidx = buf.find("=")
+                        if eqidx > 0:
+                            nullidx = buf.find("\x00")
+                            # single char name, =
+                            if nullidx >= eqidx:
+                                env_start = addr
 
-                            break
+                                if not dynamic_env_hint:
+                                    dynamic_env_hint = [start, end, length]
+
+                                break
 
         return env_start         
 
@@ -937,7 +1035,10 @@ class proc(obj.CType):
         for seg in m.segments():
             if str(seg.segname) == "__PAGEZERO":
                 continue
-                
+ 
+            if seg.vmsize == 0 or seg.vmsize > 100000000:
+                continue
+               
             # this is related to the shared cache map 
             # contact Andrew for full details
             if str(seg.segname) == "__LINKEDIT" and seg.vmsize > 20000000:
@@ -945,7 +1046,6 @@ class proc(obj.CType):
 
             cur = seg.vmaddr
             end = seg.vmaddr + seg.vmsize
-        
             while cur < end:
                 buffer = buffer + proc_as.zread(cur, 4096) 
                 cur = cur + 4096
@@ -986,10 +1086,14 @@ class proc(obj.CType):
 
         info_addr = struct.unpack(self.pack_fmt, info_buf)[0] 
 
-        img_infos = obj.Object(theType = "Array", targetType = itype, offset = info_addr, count = infos.infoArrayCount, vm = proc_as)
+        cnt = infos.infoArrayCount
+        if cnt > 4096:
+            cnt = 1024 
+
+        img_infos = obj.Object(theType = "Array", targetType = itype, offset = info_addr, count = cnt, vm = proc_as)
         
         for info_addr in img_infos:
-            if info_addr:
+            if info_addr and info_addr.is_valid():
                 yield info_addr
 
     def get_proc_maps(self):
@@ -1117,6 +1221,9 @@ class proc(obj.CType):
         argc = self.p_argc + 1
         args = []
 
+        if argc > 1024:
+            return ""
+
         while argc > 0:
             arg = obj.Object("String", offset = argsstart, vm = proc_as, length = 256)
                 
@@ -1147,6 +1254,9 @@ class proc(obj.CType):
         if nfiles > num_fds:
             num_fds = nfiles
 
+        if num_fds > 4096:
+            num_fds = 1024
+
         fds = obj.Object('Array', offset = self.p_fd.fd_ofiles, vm = self.obj_vm, targetType = 'Pointer', count = num_fds)
 
         for i, fd in enumerate(fds):
@@ -1162,6 +1272,11 @@ class proc(obj.CType):
                 yield f, path, i
 
 class rtentry(obj.CType):
+    def is_valid(self):
+        return str(self.source_ip) != "" and \
+                str(self.dest_ip) != "" and \
+                (0 <= int(self.sent) < 50000000000) and \
+                (0 <= int(self.rx) < 50000000000)
 
     def get_time(self):
         if not hasattr(self, "base_calendartime"):
@@ -1238,6 +1353,9 @@ class queue_entry(obj.CType):
             p = p.tasks.prev.dereference_as("task")
 
 class zone(obj.CType):
+    def is_valid(self):
+        return self.elem_size > 0
+    
     def _get_from_active_zones(self):
         ret = []
         first_elem = self.active_zones
@@ -1370,13 +1488,18 @@ class vm_map_entry(obj.CType):
                 perms = perms + "-"
 
         return perms
+    
+    def range_alias(self):
+        if hasattr(self, "alias"):
+            ret = self.alias.v()
+        else:
+            ret = self.vme_offset.v() & 0xfff
+
+        return ret
 
     # used to find heap, stack, etc.
     def get_special_path(self):
-        if hasattr(self, "alias"):
-            check = self.alias.v()
-        else:
-            check = self.vme_offset.v() & 0xfff
+        check = self.range_alias()
 
         if 0 < check < 10:
             ret = "[heap]"
@@ -1410,6 +1533,15 @@ class vm_map_entry(obj.CType):
             ret = self.vme_object
         else:
             ret = self.m("object")
+
+        return ret
+
+    @property
+    def offset(self): 
+        if hasattr(self, "vme_offset"):
+            ret = self.vme_offset
+        else:
+            ret = self.m("offset")
 
         return ret
 
@@ -1650,6 +1782,9 @@ class sockaddr(obj.CType):
         return ip
 
 class dyld32_image_info(obj.CType):
+    def is_valid(self):
+        return len(self.imageFilePath) > 1 and self.imageLoadAddress > 0x1000
+
     def _read_ptr(self, addr):
         addr = self.obj_vm.read(addr, 4)
         if not addr:
@@ -1682,6 +1817,9 @@ class dyld32_image_info(obj.CType):
         return addr
 
 class dyld64_image_info(obj.CType):
+    def is_valid(self):
+        return len(self.imageFilePath) > 1 and self.imageLoadAddress > 0x1000
+
     def _read_ptr(self, addr):
         addr = self.obj_vm.read(addr, 8)
         if addr == None:

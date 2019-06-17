@@ -95,8 +95,12 @@ def linux_init_address_space():
 def linux_insert_module(task, pid, pgd, base, size, basename, fullname, update_symbols=False):
     from utils import ConfigurationManager as conf_m
     import volatility.obj as obj
-    from vmi import modules
-    from vmi import symbols
+    from vmi import add_symbols
+    from vmi import get_symbols
+    from vmi import has_symbols
+    from vmi import add_module
+    from vmi import has_module
+    from vmi import get_module
     from vmi import Module
     from api_internal import dispatch_module_load_callback
     from api_internal import dispatch_module_remove_callback
@@ -108,31 +112,27 @@ def linux_insert_module(task, pid, pgd, base, size, basename, fullname, update_s
     # Create module, use 0 as checksum as it is irrelevant here
     mod = Module(base, size, pid, pgd, 0, basename, fullname)
 
-    # Add an entry in the module list, if necessary
-    if (pid, pgd) not in modules:
-        modules[(pid, pgd)] = {}
-
     #Module load/del notification
-    if base in modules[(pid, pgd)]:
-        if modules[(pid, pgd)][base].get_size() != size or \
-           modules[(pid, pgd)][base].get_checksum() != checksum or \
-           modules[(pid, pgd)][base].get_name() != basename or \
-           modules[(pid, pgd)][base].get_fullname() != fullname:
+    if has_module(pid, pgd, base):
+        ex_mod = get_module(pid, pgd, base)
+        if ex_mod.get_size() != size or \
+           ex_mod.get_checksum() != checksum or \
+           ex_mod.get_name() != basename or \
+           ex_mod.get_fullname() != fullname:
             # Notify of module deletion and module load
             dispatch_module_remove_callback(pid, pgd, base,
-                                            modules[(pid, pgd)][base].get_size(),
-                                            modules[(pid, pgd)][base].get_name(),
-                                            modules[(pid, pgd)][base].get_fullname())
-            del modules[(pid, pgd)][base]
+                                            ex_mod.get_size(),
+                                            ex_mod.get_name(),
+                                            ex_mod.get_fullname())
+            add_module(pid, pgd, base, mod)
             dispatch_module_load_callback(pid, pgd, base, size, basename, fullname)
-            modules[(pid, pgd)][base] = mod
     else:
         # Just notify of module load
         dispatch_module_load_callback(pid, pgd, base, size, basename, fullname)
-        modules[(pid, pgd)][base] = mod
+        add_module(pid, pgd, base, mod)
 
     # Mark the module as present
-    modules[(pid, pgd)][base].set_present()
+    get_module(pid, pgd, base).set_present()
 
     if update_symbols:
         # Compute the checksum of the ELF Header, as a way to avoid name
@@ -150,13 +150,8 @@ def linux_insert_module(task, pid, pgd, base, size, basename, fullname, update_s
             except:
                 pp_warning("Could not read ELF header at address %x" % base)
 
-            h = hashlib.sha256()
-            h.update(buf)
-            checksum = h.hexdigest()
-
-            if (checksum, fullname) not in symbols:
-                symbols[(checksum, fullname)] = {}
-                syms = symbols[(checksum, fullname)]
+            if not has_symbols(fullname):
+                syms = {}
                 # Fetch symbols
                 for sym in elf_hdr.symbols():
                     if sym.st_value == 0 or (sym.st_info & 0xf) != 2:
@@ -179,14 +174,20 @@ def linux_insert_module(task, pid, pgd, base, size, basename, fullname, update_s
                     else:
                         syms[sym_name] = sym_offset
 
-            mod.set_symbols(symbols[(checksum, fullname)])
+                add_symbols(fullname, syms)
+
+            mod.set_symbols(get_symbols(fullname))
 
     return None
 
 
 def linux_insert_kernel_module(module, base, size, basename, fullname, update_symbols=False):
-    from vmi import modules
-    from vmi import symbols
+    from vmi import add_module
+    from vmi import has_module
+    from vmi import get_module
+    from vmi import has_symbols
+    from vmi import get_symbols
+    from vmi import add_symbols
     from vmi import Module
     from api_internal import dispatch_module_load_callback
     from api_internal import dispatch_module_remove_callback
@@ -194,38 +195,31 @@ def linux_insert_kernel_module(module, base, size, basename, fullname, update_sy
     # Create module, use 0 as checksum as it is irrelevant here
     mod = Module(base, size, 0, 0, 0, basename, fullname)
 
-    # Add an entry in the module list, if necessary
-    if (0, 0) not in modules:
-        modules[(0, 0)] = {}
-
     #Module load/del notification
-    if base in modules[(0, 0)]:
-        if modules[(0, 0)][base].get_size() != size or \
-           modules[(0, 0)][base].get_checksum() != checksum or \
-           modules[(0, 0)][base].get_name() != basename or \
-           modules[(0, 0)][base].get_fullname() != fullname:
+    if has_module(0, 0, base):
+        ex_mod = get_module(0, 0, base)
+        if ex_mod.get_size() != size or \
+           ex_mod.get_checksum() != checksum or \
+           ex_mod.get_name() != basename or \
+           ex_mod.get_fullname() != fullname:
             # Notify of module deletion and module load
             dispatch_module_remove_callback(0, 0, base,
-                                            modules[(0, 0)][base].get_size(),
-                                            modules[(0, 0)][base].get_name(),
-                                            modules[(0, 0)][base].get_fullname())
-            del modules[(0, 0)][base]
+                                            ex_mod.get_size(),
+                                            ex_mod.get_name(),
+                                            ex_mod.get_fullname())
             dispatch_module_load_callback(0, 0, base, size, basename, fullname)
-            modules[(0, 0)][base] = mod
+            add_module(0, 0, base, mod)
     else:
         # Just notify of module load
         dispatch_module_load_callback(0, 0, base, size, basename, fullname)
-        modules[(0, 0)][base] = mod
+        add_module(0, 0, base, mod)
 
     # Mark the module as present
-    modules[(0, 0)][base].set_present()
+    get_module(0, 0, base).set_present()
 
     if update_symbols:
-        # Use 0 as a checksum, here we should not have name collision
-        checksum = 0
-        if (checksum, fullname) not in symbols:
-            symbols[(checksum, fullname)] = {}
-            syms = symbols[(checksum, fullname)]
+        if not has_symbols(fullname):
+            syms = {}
             try:
                 '''
                 pp_debug("Processing symbols for module %s\n" % basename)
@@ -245,12 +239,14 @@ def linux_insert_kernel_module(module, base, size, basename, fullname, update_sy
                                 syms[sym_name] = sym_offset
                     else:
                         syms[sym_name] = sym_offset
+
+                add_symbols(fullname, syms)
             except Exception as e:
                 # Probably could not fetch the symbols for this module
                 pp_error("%s" % str(e))
                 pass
 
-        mod.set_symbols(symbols[(checksum, fullname)])
+        mod.set_symbols(get_symbols(fullname))
 
     return None
 

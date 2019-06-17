@@ -44,10 +44,18 @@
 #include "monitor/monitor.h"
 #include "qemu/thread.h"
 #include "exec/ioport.h"
+#include "ui/input.h"
+#include "ui/console.h"
+#include "qemu/cutils.h"
+#include "qapi/qapi-types-common.h"
+#include "qapi/qapi-types-ui.h"
+#include "qapi/qapi-commands-ui.h"
 #include "hmp.h"
 
 #include "qemu_glue.h"
 #include "qemu_glue_callbacks_flush.h"
+#include "qemu_glue_callbacks.h"
+#include "qemu_glue_ui.h"
 
 /**************************************************** DEFINITIONS ************************************************/
 
@@ -884,6 +892,128 @@ int get_num_cpus(void){
 }
 
 /************************************************** UTILITY FUNCTIONS **********************************************/
+
+void pyrebox_mouse_move(int dx, int dy, int dz){
+
+    int button;
+    qemu_input_queue_rel(NULL, INPUT_AXIS_X, dx);
+    qemu_input_queue_rel(NULL, INPUT_AXIS_Y, dy);
+
+    if (dz != 0) {
+        button = (dz > 0) ? INPUT_BUTTON_WHEEL_UP : INPUT_BUTTON_WHEEL_DOWN;
+        qemu_input_queue_btn(NULL, button, true);
+        qemu_input_event_sync();
+        qemu_input_queue_btn(NULL, button, false);
+    }
+    qemu_input_event_sync();
+}
+
+static int mouse_button_state = 0;
+
+void pyrebox_mouse_button(int button_state)
+{
+    uint32_t bmap[INPUT_BUTTON__MAX] = {
+        [INPUT_BUTTON_LEFT]       = MOUSE_EVENT_LBUTTON,
+        [INPUT_BUTTON_MIDDLE]     = MOUSE_EVENT_MBUTTON,
+        [INPUT_BUTTON_RIGHT]      = MOUSE_EVENT_RBUTTON,
+    };
+
+    if (mouse_button_state == button_state) {
+        return;
+    }
+
+    qemu_input_update_buttons(NULL, bmap, mouse_button_state, button_state);
+    qemu_input_event_sync();
+    mouse_button_state = button_state;
+}
+
+void pyrebox_sendkeys(const char* keys, int hold_time)
+{
+    disable_keystroke_callbacks();
+    KeyValueList *keylist, *head = NULL, *tmp = NULL;
+    //If it does not have hold_time: it is -1
+    int has_hold_time = 0;
+    if (hold_time != -1){
+        has_hold_time = 1;
+    } else {
+        has_hold_time = 0;
+        hold_time = 0;
+    }
+    Error *err = NULL;
+    char *separator;
+    int keyname_len;
+
+    while (1) {
+        separator = strchr(keys, '-');
+        keyname_len = separator ? separator - keys : strlen(keys);
+
+        /* Be compatible with old interface, convert user inputted "<" */
+        if (keys[0] == '<' && keyname_len == 1) {
+            keys = "less";
+            keyname_len = 4;
+        }
+
+        keylist = g_malloc0(sizeof(*keylist));
+        keylist->value = g_malloc0(sizeof(*keylist->value));
+
+        if (!head) {
+            head = keylist;
+        }
+        if (tmp) {
+            tmp->next = keylist;
+        }
+        tmp = keylist;
+
+        if (strstart(keys, "0x", NULL)) {
+            char *endp;
+            int value = strtoul(keys, &endp, 0);
+            assert(endp <= keys + keyname_len);
+            if (endp != keys + keyname_len) {
+                //goto err_out;
+                //Print the error?
+                //monitor_printf(mon, "invalid parameter: %.*s\n", keyname_len, keys);
+                qapi_free_KeyValueList(head);
+                enable_keystroke_callbacks();
+                return;
+            }
+            keylist->value->type = KEY_VALUE_KIND_NUMBER;
+            keylist->value->u.number.data = value;
+        } else {
+            int idx = index_from_key(keys, keyname_len);
+            if (idx == Q_KEY_CODE__MAX) {
+                //goto err_out;
+                //Print the error?
+                //monitor_printf(mon, "invalid parameter: %.*s\n", keyname_len, keys);
+                qapi_free_KeyValueList(head);
+                enable_keystroke_callbacks();
+                return;
+            }
+            keylist->value->type = KEY_VALUE_KIND_QCODE;
+            keylist->value->u.qcode.data = idx;
+        }
+
+        if (!separator) {
+            break;
+        }
+        keys = separator + 1;
+    }
+
+    qmp_send_key(head, has_hold_time, hold_time, &err);
+    //Skip this error handling
+    //hmp_handle_error(mon, &err);
+
+    qapi_free_KeyValueList(head);
+    enable_keystroke_callbacks();
+    return;
+}
+
+void pyrebox_screendump(const char* filename)
+{
+    Error *err = NULL;
+    qmp_screendump(filename, 0, 0, 0, 0, &err);
+    //Skip this error handling
+    //hmp_handle_error(mon, &err);
+}
 
 void pyrebox_save_vm(char* name)
 {

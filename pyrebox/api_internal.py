@@ -335,6 +335,8 @@ def vol_write_memory(addr, length, buff):
 
 def print_internal(plugin_name, string_to_print):
     import c_api
+    if string_to_print is None:
+        string_to_print = ""
     num_breaks = string_to_print.count("\n")
     # Adjust output depending on the "\n" usage in the string to print
     if num_breaks == 0:

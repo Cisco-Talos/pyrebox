@@ -210,15 +210,18 @@ class _UNICODE_STRING(obj.CType):
 
 class _LIST_ENTRY(obj.CType):
     """ Adds iterators for _LIST_ENTRY types """
+    def get_next_entry(self, member):
+        return self.m(member).dereference()
+    
     def list_of_type(self, type, member, forward = True, head_sentinel = True):
         if not self.is_valid():
             return
 
         ## Get the first element
         if forward:
-            nxt = self.Flink.dereference()
+            nxt = self.get_next_entry("Flink")
         else:
-            nxt = self.Blink.dereference()
+            nxt = self.get_next_entry("Blink")
 
         offset = self.obj_vm.profile.get_obj_offset(type, member)
 
@@ -228,6 +231,7 @@ class _LIST_ENTRY(obj.CType):
             seen.add(self.obj_offset)
 
         while nxt.is_valid() and nxt.obj_offset not in seen:
+
             ## Instantiate the object
             item = obj.Object(type, offset = nxt.obj_offset - offset,
                                     vm = self.obj_vm,
@@ -240,9 +244,9 @@ class _LIST_ENTRY(obj.CType):
             yield item
 
             if forward:
-                nxt = item.m(member).Flink.dereference()
+                nxt =  item.m(member).get_next_entry("Flink")
             else:
-                nxt = item.m(member).Blink.dereference()
+                nxt = item.m(member).get_next_entry("Blink")
 
     def __nonzero__(self):
         ## List entries are valid when both Flinks and Blink are valid
@@ -382,7 +386,7 @@ class _EPROCESS(obj.CType, ExecutiveObjectMixin):
 
         The PEB structure is referencing back into the process address
         space so we need to switch address spaces when we look at
-        it. This method ensure this happens automatically.
+        it. This method ensures this happens automatically.
         """
         process_ad = self.get_process_address_space()
         if process_ad:
@@ -394,6 +398,37 @@ class _EPROCESS(obj.CType, ExecutiveObjectMixin):
                 return peb
 
         return obj.NoneObject("Peb not found")
+
+    @property
+    def Peb32(self):
+        """ Returns a _PEB object which is using the process address space.
+
+        The PEB structure is referencing back into the process address
+        space so we need to switch address spaces when we look at
+        it. This method ensures this happens automatically.
+        """
+        process_as = self.get_process_address_space()
+        if process_as == None:
+            return obj.NoneObject("Unable to create process AS")
+
+        # get the address but don't dereference 
+        ptr = obj.Object("address", offset = self.Wow64Process.v(), vm = process_as)
+
+        # make sure the validity check happens with a process AS 
+        if not ptr.is_valid():
+            return obj.NoneObject("The Wow64Process pointer is not valid in process AS")
+
+        # windows 10 
+        if process_as.profile.has_type("_EWOW64PROCESS"):
+            return ptr.cast("_EWOW64PROCESS").Peb.dereference_as("_PEB32")
+
+        # vista sp0-sp1 and 2003 sp1-sp2
+        elif process_as.profile.has_type("_WOW64_PROCESS"):
+            return ptr.cast("_WOW64_PROCESS").Wow64.dereference_as("_PEB32")
+
+        # everything else 
+        else:
+            return ptr.cast("_PEB32") 
 
     def get_process_address_space(self):
         """ Gets a process address space for a task given in _EPROCESS """
@@ -408,20 +443,30 @@ class _EPROCESS(obj.CType, ExecutiveObjectMixin):
 
         return process_as
 
-    def _get_modules(self, the_list, the_type):
+    def _get_modules(self, the_list, entry_type, link_member):
         """Generator for DLLs in one of the 3 PEB lists"""
+
         if self.UniqueProcessId and the_list:
-            for l in the_list.list_of_type("_LDR_DATA_TABLE_ENTRY", the_type):
+            for l in the_list.list_of_type(entry_type, link_member):
                 yield l
 
+    def _prep_get_modules(self, list_member, link_member):
+
+        pebs = [[self.Peb, "_LDR_DATA_TABLE_ENTRY"],
+            [self.Peb32, "_LDR32_DATA_TABLE_ENTRY"]]
+
+        for peb, table_name in pebs:
+            for module in self._get_modules(peb.Ldr.m(list_member), table_name, link_member):
+                yield module
+
     def get_init_modules(self):
-        return self._get_modules(self.Peb.Ldr.InInitializationOrderModuleList, "InInitializationOrderLinks")
+        return self._prep_get_modules("InInitializationOrderModuleList", "InInitializationOrderLinks")
 
     def get_mem_modules(self):
-        return self._get_modules(self.Peb.Ldr.InMemoryOrderModuleList, "InMemoryOrderLinks")
+        return self._prep_get_modules("InMemoryOrderModuleList", "InMemoryOrderLinks")
 
     def get_load_modules(self):
-        return self._get_modules(self.Peb.Ldr.InLoadOrderModuleList, "InLoadOrderLinks")
+        return self._prep_get_modules("InLoadOrderModuleList", "InLoadOrderLinks")
 
     def get_token(self):
         """Return the process's TOKEN object if its valid"""
@@ -438,9 +483,43 @@ class _EPROCESS(obj.CType, ExecutiveObjectMixin):
         return obj.NoneObject("Cannot get process Token")
 
     @property
+    def Wow64Process(self):
+        try:
+            return self.m("Wow64Process")
+        except AttributeError:
+            pass
+
+        try:
+            return self.m("WoW64Process")
+        except AttributeError:
+            pass
+
+        return obj.NoneObject("Cannot determine the WoW64 status")
+
+    @property
     def IsWow64(self):
         """Returns True if this is a wow64 process"""
-        return hasattr(self, 'Wow64Process') and self.Wow64Process.v() != 0
+        value = self.Wow64Process
+        return value != 0 and value != None
+
+    @property
+    def ImageFileName(self):
+        """Return the image's file name if its a normal 
+        Windows process. If its a Pico process (WSL) 
+        then derive the name from the PicoContext."""
+         
+        # more often than not, its a normal windows process
+        # so give this priority before we even check WSL 
+        name = self.m("ImageFileName")
+        
+        # WSL requires x64 but strangely the x86 types still
+        # contain PicoContext, but in those cases it always
+        # seems to be zeroed out
+        if (len(name) == 0 and 
+                hasattr(self, "PicoContext") and self.PicoContext.is_valid()):
+            name = self.PicoContext.Name
+        
+        return name
 
     @property
     def SessionId(self):
@@ -622,12 +701,33 @@ class _EPROCESS(obj.CType, ExecutiveObjectMixin):
         if not obj.CType.is_valid(self):
             return False
 
+        name = str(self.ImageFileName)
+        if not name or len(name) == 0 or name[0] == "\x00":
+            return False
+
+        # The System/PID 4 process has no create time
+        if not (str(name) == "System" and self.UniqueProcessId == 4):
+            if self.CreateTime.v() == 0:
+                return False
+                
+            ctime = self.CreateTime.as_datetime()
+            if ctime == None:
+                return False
+
+            if not (1998 < ctime.year < 2030):
+                return False
+                
+        # NT pids are divisible by 4
+        if self.UniqueProcessId % 4 != 0:
+            return False
+
         if (self.Pcb.DirectoryTableBase == 0):
             return False
 
-        if (self.Pcb.DirectoryTableBase % 0x20 != 0):
+        # check for all 0s besides the PCID entries
+        if self.Pcb.DirectoryTableBase & ~0xfff == 0:
             return False
-
+    
         list_head = self.ThreadListHead
         kernel = 0x80000000
 
@@ -650,6 +750,13 @@ class _TOKEN(obj.CType):
         if self.UserAndGroupCount < 0xFFFF:
             for sa in self.UserAndGroups.dereference():
                 sid = sa.Sid.dereference_as('_SID')
+                # catch invalid pointers (UserAndGroupCount is too high)
+                if sid == None:
+                    raise StopIteration
+                # this mimics the windows API IsValidSid
+                if sid.Revision & 0xF != 1 or sid.SubAuthorityCount > 15:
+                    raise StopIteration
+                id_auth = ""
                 for i in sid.IdentifierAuthority.Value:
                     id_auth = i
                 yield "S-" + "-".join(str(i) for i in (sid.Revision, id_auth) +
@@ -1009,11 +1116,13 @@ class _CM_KEY_BODY(obj.CType):
     def full_key_name(self):
         output = []
         kcb = self.KeyControlBlock
-        while kcb.ParentKcb:
+        seen = []
+        while kcb.ParentKcb and kcb.ParentKcb.obj_offset not in seen:
             if kcb.NameBlock.Name == None:
                 break
             output.append(str(kcb.NameBlock.Name))
             kcb = kcb.ParentKcb
+            seen.append(kcb.obj_offset)
         return "\\".join(reversed(output))
 
 class _CMHIVE(obj.CType):

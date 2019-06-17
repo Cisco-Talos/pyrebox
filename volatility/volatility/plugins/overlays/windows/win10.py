@@ -31,6 +31,7 @@ import volatility.obj as obj
 import volatility.win32.tasks as tasks 
 import volatility.debug as debug
 import volatility.plugins.overlays.windows.win8 as win8
+from volatility.win32.rawreg import KEY_FLAGS
 
 try:
     import distorm3
@@ -43,6 +44,32 @@ class _HMAP_ENTRY(obj.CType):
     @property
     def BlockAddress(self):
         return self.PermanentBinAddress & 0xFFFFFFFFFFF0
+
+class _CM_KEY_BODY(windows._CM_KEY_BODY):
+    """Registry key"""
+
+    conditions = {'os': lambda x: x == 'windows',
+                  'major': lambda x: x == 6,
+                  'minor': lambda x: x == 4,
+                  'build': lambda x: x >= 14393,
+                  }
+
+    def full_key_name(self):
+        output = []
+        kcb = self.KeyControlBlock
+        seen = []
+        while kcb.ParentKcb and kcb.ParentKcb.obj_offset not in seen:
+            if kcb.NameBlock.Name == None:
+                break
+            # Win10/Win2016 14393 and later skip KCB's with KEY_HIVE_ENTRY flag set
+            if (kcb.Flags & KEY_FLAGS["KEY_HIVE_ENTRY"] == KEY_FLAGS["KEY_HIVE_ENTRY"]):
+                kcb = kcb.ParentKcb
+                if not kcb:
+                    break
+            output.append(str(kcb.NameBlock.Name))
+            kcb = kcb.ParentKcb
+            seen.append(kcb.obj_offset)
+        return "\\".join(reversed(output))
 
 class Win10Registry(obj.ProfileModification):
     """The Windows 10 registry HMAP"""
@@ -81,10 +108,23 @@ class Win10x86DTB(obj.ProfileModification):
                   }
 
     def modification(self, profile):
+        build = profile.metadata.get("build", 0)
+
+        if build >= 15063:
+            signature = "\x03\x00\x2C\x00"
+        else:
+            signature = "\x03\x00\x2A\x00"
+
         profile.merge_overlay({
             'VOLATILITY_MAGIC': [ None, {
-            'DTBSignature' : [ None, ['VolatilityMagic', dict(value = "\x03\x00\x2A\x00")]],
+            'DTBSignature' : [ None, ['VolatilityMagic', dict(value = signature)]],
             }]})
+
+class Win10ObjectClasses(obj.ProfileModification):
+    before = ['WindowsOverlay', 'WindowsObjectClasses']
+
+    def modification(self, profile):
+        profile.object_classes.update({'_CM_KEY_BODY' : _CM_KEY_BODY,})
 
 class Win10KDBG(windows.AbstractKDBGMod):
     """The Windows 10 KDBG signatures"""
@@ -460,7 +500,212 @@ class _OBJECT_HEADER_10_DD08DD42(_OBJECT_HEADER_10):
         58: 'VRegConfigurationContext',
         59: 'VirtualKey',
         }
-        
+    
+class _OBJECT_HEADER_10_15063(_OBJECT_HEADER_10):
+
+    type_map = {
+		2: 'Type',
+		3: 'Directory',
+		4: 'SymbolicLink',
+		5: 'Token',
+		6: 'Job',
+		7: 'Process',
+		8: 'Thread',
+		9: 'UserApcReserve',
+		10: 'IoCompletionReserve',
+		11: 'ActivityReference',
+		12: 'PsSiloContextPaged',
+		13: 'PsSiloContextNonPaged',
+		14: 'DebugObject',
+		15: 'Event',
+		16: 'Mutant',
+		17: 'Callback',
+		18: 'Semaphore',
+		19: 'Timer',
+		20: 'IRTimer',
+		21: 'Profile',
+		22: 'KeyedEvent',
+		23: 'WindowStation',
+		24: 'Desktop',
+		25: 'Composition',
+		26: 'RawInputManager',
+		27: 'CoreMessaging',
+		28: 'TpWorkerFactory',
+		29: 'Adapter',
+		30: 'Controller',
+		31: 'Device',
+		32: 'Driver',
+		33: 'IoCompletion',
+		34: 'WaitCompletionPacket',
+		35: 'File',
+		36: 'TmTm',
+		37: 'TmTx',
+		38: 'TmRm',
+		39: 'TmEn',
+		40: 'Section',
+		41: 'Session',
+		42: 'Partition',
+		43: 'Key',
+		44: 'RegistryTransaction',
+		45: 'ALPC Port',
+		46: 'PowerRequest',
+		47: 'WmiGuid',
+		48: 'EtwRegistration',
+		49: 'EtwSessionDemuxEntry',
+		50: 'EtwConsumer',
+		51: 'DmaAdapter',
+		52: 'DmaDomain',
+		53: 'PcwObject',
+		54: 'FilterConnectionPort',
+		55: 'FilterCommunicationPort',
+		56: 'NdisCmState',
+		57: 'DxgkSharedResource',
+		58: 'DxgkSharedSyncObject',
+		59: 'DxgkSharedSwapChainObject',
+        60: 'DxgkCurrentDxgProcessObject',
+        61: 'VRegConfigurationContext'
+    	}
+    
+class _OBJECT_HEADER_10_16299(_OBJECT_HEADER_10):
+
+    type_map = {
+		2: 'Type',
+        3: 'Directory',
+        4: 'SymbolicLink',
+        5: 'Token',
+        6: 'Job',
+        7: 'Process',
+        8: 'Thread',
+        9: 'Partition',
+        10: 'UserApcReserve',
+        11: 'IoCompletionReserve',
+        12: 'ActivityReference',
+        13: 'PsSiloContextPaged',
+        14: 'PsSiloContextNonPaged',
+        15: 'DebugObject',
+        16: 'Event',
+        17: 'Mutant',
+        18: 'Callback',
+        19: 'Semaphore',
+        20: 'Timer',
+        21: 'IRTimer',
+        22: 'Profile',
+        23: 'KeyedEvent',
+        24: 'WindowStation',
+        25: 'Desktop',
+        26: 'Composition',
+        27: 'RawInputManager',
+        28: 'CoreMessaging',
+        29: 'TpWorkerFactory',
+        30: 'Adapter',
+        31: 'Controller',
+        32: 'Device',
+        33: 'Driver',
+        34: 'IoCompletion',
+        35: 'WaitCompletionPacket',
+        36: 'File',
+        37: 'TmTm',
+        38: 'TmTx',
+        39: 'TmRm',
+        40: 'TmEn',
+        41: 'Section',
+        42: 'Session',
+        43: 'Key',
+        44: 'RegistryTransaction',
+        45: 'ALPC Port',
+        46: 'EnergyTracker',
+        47: 'PowerRequest',
+        48: 'WmiGuid',
+        49: 'EtwRegistration',
+        50: 'EtwSessionDemuxEntry',
+        51: 'EtwConsumer',
+        52: 'DmaAdapter',
+        53: 'DmaDomain',
+        54: 'PcwObject',
+        55: 'FilterConnectionPort',
+        56: 'FilterCommunicationPort',
+        57: 'NdisCmState',
+        58: 'DxgkSharedResource',
+        59: 'DxgkSharedSyncObject',
+        60: 'DxgkSharedSwapChainObject',
+        61: 'DxgkDisplayManagerObject',
+        62: 'DxgkCurrentDxgProcessObject',
+        63: 'DxgkSharedProtectedSessionObject',
+        64: 'DxgkSharedBundleObject',
+        65: 'VRegConfigurationContext',
+    	}
+
+class _OBJECT_HEADER_10_17134(_OBJECT_HEADER_10):
+
+    type_map = {
+        2: "Type",
+        3: "Directory",
+        4: "SymbolicLink",
+        5: "Token",
+        6: "Job",
+        7: "Process",
+        8: "Thread",
+        9: "Partition",
+        10: "UserApcReserve",
+        11: "IoCompletionReserve",
+        12: "ActivityReference",
+        13: "PsSiloContextPaged",
+        14: "PsSiloContextNonPaged",
+        15: "DebugObject",
+        16: "Event",
+        17: "Mutant",
+        18: "Callback",
+        19: "Semaphore",
+        20: "Timer",
+        21: "IRTimer",
+        22: "Profile",
+        23: "KeyedEvent",
+        24: "WindowStation",
+        25: "Desktop",
+        26: "Composition",
+        27: "RawInputManager",
+        28: "CoreMessaging",
+        29: "TpWorkerFactory",
+        30: "Adapter",
+        31: "Controller",
+        32: "Device",
+        33: "Driver",
+        34: "IoCompletion",
+        35: "WaitCompletionPacket",
+        36: "File",
+        37: "TmTm",
+        38: "TmTx",
+        39: "TmRm",
+        40: "TmEn",
+        41: "Section",
+        42: "Session",
+        43: "Key",
+        44: "RegistryTransaction",
+        45: "ALPC",
+        46: "EnergyTracker",
+        47: "PowerRequest",
+        48: "WmiGuid",
+        49: "EtwRegistration",
+        50: "EtwSessionDemuxEntry",
+        51: "EtwConsumer",
+        52: "CoverageSampler",
+        53: "DmaAdapter",
+        54: "PcwObject",
+        55: "FilterConnectionPort",
+        56: "FilterCommunicationPort",
+        57: "NdisCmState",
+        58: "DxgkSharedResource",
+        59: "DxgkSharedKeyedMutexObject",
+        60: "DxgkSharedSyncObject",
+        61: "DxgkSharedSwapChainObject",
+        62: "DxgkDisplayManagerObject",
+        63: "DxgkCurrentDxgProcessObject",
+        64: "DxgkSharedProtectedSessionObject",
+        65: "DxgkSharedBundleObject",
+        66: "DxgkCompositionObject",
+        67: "VRegConfigurationContext",
+    }
+
 class _HANDLE_TABLE_10_DD08DD42(win8._HANDLE_TABLE_81R264):
     
     def decode_pointer(self, value):
@@ -483,7 +728,31 @@ class Win10ObjectHeader(obj.ProfileModification):
         metadata = profile.metadata
         build = metadata.get("build", 0)
 
-        if build >= 14393:
+        if build >= 17134:
+            header = _OBJECT_HEADER_10_17134
+
+            ## update the handle table here as well
+            if metadata.get("memory_model") == "64bit":
+                profile.object_classes.update({
+                    "_HANDLE_TABLE": _HANDLE_TABLE_10_DD08DD42})
+
+        elif build >= 16299:
+            header = _OBJECT_HEADER_10_16299
+
+            ## update the handle table here as well
+            if metadata.get("memory_model") == "64bit":
+                profile.object_classes.update({
+                    "_HANDLE_TABLE": _HANDLE_TABLE_10_DD08DD42})
+
+        elif build >= 15063:
+            header = _OBJECT_HEADER_10_15063
+
+            ## update the handle table here as well
+            if metadata.get("memory_model") == "64bit":
+                profile.object_classes.update({
+                    "_HANDLE_TABLE": _HANDLE_TABLE_10_DD08DD42})
+
+        elif build >= 14393:
             header = _OBJECT_HEADER_10_DD08DD42
             
             ## update the handle table here as well
@@ -491,19 +760,48 @@ class Win10ObjectHeader(obj.ProfileModification):
                 profile.object_classes.update({
                     "_HANDLE_TABLE": _HANDLE_TABLE_10_DD08DD42})
             
-        elif build >= 10240:
+        elif build >= 10586:
             header = _OBJECT_HEADER_10_1AC738FB
         else:
             header = _OBJECT_HEADER_10
 
         profile.object_classes.update({"_OBJECT_HEADER": header})
 
+class WSLPicoModifcation(obj.ProfileModification): 
+    """Profile modification for Windows Subsystem for Linux, 
+    in particular the Pico process contexts"""
+
+    before = ['WindowsOverlay']
+    conditions = {'os': lambda x: x == 'windows',
+                  'major': lambda x: x == 6,
+                  'minor': lambda x: x == 4, 
+                  'memory_model': lambda x: x == '64bit'}
+                  
+    def modification(self, profile):
+        
+        build = profile.metadata.get("build", 0)
+        
+        if build <= 14393:
+            # offsets for anniversary update
+            pico_context = {'_PICO_CONTEXT' : [ None, {
+                "Name": [ 0x178, ["_UNICODE_STRING"]]}]}
+        else:
+            # offsets for creators & fall creators  
+            pico_context = {'_PICO_CONTEXT' : [ None, {
+                "Name": [ 0x180, ["_UNICODE_STRING"]]}]}
+        
+        profile.vtypes.update(pico_context)
+        
+        profile.merge_overlay({'_EPROCESS': [ None, {
+            'PicoContext' : [ None, ['pointer', ['_PICO_CONTEXT']]],
+            }]})
+
 class Win10PoolHeader(obj.ProfileModification):
     before = ['WindowsOverlay']
     conditions = {'os': lambda x: x == 'windows',
                   'major': lambda x: x == 6,
                   'minor': lambda x: x == 4,
-                  'build': lambda x: x == 10240}
+                  'build': lambda x: x == 10586}
 
     def modification(self, profile):
 
@@ -546,13 +844,23 @@ class Win10x64(obj.Profile):
     _md_vtype_module = 'volatility.plugins.overlays.windows.win10_x64_vtypes'
     _md_product = ["NtProductWinNt"]
 
+class Win10x64_10240_17770(obj.Profile):
+    """ A Profile for Windows 10 x64 (10.0.10240.17770 / 2018-02-10) """
+    _md_memory_model = '64bit'
+    _md_os = 'windows'
+    _md_major = 6
+    _md_minor = 4
+    _md_build = 10240
+    _md_vtype_module = 'volatility.plugins.overlays.windows.win10_x64_10240_17770_vtypes'
+    _md_product = ["NtProductWinNt"]
+
 class Win10x64_10586(obj.Profile):
     """ A Profile for Windows 10 x64 (10.0.10586.306 / 2016-04-23) """
     _md_memory_model = '64bit'
     _md_os = 'windows'
     _md_major = 6
     _md_minor = 4
-    _md_build = 10240
+    _md_build = 10586
     _md_vtype_module = 'volatility.plugins.overlays.windows.win10_x64_1AC738FB_vtypes'
     _md_product = ["NtProductWinNt"]
 
@@ -576,13 +884,23 @@ class Win10x86(obj.Profile):
     _md_vtype_module = 'volatility.plugins.overlays.windows.win10_x86_vtypes'
     _md_product = ["NtProductWinNt"]
 
+class Win10x86_10240_17770(obj.Profile):
+    """ A Profile for Windows 10 x86 (10.0.10240.17770 / 2018-02-10) """
+    _md_memory_model = '32bit'
+    _md_os = 'windows'
+    _md_major = 6
+    _md_minor = 4
+    _md_build = 10240
+    _md_vtype_module = 'volatility.plugins.overlays.windows.win10_x86_10240_17770_vtypes'
+    _md_product = ["NtProductWinNt"]
+
 class Win10x86_10586(obj.Profile):
     """ A Profile for Windows 10 x86 (10.0.10586.420 / 2016-05-28) """
     _md_memory_model = '32bit'
     _md_os = 'windows'
     _md_major = 6
     _md_minor = 4
-    _md_build = 10240
+    _md_build = 10586
     _md_vtype_module = 'volatility.plugins.overlays.windows.win10_x86_44B89EEA_vtypes'
     _md_product = ["NtProductWinNt"]
 
@@ -605,3 +923,63 @@ class Win2016x64_14393(Win10x64_14393):
     _md_build = 14393
     _md_vtype_module = 'volatility.plugins.overlays.windows.win10_x64_DD08DD42_vtypes'
     _md_product = ["NtProductLanManNt", "NtProductServer"]
+
+class Win10x86_15063(obj.Profile):
+    """ A Profile for Windows 10 x86 (10.0.15063.0 / 2017-04-04) """
+    _md_memory_model = '32bit'
+    _md_os = 'windows'
+    _md_major = 6
+    _md_minor = 4
+    _md_build = 15063
+    _md_vtype_module = 'volatility.plugins.overlays.windows.win10_x86_15063_vtypes'
+    _md_product = ["NtProductWinNt"]
+
+class Win10x86_16299(obj.Profile):
+    """ A Profile for Windows 10 x86 (10.0.16299.15 / 2017-09-29) """
+    _md_memory_model = '32bit'
+    _md_os = 'windows'
+    _md_major = 6
+    _md_minor = 4
+    _md_build = 16299
+    _md_vtype_module = 'volatility.plugins.overlays.windows.win10_x86_16299_vtypes'
+    _md_product = ["NtProductWinNt"]
+
+class Win10x86_17134(obj.Profile):
+    """ A Profile for Windows 10 x86 (10.0.17134.1 / 2018-04-11) """
+    _md_memory_model = '32bit'
+    _md_os = 'windows'
+    _md_major = 6
+    _md_minor = 4
+    _md_build = 17134
+    _md_vtype_module = 'volatility.plugins.overlays.windows.win10_x86_17134_vtypes'
+    _md_product = ["NtProductWinNt"]
+
+class Win10x64_15063(obj.Profile):
+    """ A Profile for Windows 10 x64 (10.0.15063.0 / 2017-04-04) """
+    _md_memory_model = '64bit'
+    _md_os = 'windows'
+    _md_major = 6
+    _md_minor = 4
+    _md_build = 15063
+    _md_vtype_module = 'volatility.plugins.overlays.windows.win10_x64_15063_vtypes'
+    _md_product = ["NtProductWinNt"]
+    
+class Win10x64_16299(obj.Profile):
+    """ A Profile for Windows 10 x64 (10.0.16299.0 / 2017-09-22) """
+    _md_memory_model = '64bit'
+    _md_os = 'windows'
+    _md_major = 6
+    _md_minor = 4
+    _md_build = 16299
+    _md_vtype_module = 'volatility.plugins.overlays.windows.win10_x64_16299_vtypes'
+    _md_product = ["NtProductWinNt"]
+
+class Win10x64_17134(obj.Profile):
+    """ A Profile for Windows 10 x64 (10.0.17134.1 / 2018-04-11) """
+    _md_memory_model = '64bit'
+    _md_os = 'windows'
+    _md_major = 6
+    _md_minor = 4
+    _md_build = 17134
+    _md_vtype_module = 'volatility.plugins.overlays.windows.win10_x64_17134_vtypes'
+    _md_product = ["NtProductWinNt"]
