@@ -19,7 +19,6 @@
 
 #include "qemu/osdep.h"
 #include "cpu.h"
-#include "exec/exec-all.h"
 #include "exec/helper-proto.h"
 #include "tcg/tcg-gvec-desc.h"
 #include "fpu/softfloat.h"
@@ -37,7 +36,7 @@
 #define H4(x)  (x)
 #endif
 
-#define SET_QC() env->vfp.xregs[ARM_VFP_FPSCR] |= CPSR_Q
+#define SET_QC() env->vfp.qc[0] = 1
 
 static void clear_tail(void *vd, uintptr_t opr_sz, uintptr_t max_sz)
 {
@@ -195,6 +194,197 @@ void HELPER(gvec_qrdmlsh_s32)(void *vd, void *vn, void *vm,
     clear_tail(d, opr_sz, simd_maxsz(desc));
 }
 
+/* Integer 8 and 16-bit dot-product.
+ *
+ * Note that for the loops herein, host endianness does not matter
+ * with respect to the ordering of data within the 64-bit lanes.
+ * All elements are treated equally, no matter where they are.
+ */
+
+void HELPER(gvec_sdot_b)(void *vd, void *vn, void *vm, uint32_t desc)
+{
+    intptr_t i, opr_sz = simd_oprsz(desc);
+    uint32_t *d = vd;
+    int8_t *n = vn, *m = vm;
+
+    for (i = 0; i < opr_sz / 4; ++i) {
+        d[i] += n[i * 4 + 0] * m[i * 4 + 0]
+              + n[i * 4 + 1] * m[i * 4 + 1]
+              + n[i * 4 + 2] * m[i * 4 + 2]
+              + n[i * 4 + 3] * m[i * 4 + 3];
+    }
+    clear_tail(d, opr_sz, simd_maxsz(desc));
+}
+
+void HELPER(gvec_udot_b)(void *vd, void *vn, void *vm, uint32_t desc)
+{
+    intptr_t i, opr_sz = simd_oprsz(desc);
+    uint32_t *d = vd;
+    uint8_t *n = vn, *m = vm;
+
+    for (i = 0; i < opr_sz / 4; ++i) {
+        d[i] += n[i * 4 + 0] * m[i * 4 + 0]
+              + n[i * 4 + 1] * m[i * 4 + 1]
+              + n[i * 4 + 2] * m[i * 4 + 2]
+              + n[i * 4 + 3] * m[i * 4 + 3];
+    }
+    clear_tail(d, opr_sz, simd_maxsz(desc));
+}
+
+void HELPER(gvec_sdot_h)(void *vd, void *vn, void *vm, uint32_t desc)
+{
+    intptr_t i, opr_sz = simd_oprsz(desc);
+    uint64_t *d = vd;
+    int16_t *n = vn, *m = vm;
+
+    for (i = 0; i < opr_sz / 8; ++i) {
+        d[i] += (int64_t)n[i * 4 + 0] * m[i * 4 + 0]
+              + (int64_t)n[i * 4 + 1] * m[i * 4 + 1]
+              + (int64_t)n[i * 4 + 2] * m[i * 4 + 2]
+              + (int64_t)n[i * 4 + 3] * m[i * 4 + 3];
+    }
+    clear_tail(d, opr_sz, simd_maxsz(desc));
+}
+
+void HELPER(gvec_udot_h)(void *vd, void *vn, void *vm, uint32_t desc)
+{
+    intptr_t i, opr_sz = simd_oprsz(desc);
+    uint64_t *d = vd;
+    uint16_t *n = vn, *m = vm;
+
+    for (i = 0; i < opr_sz / 8; ++i) {
+        d[i] += (uint64_t)n[i * 4 + 0] * m[i * 4 + 0]
+              + (uint64_t)n[i * 4 + 1] * m[i * 4 + 1]
+              + (uint64_t)n[i * 4 + 2] * m[i * 4 + 2]
+              + (uint64_t)n[i * 4 + 3] * m[i * 4 + 3];
+    }
+    clear_tail(d, opr_sz, simd_maxsz(desc));
+}
+
+void HELPER(gvec_sdot_idx_b)(void *vd, void *vn, void *vm, uint32_t desc)
+{
+    intptr_t i, segend, opr_sz = simd_oprsz(desc), opr_sz_4 = opr_sz / 4;
+    intptr_t index = simd_data(desc);
+    uint32_t *d = vd;
+    int8_t *n = vn;
+    int8_t *m_indexed = (int8_t *)vm + index * 4;
+
+    /* Notice the special case of opr_sz == 8, from aa64/aa32 advsimd.
+     * Otherwise opr_sz is a multiple of 16.
+     */
+    segend = MIN(4, opr_sz_4);
+    i = 0;
+    do {
+        int8_t m0 = m_indexed[i * 4 + 0];
+        int8_t m1 = m_indexed[i * 4 + 1];
+        int8_t m2 = m_indexed[i * 4 + 2];
+        int8_t m3 = m_indexed[i * 4 + 3];
+
+        do {
+            d[i] += n[i * 4 + 0] * m0
+                  + n[i * 4 + 1] * m1
+                  + n[i * 4 + 2] * m2
+                  + n[i * 4 + 3] * m3;
+        } while (++i < segend);
+        segend = i + 4;
+    } while (i < opr_sz_4);
+
+    clear_tail(d, opr_sz, simd_maxsz(desc));
+}
+
+void HELPER(gvec_udot_idx_b)(void *vd, void *vn, void *vm, uint32_t desc)
+{
+    intptr_t i, segend, opr_sz = simd_oprsz(desc), opr_sz_4 = opr_sz / 4;
+    intptr_t index = simd_data(desc);
+    uint32_t *d = vd;
+    uint8_t *n = vn;
+    uint8_t *m_indexed = (uint8_t *)vm + index * 4;
+
+    /* Notice the special case of opr_sz == 8, from aa64/aa32 advsimd.
+     * Otherwise opr_sz is a multiple of 16.
+     */
+    segend = MIN(4, opr_sz_4);
+    i = 0;
+    do {
+        uint8_t m0 = m_indexed[i * 4 + 0];
+        uint8_t m1 = m_indexed[i * 4 + 1];
+        uint8_t m2 = m_indexed[i * 4 + 2];
+        uint8_t m3 = m_indexed[i * 4 + 3];
+
+        do {
+            d[i] += n[i * 4 + 0] * m0
+                  + n[i * 4 + 1] * m1
+                  + n[i * 4 + 2] * m2
+                  + n[i * 4 + 3] * m3;
+        } while (++i < segend);
+        segend = i + 4;
+    } while (i < opr_sz_4);
+
+    clear_tail(d, opr_sz, simd_maxsz(desc));
+}
+
+void HELPER(gvec_sdot_idx_h)(void *vd, void *vn, void *vm, uint32_t desc)
+{
+    intptr_t i, opr_sz = simd_oprsz(desc), opr_sz_8 = opr_sz / 8;
+    intptr_t index = simd_data(desc);
+    uint64_t *d = vd;
+    int16_t *n = vn;
+    int16_t *m_indexed = (int16_t *)vm + index * 4;
+
+    /* This is supported by SVE only, so opr_sz is always a multiple of 16.
+     * Process the entire segment all at once, writing back the results
+     * only after we've consumed all of the inputs.
+     */
+    for (i = 0; i < opr_sz_8 ; i += 2) {
+        uint64_t d0, d1;
+
+        d0  = n[i * 4 + 0] * (int64_t)m_indexed[i * 4 + 0];
+        d0 += n[i * 4 + 1] * (int64_t)m_indexed[i * 4 + 1];
+        d0 += n[i * 4 + 2] * (int64_t)m_indexed[i * 4 + 2];
+        d0 += n[i * 4 + 3] * (int64_t)m_indexed[i * 4 + 3];
+        d1  = n[i * 4 + 4] * (int64_t)m_indexed[i * 4 + 0];
+        d1 += n[i * 4 + 5] * (int64_t)m_indexed[i * 4 + 1];
+        d1 += n[i * 4 + 6] * (int64_t)m_indexed[i * 4 + 2];
+        d1 += n[i * 4 + 7] * (int64_t)m_indexed[i * 4 + 3];
+
+        d[i + 0] += d0;
+        d[i + 1] += d1;
+    }
+
+    clear_tail(d, opr_sz, simd_maxsz(desc));
+}
+
+void HELPER(gvec_udot_idx_h)(void *vd, void *vn, void *vm, uint32_t desc)
+{
+    intptr_t i, opr_sz = simd_oprsz(desc), opr_sz_8 = opr_sz / 8;
+    intptr_t index = simd_data(desc);
+    uint64_t *d = vd;
+    uint16_t *n = vn;
+    uint16_t *m_indexed = (uint16_t *)vm + index * 4;
+
+    /* This is supported by SVE only, so opr_sz is always a multiple of 16.
+     * Process the entire segment all at once, writing back the results
+     * only after we've consumed all of the inputs.
+     */
+    for (i = 0; i < opr_sz_8 ; i += 2) {
+        uint64_t d0, d1;
+
+        d0  = n[i * 4 + 0] * (uint64_t)m_indexed[i * 4 + 0];
+        d0 += n[i * 4 + 1] * (uint64_t)m_indexed[i * 4 + 1];
+        d0 += n[i * 4 + 2] * (uint64_t)m_indexed[i * 4 + 2];
+        d0 += n[i * 4 + 3] * (uint64_t)m_indexed[i * 4 + 3];
+        d1  = n[i * 4 + 4] * (uint64_t)m_indexed[i * 4 + 0];
+        d1 += n[i * 4 + 5] * (uint64_t)m_indexed[i * 4 + 1];
+        d1 += n[i * 4 + 6] * (uint64_t)m_indexed[i * 4 + 2];
+        d1 += n[i * 4 + 7] * (uint64_t)m_indexed[i * 4 + 3];
+
+        d[i + 0] += d0;
+        d[i + 1] += d1;
+    }
+
+    clear_tail(d, opr_sz, simd_maxsz(desc));
+}
+
 void HELPER(gvec_fcaddh)(void *vd, void *vn, void *vm,
                          void *vfpst, uint32_t desc)
 {
@@ -318,23 +508,29 @@ void HELPER(gvec_fcmlah_idx)(void *vd, void *vn, void *vm,
     float_status *fpst = vfpst;
     intptr_t flip = extract32(desc, SIMD_DATA_SHIFT, 1);
     uint32_t neg_imag = extract32(desc, SIMD_DATA_SHIFT + 1, 1);
+    intptr_t index = extract32(desc, SIMD_DATA_SHIFT + 2, 2);
     uint32_t neg_real = flip ^ neg_imag;
-    uintptr_t i;
-    float16 e1 = m[H2(flip)];
-    float16 e3 = m[H2(1 - flip)];
+    intptr_t elements = opr_sz / sizeof(float16);
+    intptr_t eltspersegment = 16 / sizeof(float16);
+    intptr_t i, j;
 
     /* Shift boolean to the sign bit so we can xor to negate.  */
     neg_real <<= 15;
     neg_imag <<= 15;
-    e1 ^= neg_real;
-    e3 ^= neg_imag;
 
-    for (i = 0; i < opr_sz / 2; i += 2) {
-        float16 e2 = n[H2(i + flip)];
-        float16 e4 = e2;
+    for (i = 0; i < elements; i += eltspersegment) {
+        float16 mr = m[H2(i + 2 * index + 0)];
+        float16 mi = m[H2(i + 2 * index + 1)];
+        float16 e1 = neg_real ^ (flip ? mi : mr);
+        float16 e3 = neg_imag ^ (flip ? mr : mi);
 
-        d[H2(i)] = float16_muladd(e2, e1, d[H2(i)], 0, fpst);
-        d[H2(i + 1)] = float16_muladd(e4, e3, d[H2(i + 1)], 0, fpst);
+        for (j = i; j < i + eltspersegment; j += 2) {
+            float16 e2 = n[H2(j + flip)];
+            float16 e4 = e2;
+
+            d[H2(j)] = float16_muladd(e2, e1, d[H2(j)], 0, fpst);
+            d[H2(j + 1)] = float16_muladd(e4, e3, d[H2(j + 1)], 0, fpst);
+        }
     }
     clear_tail(d, opr_sz, simd_maxsz(desc));
 }
@@ -378,23 +574,29 @@ void HELPER(gvec_fcmlas_idx)(void *vd, void *vn, void *vm,
     float_status *fpst = vfpst;
     intptr_t flip = extract32(desc, SIMD_DATA_SHIFT, 1);
     uint32_t neg_imag = extract32(desc, SIMD_DATA_SHIFT + 1, 1);
+    intptr_t index = extract32(desc, SIMD_DATA_SHIFT + 2, 2);
     uint32_t neg_real = flip ^ neg_imag;
-    uintptr_t i;
-    float32 e1 = m[H4(flip)];
-    float32 e3 = m[H4(1 - flip)];
+    intptr_t elements = opr_sz / sizeof(float32);
+    intptr_t eltspersegment = 16 / sizeof(float32);
+    intptr_t i, j;
 
     /* Shift boolean to the sign bit so we can xor to negate.  */
     neg_real <<= 31;
     neg_imag <<= 31;
-    e1 ^= neg_real;
-    e3 ^= neg_imag;
 
-    for (i = 0; i < opr_sz / 4; i += 2) {
-        float32 e2 = n[H4(i + flip)];
-        float32 e4 = e2;
+    for (i = 0; i < elements; i += eltspersegment) {
+        float32 mr = m[H4(i + 2 * index + 0)];
+        float32 mi = m[H4(i + 2 * index + 1)];
+        float32 e1 = neg_real ^ (flip ? mi : mr);
+        float32 e3 = neg_imag ^ (flip ? mr : mi);
 
-        d[H4(i)] = float32_muladd(e2, e1, d[H4(i)], 0, fpst);
-        d[H4(i + 1)] = float32_muladd(e4, e3, d[H4(i + 1)], 0, fpst);
+        for (j = i; j < i + eltspersegment; j += 2) {
+            float32 e2 = n[H4(j + flip)];
+            float32 e4 = e2;
+
+            d[H4(j)] = float32_muladd(e2, e1, d[H4(j)], 0, fpst);
+            d[H4(j + 1)] = float32_muladd(e4, e3, d[H4(j + 1)], 0, fpst);
+        }
     }
     clear_tail(d, opr_sz, simd_maxsz(desc));
 }
@@ -426,4 +628,421 @@ void HELPER(gvec_fcmlad)(void *vd, void *vn, void *vm,
         d[i + 1] = float64_muladd(e4, e3, d[i + 1], 0, fpst);
     }
     clear_tail(d, opr_sz, simd_maxsz(desc));
+}
+
+#define DO_2OP(NAME, FUNC, TYPE) \
+void HELPER(NAME)(void *vd, void *vn, void *stat, uint32_t desc)  \
+{                                                                 \
+    intptr_t i, oprsz = simd_oprsz(desc);                         \
+    TYPE *d = vd, *n = vn;                                        \
+    for (i = 0; i < oprsz / sizeof(TYPE); i++) {                  \
+        d[i] = FUNC(n[i], stat);                                  \
+    }                                                             \
+    clear_tail(d, oprsz, simd_maxsz(desc));                       \
+}
+
+DO_2OP(gvec_frecpe_h, helper_recpe_f16, float16)
+DO_2OP(gvec_frecpe_s, helper_recpe_f32, float32)
+DO_2OP(gvec_frecpe_d, helper_recpe_f64, float64)
+
+DO_2OP(gvec_frsqrte_h, helper_rsqrte_f16, float16)
+DO_2OP(gvec_frsqrte_s, helper_rsqrte_f32, float32)
+DO_2OP(gvec_frsqrte_d, helper_rsqrte_f64, float64)
+
+#undef DO_2OP
+
+/* Floating-point trigonometric starting value.
+ * See the ARM ARM pseudocode function FPTrigSMul.
+ */
+static float16 float16_ftsmul(float16 op1, uint16_t op2, float_status *stat)
+{
+    float16 result = float16_mul(op1, op1, stat);
+    if (!float16_is_any_nan(result)) {
+        result = float16_set_sign(result, op2 & 1);
+    }
+    return result;
+}
+
+static float32 float32_ftsmul(float32 op1, uint32_t op2, float_status *stat)
+{
+    float32 result = float32_mul(op1, op1, stat);
+    if (!float32_is_any_nan(result)) {
+        result = float32_set_sign(result, op2 & 1);
+    }
+    return result;
+}
+
+static float64 float64_ftsmul(float64 op1, uint64_t op2, float_status *stat)
+{
+    float64 result = float64_mul(op1, op1, stat);
+    if (!float64_is_any_nan(result)) {
+        result = float64_set_sign(result, op2 & 1);
+    }
+    return result;
+}
+
+#define DO_3OP(NAME, FUNC, TYPE) \
+void HELPER(NAME)(void *vd, void *vn, void *vm, void *stat, uint32_t desc) \
+{                                                                          \
+    intptr_t i, oprsz = simd_oprsz(desc);                                  \
+    TYPE *d = vd, *n = vn, *m = vm;                                        \
+    for (i = 0; i < oprsz / sizeof(TYPE); i++) {                           \
+        d[i] = FUNC(n[i], m[i], stat);                                     \
+    }                                                                      \
+    clear_tail(d, oprsz, simd_maxsz(desc));                                \
+}
+
+DO_3OP(gvec_fadd_h, float16_add, float16)
+DO_3OP(gvec_fadd_s, float32_add, float32)
+DO_3OP(gvec_fadd_d, float64_add, float64)
+
+DO_3OP(gvec_fsub_h, float16_sub, float16)
+DO_3OP(gvec_fsub_s, float32_sub, float32)
+DO_3OP(gvec_fsub_d, float64_sub, float64)
+
+DO_3OP(gvec_fmul_h, float16_mul, float16)
+DO_3OP(gvec_fmul_s, float32_mul, float32)
+DO_3OP(gvec_fmul_d, float64_mul, float64)
+
+DO_3OP(gvec_ftsmul_h, float16_ftsmul, float16)
+DO_3OP(gvec_ftsmul_s, float32_ftsmul, float32)
+DO_3OP(gvec_ftsmul_d, float64_ftsmul, float64)
+
+#ifdef TARGET_AARCH64
+
+DO_3OP(gvec_recps_h, helper_recpsf_f16, float16)
+DO_3OP(gvec_recps_s, helper_recpsf_f32, float32)
+DO_3OP(gvec_recps_d, helper_recpsf_f64, float64)
+
+DO_3OP(gvec_rsqrts_h, helper_rsqrtsf_f16, float16)
+DO_3OP(gvec_rsqrts_s, helper_rsqrtsf_f32, float32)
+DO_3OP(gvec_rsqrts_d, helper_rsqrtsf_f64, float64)
+
+#endif
+#undef DO_3OP
+
+/* For the indexed ops, SVE applies the index per 128-bit vector segment.
+ * For AdvSIMD, there is of course only one such vector segment.
+ */
+
+#define DO_MUL_IDX(NAME, TYPE, H) \
+void HELPER(NAME)(void *vd, void *vn, void *vm, void *stat, uint32_t desc) \
+{                                                                          \
+    intptr_t i, j, oprsz = simd_oprsz(desc), segment = 16 / sizeof(TYPE);  \
+    intptr_t idx = simd_data(desc);                                        \
+    TYPE *d = vd, *n = vn, *m = vm;                                        \
+    for (i = 0; i < oprsz / sizeof(TYPE); i += segment) {                  \
+        TYPE mm = m[H(i + idx)];                                           \
+        for (j = 0; j < segment; j++) {                                    \
+            d[i + j] = TYPE##_mul(n[i + j], mm, stat);                     \
+        }                                                                  \
+    }                                                                      \
+}
+
+DO_MUL_IDX(gvec_fmul_idx_h, float16, H2)
+DO_MUL_IDX(gvec_fmul_idx_s, float32, H4)
+DO_MUL_IDX(gvec_fmul_idx_d, float64, )
+
+#undef DO_MUL_IDX
+
+#define DO_FMLA_IDX(NAME, TYPE, H)                                         \
+void HELPER(NAME)(void *vd, void *vn, void *vm, void *va,                  \
+                  void *stat, uint32_t desc)                               \
+{                                                                          \
+    intptr_t i, j, oprsz = simd_oprsz(desc), segment = 16 / sizeof(TYPE);  \
+    TYPE op1_neg = extract32(desc, SIMD_DATA_SHIFT, 1);                    \
+    intptr_t idx = desc >> (SIMD_DATA_SHIFT + 1);                          \
+    TYPE *d = vd, *n = vn, *m = vm, *a = va;                               \
+    op1_neg <<= (8 * sizeof(TYPE) - 1);                                    \
+    for (i = 0; i < oprsz / sizeof(TYPE); i += segment) {                  \
+        TYPE mm = m[H(i + idx)];                                           \
+        for (j = 0; j < segment; j++) {                                    \
+            d[i + j] = TYPE##_muladd(n[i + j] ^ op1_neg,                   \
+                                     mm, a[i + j], 0, stat);               \
+        }                                                                  \
+    }                                                                      \
+}
+
+DO_FMLA_IDX(gvec_fmla_idx_h, float16, H2)
+DO_FMLA_IDX(gvec_fmla_idx_s, float32, H4)
+DO_FMLA_IDX(gvec_fmla_idx_d, float64, )
+
+#undef DO_FMLA_IDX
+
+#define DO_SAT(NAME, WTYPE, TYPEN, TYPEM, OP, MIN, MAX) \
+void HELPER(NAME)(void *vd, void *vq, void *vn, void *vm, uint32_t desc)   \
+{                                                                          \
+    intptr_t i, oprsz = simd_oprsz(desc);                                  \
+    TYPEN *d = vd, *n = vn; TYPEM *m = vm;                                 \
+    bool q = false;                                                        \
+    for (i = 0; i < oprsz / sizeof(TYPEN); i++) {                          \
+        WTYPE dd = (WTYPE)n[i] OP m[i];                                    \
+        if (dd < MIN) {                                                    \
+            dd = MIN;                                                      \
+            q = true;                                                      \
+        } else if (dd > MAX) {                                             \
+            dd = MAX;                                                      \
+            q = true;                                                      \
+        }                                                                  \
+        d[i] = dd;                                                         \
+    }                                                                      \
+    if (q) {                                                               \
+        uint32_t *qc = vq;                                                 \
+        qc[0] = 1;                                                         \
+    }                                                                      \
+    clear_tail(d, oprsz, simd_maxsz(desc));                                \
+}
+
+DO_SAT(gvec_uqadd_b, int, uint8_t, uint8_t, +, 0, UINT8_MAX)
+DO_SAT(gvec_uqadd_h, int, uint16_t, uint16_t, +, 0, UINT16_MAX)
+DO_SAT(gvec_uqadd_s, int64_t, uint32_t, uint32_t, +, 0, UINT32_MAX)
+
+DO_SAT(gvec_sqadd_b, int, int8_t, int8_t, +, INT8_MIN, INT8_MAX)
+DO_SAT(gvec_sqadd_h, int, int16_t, int16_t, +, INT16_MIN, INT16_MAX)
+DO_SAT(gvec_sqadd_s, int64_t, int32_t, int32_t, +, INT32_MIN, INT32_MAX)
+
+DO_SAT(gvec_uqsub_b, int, uint8_t, uint8_t, -, 0, UINT8_MAX)
+DO_SAT(gvec_uqsub_h, int, uint16_t, uint16_t, -, 0, UINT16_MAX)
+DO_SAT(gvec_uqsub_s, int64_t, uint32_t, uint32_t, -, 0, UINT32_MAX)
+
+DO_SAT(gvec_sqsub_b, int, int8_t, int8_t, -, INT8_MIN, INT8_MAX)
+DO_SAT(gvec_sqsub_h, int, int16_t, int16_t, -, INT16_MIN, INT16_MAX)
+DO_SAT(gvec_sqsub_s, int64_t, int32_t, int32_t, -, INT32_MIN, INT32_MAX)
+
+#undef DO_SAT
+
+void HELPER(gvec_uqadd_d)(void *vd, void *vq, void *vn,
+                          void *vm, uint32_t desc)
+{
+    intptr_t i, oprsz = simd_oprsz(desc);
+    uint64_t *d = vd, *n = vn, *m = vm;
+    bool q = false;
+
+    for (i = 0; i < oprsz / 8; i++) {
+        uint64_t nn = n[i], mm = m[i], dd = nn + mm;
+        if (dd < nn) {
+            dd = UINT64_MAX;
+            q = true;
+        }
+        d[i] = dd;
+    }
+    if (q) {
+        uint32_t *qc = vq;
+        qc[0] = 1;
+    }
+    clear_tail(d, oprsz, simd_maxsz(desc));
+}
+
+void HELPER(gvec_uqsub_d)(void *vd, void *vq, void *vn,
+                          void *vm, uint32_t desc)
+{
+    intptr_t i, oprsz = simd_oprsz(desc);
+    uint64_t *d = vd, *n = vn, *m = vm;
+    bool q = false;
+
+    for (i = 0; i < oprsz / 8; i++) {
+        uint64_t nn = n[i], mm = m[i], dd = nn - mm;
+        if (nn < mm) {
+            dd = 0;
+            q = true;
+        }
+        d[i] = dd;
+    }
+    if (q) {
+        uint32_t *qc = vq;
+        qc[0] = 1;
+    }
+    clear_tail(d, oprsz, simd_maxsz(desc));
+}
+
+void HELPER(gvec_sqadd_d)(void *vd, void *vq, void *vn,
+                          void *vm, uint32_t desc)
+{
+    intptr_t i, oprsz = simd_oprsz(desc);
+    int64_t *d = vd, *n = vn, *m = vm;
+    bool q = false;
+
+    for (i = 0; i < oprsz / 8; i++) {
+        int64_t nn = n[i], mm = m[i], dd = nn + mm;
+        if (((dd ^ nn) & ~(nn ^ mm)) & INT64_MIN) {
+            dd = (nn >> 63) ^ ~INT64_MIN;
+            q = true;
+        }
+        d[i] = dd;
+    }
+    if (q) {
+        uint32_t *qc = vq;
+        qc[0] = 1;
+    }
+    clear_tail(d, oprsz, simd_maxsz(desc));
+}
+
+void HELPER(gvec_sqsub_d)(void *vd, void *vq, void *vn,
+                          void *vm, uint32_t desc)
+{
+    intptr_t i, oprsz = simd_oprsz(desc);
+    int64_t *d = vd, *n = vn, *m = vm;
+    bool q = false;
+
+    for (i = 0; i < oprsz / 8; i++) {
+        int64_t nn = n[i], mm = m[i], dd = nn - mm;
+        if (((dd ^ nn) & (nn ^ mm)) & INT64_MIN) {
+            dd = (nn >> 63) ^ ~INT64_MIN;
+            q = true;
+        }
+        d[i] = dd;
+    }
+    if (q) {
+        uint32_t *qc = vq;
+        qc[0] = 1;
+    }
+    clear_tail(d, oprsz, simd_maxsz(desc));
+}
+
+/*
+ * Convert float16 to float32, raising no exceptions and
+ * preserving exceptional values, including SNaN.
+ * This is effectively an unpack+repack operation.
+ */
+static float32 float16_to_float32_by_bits(uint32_t f16, bool fz16)
+{
+    const int f16_bias = 15;
+    const int f32_bias = 127;
+    uint32_t sign = extract32(f16, 15, 1);
+    uint32_t exp = extract32(f16, 10, 5);
+    uint32_t frac = extract32(f16, 0, 10);
+
+    if (exp == 0x1f) {
+        /* Inf or NaN */
+        exp = 0xff;
+    } else if (exp == 0) {
+        /* Zero or denormal.  */
+        if (frac != 0) {
+            if (fz16) {
+                frac = 0;
+            } else {
+                /*
+                 * Denormal; these are all normal float32.
+                 * Shift the fraction so that the msb is at bit 11,
+                 * then remove bit 11 as the implicit bit of the
+                 * normalized float32.  Note that we still go through
+                 * the shift for normal numbers below, to put the
+                 * float32 fraction at the right place.
+                 */
+                int shift = clz32(frac) - 21;
+                frac = (frac << shift) & 0x3ff;
+                exp = f32_bias - f16_bias - shift + 1;
+            }
+        }
+    } else {
+        /* Normal number; adjust the bias.  */
+        exp += f32_bias - f16_bias;
+    }
+    sign <<= 31;
+    exp <<= 23;
+    frac <<= 23 - 10;
+
+    return sign | exp | frac;
+}
+
+static uint64_t load4_f16(uint64_t *ptr, int is_q, int is_2)
+{
+    /*
+     * Branchless load of u32[0], u64[0], u32[1], or u64[1].
+     * Load the 2nd qword iff is_q & is_2.
+     * Shift to the 2nd dword iff !is_q & is_2.
+     * For !is_q & !is_2, the upper bits of the result are garbage.
+     */
+    return ptr[is_q & is_2] >> ((is_2 & ~is_q) << 5);
+}
+
+/*
+ * Note that FMLAL requires oprsz == 8 or oprsz == 16,
+ * as there is not yet SVE versions that might use blocking.
+ */
+
+static void do_fmlal(float32 *d, void *vn, void *vm, float_status *fpst,
+                     uint32_t desc, bool fz16)
+{
+    intptr_t i, oprsz = simd_oprsz(desc);
+    int is_s = extract32(desc, SIMD_DATA_SHIFT, 1);
+    int is_2 = extract32(desc, SIMD_DATA_SHIFT + 1, 1);
+    int is_q = oprsz == 16;
+    uint64_t n_4, m_4;
+
+    /* Pre-load all of the f16 data, avoiding overlap issues.  */
+    n_4 = load4_f16(vn, is_q, is_2);
+    m_4 = load4_f16(vm, is_q, is_2);
+
+    /* Negate all inputs for FMLSL at once.  */
+    if (is_s) {
+        n_4 ^= 0x8000800080008000ull;
+    }
+
+    for (i = 0; i < oprsz / 4; i++) {
+        float32 n_1 = float16_to_float32_by_bits(n_4 >> (i * 16), fz16);
+        float32 m_1 = float16_to_float32_by_bits(m_4 >> (i * 16), fz16);
+        d[H4(i)] = float32_muladd(n_1, m_1, d[H4(i)], 0, fpst);
+    }
+    clear_tail(d, oprsz, simd_maxsz(desc));
+}
+
+void HELPER(gvec_fmlal_a32)(void *vd, void *vn, void *vm,
+                            void *venv, uint32_t desc)
+{
+    CPUARMState *env = venv;
+    do_fmlal(vd, vn, vm, &env->vfp.standard_fp_status, desc,
+             get_flush_inputs_to_zero(&env->vfp.fp_status_f16));
+}
+
+void HELPER(gvec_fmlal_a64)(void *vd, void *vn, void *vm,
+                            void *venv, uint32_t desc)
+{
+    CPUARMState *env = venv;
+    do_fmlal(vd, vn, vm, &env->vfp.fp_status, desc,
+             get_flush_inputs_to_zero(&env->vfp.fp_status_f16));
+}
+
+static void do_fmlal_idx(float32 *d, void *vn, void *vm, float_status *fpst,
+                         uint32_t desc, bool fz16)
+{
+    intptr_t i, oprsz = simd_oprsz(desc);
+    int is_s = extract32(desc, SIMD_DATA_SHIFT, 1);
+    int is_2 = extract32(desc, SIMD_DATA_SHIFT + 1, 1);
+    int index = extract32(desc, SIMD_DATA_SHIFT + 2, 3);
+    int is_q = oprsz == 16;
+    uint64_t n_4;
+    float32 m_1;
+
+    /* Pre-load all of the f16 data, avoiding overlap issues.  */
+    n_4 = load4_f16(vn, is_q, is_2);
+
+    /* Negate all inputs for FMLSL at once.  */
+    if (is_s) {
+        n_4 ^= 0x8000800080008000ull;
+    }
+
+    m_1 = float16_to_float32_by_bits(((float16 *)vm)[H2(index)], fz16);
+
+    for (i = 0; i < oprsz / 4; i++) {
+        float32 n_1 = float16_to_float32_by_bits(n_4 >> (i * 16), fz16);
+        d[H4(i)] = float32_muladd(n_1, m_1, d[H4(i)], 0, fpst);
+    }
+    clear_tail(d, oprsz, simd_maxsz(desc));
+}
+
+void HELPER(gvec_fmlal_idx_a32)(void *vd, void *vn, void *vm,
+                                void *venv, uint32_t desc)
+{
+    CPUARMState *env = venv;
+    do_fmlal_idx(vd, vn, vm, &env->vfp.standard_fp_status, desc,
+                 get_flush_inputs_to_zero(&env->vfp.fp_status_f16));
+}
+
+void HELPER(gvec_fmlal_idx_a64)(void *vd, void *vn, void *vm,
+                                void *venv, uint32_t desc)
+{
+    CPUARMState *env = venv;
+    do_fmlal_idx(vd, vn, vm, &env->vfp.fp_status, desc,
+                 get_flush_inputs_to_zero(&env->vfp.fp_status_f16));
 }

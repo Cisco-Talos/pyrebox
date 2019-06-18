@@ -6,7 +6,7 @@
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
  * License as published by the Free Software Foundation; either
- * version 2 of the License, or (at your option) any later version.
+ * version 2.1 of the License, or (at your option) any later version.
  *
  * This library is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -20,7 +20,6 @@
 #include "qemu/osdep.h"
 #include "qemu-common.h"
 #include "cpu.h"
-#include "exec/exec-all.h"
 #include "tcg.h"
 #include "tcg-op.h"
 #include "tcg-mo.h"
@@ -276,6 +275,27 @@ void tcg_gen_orc_vec(unsigned vece, TCGv_vec r, TCGv_vec a, TCGv_vec b)
     }
 }
 
+void tcg_gen_nand_vec(unsigned vece, TCGv_vec r, TCGv_vec a, TCGv_vec b)
+{
+    /* TODO: Add TCG_TARGET_HAS_nand_vec when adding a backend supports it. */
+    tcg_gen_and_vec(0, r, a, b);
+    tcg_gen_not_vec(0, r, r);
+}
+
+void tcg_gen_nor_vec(unsigned vece, TCGv_vec r, TCGv_vec a, TCGv_vec b)
+{
+    /* TODO: Add TCG_TARGET_HAS_nor_vec when adding a backend supports it. */
+    tcg_gen_or_vec(0, r, a, b);
+    tcg_gen_not_vec(0, r, r);
+}
+
+void tcg_gen_eqv_vec(unsigned vece, TCGv_vec r, TCGv_vec a, TCGv_vec b)
+{
+    /* TODO: Add TCG_TARGET_HAS_eqv_vec when adding a backend supports it. */
+    tcg_gen_xor_vec(0, r, a, b);
+    tcg_gen_not_vec(0, r, r);
+}
+
 void tcg_gen_not_vec(unsigned vece, TCGv_vec r, TCGv_vec a)
 {
     if (TCG_TARGET_HAS_not_vec) {
@@ -355,8 +375,8 @@ void tcg_gen_cmp_vec(TCGCond cond, unsigned vece,
     TCGType type = rt->base_type;
     int can;
 
-    tcg_debug_assert(at->base_type == type);
-    tcg_debug_assert(bt->base_type == type);
+    tcg_debug_assert(at->base_type >= type);
+    tcg_debug_assert(bt->base_type >= type);
     can = tcg_can_emit_vec_op(INDEX_op_cmp_vec, type, vece);
     if (can > 0) {
         vec_gen_4(INDEX_op_cmp_vec, type, vece, ri, ai, bi, cond);
@@ -366,7 +386,8 @@ void tcg_gen_cmp_vec(TCGCond cond, unsigned vece,
     }
 }
 
-void tcg_gen_mul_vec(unsigned vece, TCGv_vec r, TCGv_vec a, TCGv_vec b)
+static void do_op3(unsigned vece, TCGv_vec r, TCGv_vec a,
+                   TCGv_vec b, TCGOpcode opc)
 {
     TCGTemp *rt = tcgv_vec_temp(r);
     TCGTemp *at = tcgv_vec_temp(a);
@@ -377,13 +398,58 @@ void tcg_gen_mul_vec(unsigned vece, TCGv_vec r, TCGv_vec a, TCGv_vec b)
     TCGType type = rt->base_type;
     int can;
 
-    tcg_debug_assert(at->base_type == type);
-    tcg_debug_assert(bt->base_type == type);
-    can = tcg_can_emit_vec_op(INDEX_op_mul_vec, type, vece);
+    tcg_debug_assert(at->base_type >= type);
+    tcg_debug_assert(bt->base_type >= type);
+    can = tcg_can_emit_vec_op(opc, type, vece);
     if (can > 0) {
-        vec_gen_3(INDEX_op_mul_vec, type, vece, ri, ai, bi);
+        vec_gen_3(opc, type, vece, ri, ai, bi);
     } else {
         tcg_debug_assert(can < 0);
-        tcg_expand_vec_op(INDEX_op_mul_vec, type, vece, ri, ai, bi);
+        tcg_expand_vec_op(opc, type, vece, ri, ai, bi);
     }
+}
+
+void tcg_gen_mul_vec(unsigned vece, TCGv_vec r, TCGv_vec a, TCGv_vec b)
+{
+    do_op3(vece, r, a, b, INDEX_op_mul_vec);
+}
+
+void tcg_gen_ssadd_vec(unsigned vece, TCGv_vec r, TCGv_vec a, TCGv_vec b)
+{
+    do_op3(vece, r, a, b, INDEX_op_ssadd_vec);
+}
+
+void tcg_gen_usadd_vec(unsigned vece, TCGv_vec r, TCGv_vec a, TCGv_vec b)
+{
+    do_op3(vece, r, a, b, INDEX_op_usadd_vec);
+}
+
+void tcg_gen_sssub_vec(unsigned vece, TCGv_vec r, TCGv_vec a, TCGv_vec b)
+{
+    do_op3(vece, r, a, b, INDEX_op_sssub_vec);
+}
+
+void tcg_gen_ussub_vec(unsigned vece, TCGv_vec r, TCGv_vec a, TCGv_vec b)
+{
+    do_op3(vece, r, a, b, INDEX_op_ussub_vec);
+}
+
+void tcg_gen_smin_vec(unsigned vece, TCGv_vec r, TCGv_vec a, TCGv_vec b)
+{
+    do_op3(vece, r, a, b, INDEX_op_smin_vec);
+}
+
+void tcg_gen_umin_vec(unsigned vece, TCGv_vec r, TCGv_vec a, TCGv_vec b)
+{
+    do_op3(vece, r, a, b, INDEX_op_umin_vec);
+}
+
+void tcg_gen_smax_vec(unsigned vece, TCGv_vec r, TCGv_vec a, TCGv_vec b)
+{
+    do_op3(vece, r, a, b, INDEX_op_smax_vec);
+}
+
+void tcg_gen_umax_vec(unsigned vece, TCGv_vec r, TCGv_vec a, TCGv_vec b)
+{
+    do_op3(vece, r, a, b, INDEX_op_umax_vec);
 }

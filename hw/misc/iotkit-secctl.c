@@ -139,6 +139,9 @@ static MemTxResult iotkit_secctl_s_read(void *opaque, hwaddr addr,
     case A_NSCCFG:
         r = s->nsccfg;
         break;
+    case A_SECMPCINTSTATUS:
+        r = s->mpcintstatus;
+        break;
     case A_SECPPCINTSTAT:
         r = s->secppcintstat;
         break;
@@ -186,14 +189,14 @@ static MemTxResult iotkit_secctl_s_read(void *opaque, hwaddr addr,
     case A_APBSPPPCEXP3:
         r = s->apbexp[offset_to_ppc_idx(offset)].sp;
         break;
-    case A_SECMPCINTSTATUS:
     case A_SECMSCINTSTAT:
+        r = s->secmscintstat;
+        break;
     case A_SECMSCINTEN:
+        r = s->secmscinten;
+        break;
     case A_NSMSCEXP:
-        qemu_log_mask(LOG_UNIMP,
-                      "IoTKit SecCtl S block read: "
-                      "unimplemented offset 0x%x\n", offset);
-        r = 0;
+        r = s->nsmscexp;
         break;
     case A_PID4:
     case A_PID5:
@@ -289,6 +292,23 @@ static void iotkit_secctl_ppc_update_irq_enable(IoTKitSecCtlPPC *ppc)
     qemu_set_irq(ppc->irq_enable, extract32(value, ppc->irq_bit_offset, 1));
 }
 
+static void iotkit_secctl_update_mscexp_irqs(qemu_irq *msc_irqs, uint32_t value)
+{
+    int i;
+
+    for (i = 0; i < IOTS_NUM_EXP_MSC; i++) {
+        qemu_set_irq(msc_irqs[i], extract32(value, i + 16, 1));
+    }
+}
+
+static void iotkit_secctl_update_msc_irq(IoTKitSecCtl *s)
+{
+    /* Update the combined MSC IRQ, based on S_MSCEXP_STATUS and S_MSCEXP_EN */
+    bool level = s->secmscintstat & s->secmscinten;
+
+    qemu_set_irq(s->msc_irq, level);
+}
+
 static MemTxResult iotkit_secctl_s_write(void *opaque, hwaddr addr,
                                          uint64_t value,
                                          unsigned size, MemTxAttrs attrs)
@@ -368,10 +388,15 @@ static MemTxResult iotkit_secctl_s_write(void *opaque, hwaddr addr,
         iotkit_secctl_ppc_sp_write(ppc, value);
         break;
     case A_SECMSCINTCLR:
+        iotkit_secctl_update_mscexp_irqs(s->mscexp_clear, value);
+        break;
     case A_SECMSCINTEN:
-        qemu_log_mask(LOG_UNIMP,
-                      "IoTKit SecCtl S block write: "
-                      "unimplemented offset 0x%x\n", offset);
+        s->secmscinten = value;
+        iotkit_secctl_update_msc_irq(s);
+        break;
+    case A_NSMSCEXP:
+        s->nsmscexp = value;
+        iotkit_secctl_update_mscexp_irqs(s->mscexp_ns, value);
         break;
     case A_SECMPCINTSTATUS:
     case A_SECPPCINTSTAT:
@@ -379,7 +404,6 @@ static MemTxResult iotkit_secctl_s_write(void *opaque, hwaddr addr,
     case A_BRGINTSTAT:
     case A_AHBNSPPC0:
     case A_AHBSPPPC0:
-    case A_NSMSCEXP:
     case A_PID4:
     case A_PID5:
     case A_PID6:
@@ -572,6 +596,28 @@ static void iotkit_secctl_reset(DeviceState *dev)
     foreach_ppc(s, iotkit_secctl_reset_ppc);
 }
 
+static void iotkit_secctl_mpc_status(void *opaque, int n, int level)
+{
+    IoTKitSecCtl *s = IOTKIT_SECCTL(opaque);
+
+    s->mpcintstatus = deposit32(s->mpcintstatus, n, 1, !!level);
+}
+
+static void iotkit_secctl_mpcexp_status(void *opaque, int n, int level)
+{
+    IoTKitSecCtl *s = IOTKIT_SECCTL(opaque);
+
+    s->mpcintstatus = deposit32(s->mpcintstatus, n + 16, 1, !!level);
+}
+
+static void iotkit_secctl_mscexp_status(void *opaque, int n, int level)
+{
+    IoTKitSecCtl *s = IOTKIT_SECCTL(opaque);
+
+    s->secmscintstat = deposit32(s->secmscintstat, n + 16, 1, !!level);
+    iotkit_secctl_update_msc_irq(s);
+}
+
 static void iotkit_secctl_ppc_irqstatus(void *opaque, int n, int level)
 {
     IoTKitSecCtlPPC *ppc = opaque;
@@ -640,6 +686,19 @@ static void iotkit_secctl_init(Object *obj)
     qdev_init_gpio_out_named(dev, &s->sec_resp_cfg, "sec_resp_cfg", 1);
     qdev_init_gpio_out_named(dev, &s->nsc_cfg_irq, "nsc_cfg", 1);
 
+    qdev_init_gpio_in_named(dev, iotkit_secctl_mpc_status, "mpc_status",
+                            IOTS_NUM_MPC);
+    qdev_init_gpio_in_named(dev, iotkit_secctl_mpcexp_status,
+                            "mpcexp_status", IOTS_NUM_EXP_MPC);
+
+    qdev_init_gpio_in_named(dev, iotkit_secctl_mscexp_status,
+                            "mscexp_status", IOTS_NUM_EXP_MSC);
+    qdev_init_gpio_out_named(dev, s->mscexp_clear, "mscexp_clear",
+                             IOTS_NUM_EXP_MSC);
+    qdev_init_gpio_out_named(dev, s->mscexp_ns, "mscexp_ns",
+                             IOTS_NUM_EXP_MSC);
+    qdev_init_gpio_out_named(dev, &s->msc_irq, "msc_irq", 1);
+
     memory_region_init_io(&s->s_regs, obj, &iotkit_secctl_s_ops,
                           s, "iotkit-secctl-s-regs", 0x1000);
     memory_region_init_io(&s->ns_regs, obj, &iotkit_secctl_ns_ops,
@@ -656,6 +715,34 @@ static const VMStateDescription iotkit_secctl_ppc_vmstate = {
         VMSTATE_UINT32(ns, IoTKitSecCtlPPC),
         VMSTATE_UINT32(sp, IoTKitSecCtlPPC),
         VMSTATE_UINT32(nsp, IoTKitSecCtlPPC),
+        VMSTATE_END_OF_LIST()
+    }
+};
+
+static const VMStateDescription iotkit_secctl_mpcintstatus_vmstate = {
+    .name = "iotkit-secctl-mpcintstatus",
+    .version_id = 1,
+    .minimum_version_id = 1,
+    .fields = (VMStateField[]) {
+        VMSTATE_UINT32(mpcintstatus, IoTKitSecCtl),
+        VMSTATE_END_OF_LIST()
+    }
+};
+
+static bool needed_always(void *opaque)
+{
+    return true;
+}
+
+static const VMStateDescription iotkit_secctl_msc_vmstate = {
+    .name = "iotkit-secctl/msc",
+    .version_id = 1,
+    .minimum_version_id = 1,
+    .needed = needed_always,
+    .fields = (VMStateField[]) {
+        VMSTATE_UINT32(secmscintstat, IoTKitSecCtl),
+        VMSTATE_UINT32(secmscinten, IoTKitSecCtl),
+        VMSTATE_UINT32(nsmscexp, IoTKitSecCtl),
         VMSTATE_END_OF_LIST()
     }
 };
@@ -677,7 +764,12 @@ static const VMStateDescription iotkit_secctl_vmstate = {
         VMSTATE_STRUCT_ARRAY(ahbexp, IoTKitSecCtl, IOTS_NUM_AHB_EXP_PPC, 1,
                              iotkit_secctl_ppc_vmstate, IoTKitSecCtlPPC),
         VMSTATE_END_OF_LIST()
-    }
+    },
+    .subsections = (const VMStateDescription*[]) {
+        &iotkit_secctl_mpcintstatus_vmstate,
+        &iotkit_secctl_msc_vmstate,
+        NULL
+    },
 };
 
 static void iotkit_secctl_class_init(ObjectClass *klass, void *data)

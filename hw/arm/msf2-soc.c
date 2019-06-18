@@ -23,13 +23,13 @@
  */
 
 #include "qemu/osdep.h"
+#include "qemu/units.h"
 #include "qapi/error.h"
 #include "qemu-common.h"
 #include "hw/arm/arm.h"
 #include "exec/address-spaces.h"
 #include "hw/char/serial.h"
 #include "hw/boards.h"
-#include "qemu/cutils.h"
 #include "hw/arm/msf2-soc.h"
 #include "hw/misc/unimp.h"
 
@@ -40,14 +40,14 @@
 
 #define SRAM_BASE_ADDRESS     0x20000000
 
-#define MSF2_ENVM_MAX_SIZE    (512 * K_BYTE)
+#define MSF2_ENVM_MAX_SIZE    (512 * KiB)
 
 /*
  * eSRAM max size is 80k without SECDED(Single error correction and
  * dual error detection) feature and 64k with SECDED.
  * We do not support SECDED now.
  */
-#define MSF2_ESRAM_MAX_SIZE       (80 * K_BYTE)
+#define MSF2_ESRAM_MAX_SIZE       (80 * KiB)
 
 static const uint32_t spi_addr[MSF2_NUM_SPIS] = { 0x40001000 , 0x40011000 };
 static const uint32_t uart_addr[MSF2_NUM_UARTS] = { 0x40000000 , 0x40010000 };
@@ -68,19 +68,18 @@ static void m2sxxx_soc_initfn(Object *obj)
     MSF2State *s = MSF2_SOC(obj);
     int i;
 
-    object_initialize(&s->armv7m, sizeof(s->armv7m), TYPE_ARMV7M);
-    qdev_set_parent_bus(DEVICE(&s->armv7m), sysbus_get_default());
+    sysbus_init_child_obj(obj, "armv7m", &s->armv7m, sizeof(s->armv7m),
+                          TYPE_ARMV7M);
 
-    object_initialize(&s->sysreg, sizeof(s->sysreg), TYPE_MSF2_SYSREG);
-    qdev_set_parent_bus(DEVICE(&s->sysreg), sysbus_get_default());
+    sysbus_init_child_obj(obj, "sysreg", &s->sysreg, sizeof(s->sysreg),
+                          TYPE_MSF2_SYSREG);
 
-    object_initialize(&s->timer, sizeof(s->timer), TYPE_MSS_TIMER);
-    qdev_set_parent_bus(DEVICE(&s->timer), sysbus_get_default());
+    sysbus_init_child_obj(obj, "timer", &s->timer, sizeof(s->timer),
+                          TYPE_MSS_TIMER);
 
     for (i = 0; i < MSF2_NUM_SPIS; i++) {
-        object_initialize(&s->spi[i], sizeof(s->spi[i]),
+        sysbus_init_child_obj(obj, "spi[*]", &s->spi[i], sizeof(s->spi[i]),
                           TYPE_MSS_SPI);
-        qdev_set_parent_bus(DEVICE(&s->spi[i]), sysbus_get_default());
     }
 }
 
@@ -118,6 +117,7 @@ static void m2sxxx_soc_realize(DeviceState *dev_soc, Error **errp)
     armv7m = DEVICE(&s->armv7m);
     qdev_prop_set_uint32(armv7m, "num-irq", 81);
     qdev_prop_set_string(armv7m, "cpu-type", s->cpu_type);
+    qdev_prop_set_bit(armv7m, "enable-bitband", true);
     object_property_set_link(OBJECT(&s->armv7m), OBJECT(get_system_memory()),
                                      "memory", &error_abort);
     object_property_set_bool(OBJECT(&s->armv7m), true, "realized", &err);
@@ -138,10 +138,10 @@ static void m2sxxx_soc_realize(DeviceState *dev_soc, Error **errp)
     system_clock_scale = NANOSECONDS_PER_SECOND / s->m3clk;
 
     for (i = 0; i < MSF2_NUM_UARTS; i++) {
-        if (serial_hds[i]) {
+        if (serial_hd(i)) {
             serial_mm_init(get_system_memory(), uart_addr[i], 2,
                            qdev_get_gpio_in(armv7m, uart_irq[i]),
-                           115200, serial_hds[i], DEVICE_NATIVE_ENDIAN);
+                           115200, serial_hd(i), DEVICE_NATIVE_ENDIAN);
         }
     }
 

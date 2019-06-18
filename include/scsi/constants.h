@@ -212,7 +212,7 @@
 #define TYPE_ROM            0x05
 #define TYPE_SCANNER        0x06
 #define TYPE_MOD            0x07    /* Magneto-optical disk -
-				     * - treated as TYPE_DISK */
+                                     * - treated as TYPE_DISK */
 #define TYPE_MEDIUM_CHANGER 0x08
 #define TYPE_STORAGE_ARRAY  0x0c    /* Storage array device */
 #define TYPE_ENCLOSURE      0x0d    /* Enclosure Services Device */
@@ -310,5 +310,9 @@
 #define MMC_PROFILE_HDDVD_R_DL          0x0058
 #define MMC_PROFILE_HDDVD_RW_DL         0x005A
 #define MMC_PROFILE_INVALID             0xFFFF
+
+#define XCOPY_DESC_OFFSET 16
+#define IDENT_DESCR_TGT_DESCR_SIZE 32
+#define XCOPY_BLK2BLK_SEG_DESC_SIZE 28
 
 #endif

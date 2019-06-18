@@ -26,10 +26,49 @@
 #ifndef MACIO_H
 #define MACIO_H
 
+#include "hw/char/escc.h"
 #include "hw/intc/heathrow_pic.h"
 #include "hw/misc/macio/cuda.h"
+#include "hw/misc/macio/gpio.h"
+#include "hw/misc/macio/pmu.h"
 #include "hw/ppc/mac_dbdma.h"
 #include "hw/ppc/openpic.h"
+
+/* MacIO virtual bus */
+#define TYPE_MACIO_BUS "macio-bus"
+#define MACIO_BUS(obj) OBJECT_CHECK(MacIOBusState, (obj), TYPE_MACIO_BUS)
+
+typedef struct MacIOBusState {
+    /*< private >*/
+    BusState parent_obj;
+} MacIOBusState;
+
+/* MacIO IDE */
+#define TYPE_MACIO_IDE "macio-ide"
+#define MACIO_IDE(obj) OBJECT_CHECK(MACIOIDEState, (obj), TYPE_MACIO_IDE)
+
+typedef struct MACIOIDEState {
+    /*< private >*/
+    SysBusDevice parent_obj;
+    /*< public >*/
+    uint32_t addr;
+    uint32_t channel;
+    qemu_irq real_ide_irq;
+    qemu_irq real_dma_irq;
+    qemu_irq ide_irq;
+    qemu_irq dma_irq;
+
+    MemoryRegion mem;
+    IDEBus bus;
+    IDEDMA dma;
+    void *dbdma;
+    bool dma_active;
+    uint32_t timing_reg;
+    uint32_t irq_reg;
+} MACIOIDEState;
+
+void macio_ide_init_drives(MACIOIDEState *ide, DriveInfo **hd_table);
+void macio_ide_register_dma(MACIOIDEState *ide);
 
 #define TYPE_MACIO "macio"
 #define MACIO(obj) OBJECT_CHECK(MacIOState, (obj), TYPE_MACIO)
@@ -39,8 +78,10 @@ typedef struct MacIOState {
     PCIDevice parent;
     /*< public >*/
 
+    MacIOBusState macio_bus;
     MemoryRegion bar;
     CUDAState cuda;
+    PMUState pmu;
     DBDMAState dbdma;
     ESCCState escc;
     uint64_t frequency;
@@ -56,7 +97,6 @@ typedef struct OldWorldMacIOState {
     /*< public >*/
 
     HeathrowState *pic;
-    qemu_irq irqs[7];
 
     MacIONVRAMState nvram;
     MACIOIDEState ide[2];
@@ -71,9 +111,11 @@ typedef struct NewWorldMacIOState {
     MacIOState parent_obj;
     /*< public >*/
 
+    bool has_pmu;
+    bool has_adb;
     OpenPICState *pic;
-    qemu_irq irqs[7];
     MACIOIDEState ide[2];
+    MacIOGPIOState gpio;
 } NewWorldMacIOState;
 
 #endif /* MACIO_H */

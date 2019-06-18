@@ -34,6 +34,7 @@ int kvm_arm_vcpu_init(CPUState *cs);
  * @group: device control API group for setting addresses
  * @attr: device control API address type
  * @dev_fd: device control device file descriptor (or -1 if not supported)
+ * @addr_ormask: value to be OR'ed with resolved address
  *
  * Remember the memory region @mr, and when it is mapped by the
  * machine model, tell the kernel that base address using the
@@ -45,13 +46,13 @@ int kvm_arm_vcpu_init(CPUState *cs);
  * address at the point where machine init is complete.
  */
 void kvm_arm_register_device(MemoryRegion *mr, uint64_t devid, uint64_t group,
-                             uint64_t attr, int dev_fd);
+                             uint64_t attr, int dev_fd, uint64_t addr_ormask);
 
 /**
  * kvm_arm_init_cpreg_list:
- * @cs: CPUState
+ * @cpu: ARMCPU
  *
- * Initialize the CPUState's cpreg list according to the kernel's
+ * Initialize the ARMCPU cpreg list according to the kernel's
  * definition of what CPU registers it knows about (and throw away
  * the previous TCG-created cpreg list).
  *
@@ -120,6 +121,30 @@ bool write_kvmstate_to_list(ARMCPU *cpu);
  */
 void kvm_arm_reset_vcpu(ARMCPU *cpu);
 
+/**
+ * kvm_arm_init_serror_injection:
+ * @cs: CPUState
+ *
+ * Check whether KVM can set guest SError syndrome.
+ */
+void kvm_arm_init_serror_injection(CPUState *cs);
+
+/**
+ * kvm_get_vcpu_events:
+ * @cpu: ARMCPU
+ *
+ * Get VCPU related state from kvm.
+ */
+int kvm_get_vcpu_events(ARMCPU *cpu);
+
+/**
+ * kvm_put_vcpu_events:
+ * @cpu: ARMCPU
+ *
+ * Put VCPU related state to kvm.
+ */
+int kvm_put_vcpu_events(ARMCPU *cpu);
+
 #ifdef CONFIG_KVM
 /**
  * kvm_arm_create_scratch_host_vcpu:
@@ -158,6 +183,7 @@ void kvm_arm_destroy_scratch_host_vcpu(int *fdarray);
  * by asking the host kernel)
  */
 typedef struct ARMHostCPUFeatures {
+    ARMISARegisters isar;
     uint64_t features;
     uint32_t target;
     const char *dtb_compatible;
@@ -180,6 +206,14 @@ bool kvm_arm_get_host_cpu_features(ARMHostCPUFeatures *ahcf);
  * from the host CPU.
  */
 void kvm_arm_set_cpu_features_from_host(ARMCPU *cpu);
+
+/**
+ * kvm_arm_get_max_vm_ipa_size - Returns the number of bits in the
+ * IPA address space supported by KVM
+ *
+ * @ms: Machine state handle
+ */
+int kvm_arm_get_max_vm_ipa_size(MachineState *ms);
 
 /**
  * kvm_arm_sync_mpstate_to_kvm
@@ -211,6 +245,11 @@ static inline void kvm_arm_set_cpu_features_from_host(ARMCPU *cpu)
      */
     cpu->kvm_target = QEMU_KVM_ARM_TARGET_NONE;
     cpu->host_cpu_probe_failed = true;
+}
+
+static inline int kvm_arm_get_max_vm_ipa_size(MachineState *ms)
+{
+    return -ENOENT;
 }
 
 static inline int kvm_arm_vgic_probe(void)

@@ -38,9 +38,6 @@ typedef struct SysBusDevice SysBusDevice;
 typedef struct SysBusDeviceClass {
     /*< private >*/
     DeviceClass parent_class;
-    /*< public >*/
-
-    int (*init)(SysBusDevice *dev);
 
     /*
      * Let the sysbus device format its own non-PIO, non-MMIO unit address.
@@ -95,6 +92,23 @@ void sysbus_mmio_map_overlap(SysBusDevice *dev, int n, hwaddr addr,
 void sysbus_add_io(SysBusDevice *dev, hwaddr addr,
                    MemoryRegion *mem);
 MemoryRegion *sysbus_address_space(SysBusDevice *dev);
+
+/**
+ * sysbus_init_child_obj:
+ * @parent: The parent object
+ * @childname: Used as name of the "child<>" property in the parent
+ * @child: A pointer to the memory to be used for the object.
+ * @childsize: The maximum size available at @child for the object.
+ * @childtype: The name of the type of the object to instantiate.
+ *
+ * This function will initialize an object and attach it to the main system
+ * bus. The memory for the object should have already been allocated. The
+ * object will then be added as child to the given parent. The returned object
+ * has a reference count of 1 (for the "child<...>" property from the parent),
+ * so the object will be finalized automatically when the parent gets removed.
+ */
+void sysbus_init_child_obj(Object *parent, const char *childname, void *child,
+                           size_t childsize, const char *childtype);
 
 /* Call func for every dynamically created sysbus device in the system */
 void foreach_dynamic_sysbus_device(FindSysbusDeviceFunc *func, void *opaque);

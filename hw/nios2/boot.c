@@ -29,6 +29,7 @@
  */
 
 #include "qemu/osdep.h"
+#include "qemu/units.h"
 #include "qemu-common.h"
 #include "cpu.h"
 #include "qemu/option.h"
@@ -38,7 +39,6 @@
 #include "sysemu/sysemu.h"
 #include "hw/loader.h"
 #include "elf.h"
-#include "qemu/cutils.h"
 
 #include "boot.h"
 
@@ -146,13 +146,14 @@ void nios2_load_kernel(Nios2CPU *cpu, hwaddr ddr_base,
 #endif
 
         /* Boots a kernel elf binary. */
-        kernel_size = load_elf(kernel_filename, NULL, NULL,
+        kernel_size = load_elf(kernel_filename, NULL, NULL, NULL,
                                &entry, &low, &high,
                                big_endian, EM_ALTERA_NIOS2, 0, 0);
         base32 = entry;
         if (base32 == 0xc0000000) {
-            kernel_size = load_elf(kernel_filename, translate_kernel_address,
-                                   NULL, &entry, NULL, NULL,
+            kernel_size = load_elf(kernel_filename, NULL,
+                                   translate_kernel_address, NULL,
+                                   &entry, NULL, NULL,
                                    big_endian, EM_ALTERA_NIOS2, 0, 0);
         }
 
@@ -161,7 +162,7 @@ void nios2_load_kernel(Nios2CPU *cpu, hwaddr ddr_base,
 
         /* If it wasn't an ELF image, try an u-boot image. */
         if (kernel_size < 0) {
-            hwaddr uentry, loadaddr;
+            hwaddr uentry, loadaddr = LOAD_UIMAGE_LOADADDR_INVALID;
 
             kernel_size = load_uimage(kernel_filename, &uentry, &loadaddr, 0,
                                       NULL, NULL);
@@ -177,7 +178,7 @@ void nios2_load_kernel(Nios2CPU *cpu, hwaddr ddr_base,
             high = ddr_base + kernel_size;
         }
 
-        high = ROUND_UP(high, 1024 * 1024);
+        high = ROUND_UP(high, 1 * MiB);
 
         /* If initrd is available, it goes after the kernel, aligned to 1M. */
         if (initrd_filename) {
@@ -213,7 +214,7 @@ void nios2_load_kernel(Nios2CPU *cpu, hwaddr ddr_base,
         high += fdt_size;
 
         /* Kernel command is at the end, 4k aligned. */
-        boot_info.cmdline = ROUND_UP(high, 4096);
+        boot_info.cmdline = ROUND_UP(high, 4 * KiB);
         if (kernel_cmdline && strlen(kernel_cmdline)) {
             pstrcpy_targphys("cmdline", boot_info.cmdline, 256, kernel_cmdline);
         }

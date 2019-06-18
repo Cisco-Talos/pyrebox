@@ -26,6 +26,7 @@
 #include "net/eth.h"
 #include "ne2000.h"
 #include "sysemu/sysemu.h"
+#include "trace.h"
 
 /* debug NE2000 card */
 //#define DEBUG_NE2000
@@ -144,7 +145,7 @@ static void ne2000_update_irq(NE2000State *s)
     isr = (s->isr & s->imr) & 0x7f;
 #if defined(DEBUG_NE2000)
     printf("NE2000: Set IRQ to %d (%02x %02x)\n",
-	   isr ? 1 : 0, s->isr, s->imr);
+           isr ? 1 : 0, s->isr, s->imr);
 #endif
     qemu_set_irq(s->irq, (isr != 0));
 }
@@ -173,7 +174,7 @@ static int ne2000_buffer_full(NE2000State *s)
 ssize_t ne2000_receive(NetClientState *nc, const uint8_t *buf, size_t size_)
 {
     NE2000State *s = qemu_get_nic_opaque(nc);
-    int size = size_;
+    size_t size = size_;
     uint8_t *p;
     unsigned int total_len, next, avail, len, index, mcast_idx;
     uint8_t buf1[60];
@@ -181,7 +182,7 @@ ssize_t ne2000_receive(NetClientState *nc, const uint8_t *buf, size_t size_)
         { 0xff, 0xff, 0xff, 0xff, 0xff, 0xff };
 
 #if defined(DEBUG_NE2000)
-    printf("NE2000: received len=%d\n", size);
+    printf("NE2000: received len=%zu\n", size);
 #endif
 
     if (s->cmd & E8390_STOP || ne2000_buffer_full(s))
@@ -276,9 +277,7 @@ static void ne2000_ioport_write(void *opaque, uint32_t addr, uint32_t val)
     int offset, page, index;
 
     addr &= 0xf;
-#ifdef DEBUG_NE2000
-    printf("NE2000: write addr=0x%x val=0x%02x\n", addr, val);
-#endif
+    trace_ne2000_ioport_write(addr, val);
     if (addr == E8390_CMD) {
         /* control register */
         s->cmd = val;
@@ -397,12 +396,12 @@ static uint32_t ne2000_ioport_read(void *opaque, uint32_t addr)
         case EN0_ISR:
             ret = s->isr;
             break;
-	case EN0_RSARLO:
-	    ret = s->rsar & 0x00ff;
-	    break;
-	case EN0_RSARHI:
-	    ret = s->rsar >> 8;
-	    break;
+        case EN0_RSARLO:
+            ret = s->rsar & 0x00ff;
+            break;
+        case EN0_RSARHI:
+            ret = s->rsar >> 8;
+            break;
         case EN1_PHYS ... EN1_PHYS + 5:
             ret = s->phys[offset - EN1_PHYS];
             break;
@@ -421,29 +420,27 @@ static uint32_t ne2000_ioport_read(void *opaque, uint32_t addr)
         case EN2_STOPPG:
             ret = s->stop >> 8;
             break;
-	case EN0_RTL8029ID0:
-	    ret = 0x50;
-	    break;
-	case EN0_RTL8029ID1:
-	    ret = 0x43;
-	    break;
-	case EN3_CONFIG0:
-	    ret = 0;		/* 10baseT media */
-	    break;
-	case EN3_CONFIG2:
-	    ret = 0x40;		/* 10baseT active */
-	    break;
-	case EN3_CONFIG3:
-	    ret = 0x40;		/* Full duplex */
-	    break;
+        case EN0_RTL8029ID0:
+            ret = 0x50;
+            break;
+        case EN0_RTL8029ID1:
+            ret = 0x43;
+            break;
+        case EN3_CONFIG0:
+            ret = 0;		/* 10baseT media */
+            break;
+        case EN3_CONFIG2:
+            ret = 0x40;		/* 10baseT active */
+            break;
+        case EN3_CONFIG3:
+            ret = 0x40;		/* Full duplex */
+            break;
         default:
             ret = 0x00;
             break;
         }
     }
-#ifdef DEBUG_NE2000
-    printf("NE2000: read addr=0x%x val=%02x\n", addr, ret);
-#endif
+    trace_ne2000_ioport_read(addr, ret);
     return ret;
 }
 
@@ -662,19 +659,24 @@ static uint64_t ne2000_read(void *opaque, hwaddr addr,
                             unsigned size)
 {
     NE2000State *s = opaque;
+    uint64_t val;
 
     if (addr < 0x10 && size == 1) {
-        return ne2000_ioport_read(s, addr);
+        val = ne2000_ioport_read(s, addr);
     } else if (addr == 0x10) {
         if (size <= 2) {
-            return ne2000_asic_ioport_read(s, addr);
+            val = ne2000_asic_ioport_read(s, addr);
         } else {
-            return ne2000_asic_ioport_readl(s, addr);
+            val = ne2000_asic_ioport_readl(s, addr);
         }
     } else if (addr == 0x1f && size == 1) {
-        return ne2000_reset_ioport_read(s, addr);
+        val = ne2000_reset_ioport_read(s, addr);
+    } else {
+        val = ((uint64_t)1 << (size * 8)) - 1;
     }
-    return ((uint64_t)1 << (size * 8)) - 1;
+    trace_ne2000_read(addr, val);
+
+    return val;
 }
 
 static void ne2000_write(void *opaque, hwaddr addr,
@@ -682,6 +684,7 @@ static void ne2000_write(void *opaque, hwaddr addr,
 {
     NE2000State *s = opaque;
 
+    trace_ne2000_write(addr, data);
     if (addr < 0x10 && size == 1) {
         ne2000_ioport_write(s, addr, data);
     } else if (addr == 0x10) {

@@ -1,4 +1,3 @@
-# Default configuration for riscv-softmmu
+# Default configuration for riscv64-softmmu
 
-CONFIG_SERIAL=y
-CONFIG_VIRTIO=y
+include riscv32-softmmu.mak

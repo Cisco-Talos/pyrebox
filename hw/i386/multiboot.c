@@ -161,6 +161,7 @@ int load_multiboot(FWCfgState *fw_cfg,
     uint8_t bootinfo[MBI_SIZE];
     uint8_t *mb_bootinfo_data;
     uint32_t cmdline_len;
+    GList *mods = NULL;
 
     /* Ok, let's see if it is a multiboot image.
        The header is 12x32bit long, so the latest entry may be 8192 - 48. */
@@ -180,12 +181,12 @@ int load_multiboot(FWCfgState *fw_cfg,
     if (!is_multiboot)
         return 0; /* no multiboot */
 
-    mb_debug("qemu: I believe we found a multiboot image!");
+    mb_debug("I believe we found a multiboot image!");
     memset(bootinfo, 0, sizeof(bootinfo));
     memset(&mbs, 0, sizeof(mbs));
 
     if (flags & 0x00000004) { /* MULTIBOOT_HEADER_HAS_VBE */
-        error_report("qemu: multiboot knows VBE. we don't.");
+        error_report("multiboot knows VBE. we don't");
     }
     if (!(flags & 0x00010000)) { /* MULTIBOOT_HEADER_HAS_ADDR */
         uint64_t elf_entry;
@@ -198,7 +199,7 @@ int load_multiboot(FWCfgState *fw_cfg,
             exit(1);
         }
 
-        kernel_size = load_elf(kernel_filename, NULL, NULL, &elf_entry,
+        kernel_size = load_elf(kernel_filename, NULL, NULL, NULL, &elf_entry,
                                &elf_low, &elf_high, 0, I386_ELF_MACHINE,
                                0, 0);
         if (kernel_size < 0) {
@@ -215,7 +216,7 @@ int load_multiboot(FWCfgState *fw_cfg,
             exit(1);
         }
 
-        mb_debug("qemu: loading multiboot-elf kernel "
+        mb_debug("loading multiboot-elf kernel "
                  "(%#x bytes) with entry %#zx",
                  mb_kernel_size, (size_t)mh_entry_addr);
     } else {
@@ -269,7 +270,7 @@ int load_multiboot(FWCfgState *fw_cfg,
         mb_debug("multiboot: load_addr = %#x", mh_load_addr);
         mb_debug("multiboot: load_end_addr = %#x", mh_load_end_addr);
         mb_debug("multiboot: bss_end_addr = %#x", mh_bss_end_addr);
-        mb_debug("qemu: loading multiboot kernel (%#x bytes) at %#x",
+        mb_debug("loading multiboot kernel (%#x bytes) at %#x",
                  mb_load_size, mh_load_addr);
 
         mbs.mb_buf = g_malloc(mb_kernel_size);
@@ -292,11 +293,15 @@ int load_multiboot(FWCfgState *fw_cfg,
     cmdline_len += strlen(kernel_cmdline) + 1;
     if (initrd_filename) {
         const char *r = initrd_filename;
-        cmdline_len += strlen(r) + 1;
-        mbs.mb_mods_avail = 1;
-        while (*(r = get_opt_value(NULL, 0, r))) {
-           mbs.mb_mods_avail++;
-           r++;
+        cmdline_len += strlen(initrd_filename) + 1;
+        while (*r) {
+            char *value;
+            r = get_opt_value(r, &value);
+            mbs.mb_mods_avail++;
+            mods = g_list_append(mods, value);
+            if (*r) {
+                r++;
+            }
         }
     }
 
@@ -311,43 +316,48 @@ int load_multiboot(FWCfgState *fw_cfg,
     mbs.offset_cmdlines   = mbs.offset_mbinfo + mbs.mb_mods_avail * MB_MOD_SIZE;
     mbs.offset_bootloader = mbs.offset_cmdlines + cmdline_len;
 
-    if (initrd_filename) {
-        const char *next_initrd;
-        char not_last, tmpbuf[strlen(initrd_filename) + 1];
-
+    if (mods) {
+        GList *tmpl = mods;
         mbs.offset_mods = mbs.mb_buf_size;
 
-        do {
+        while (tmpl) {
             char *next_space;
             int mb_mod_length;
             uint32_t offs = mbs.mb_buf_size;
+            char *one_file = tmpl->data;
 
-            next_initrd = get_opt_value(tmpbuf, sizeof(tmpbuf), initrd_filename);
-            not_last = *next_initrd;
             /* if a space comes after the module filename, treat everything
                after that as parameters */
-            hwaddr c = mb_add_cmdline(&mbs, tmpbuf);
-            if ((next_space = strchr(tmpbuf, ' ')))
+            hwaddr c = mb_add_cmdline(&mbs, one_file);
+            next_space = strchr(one_file, ' ');
+            if (next_space) {
                 *next_space = '\0';
-            mb_debug("multiboot loading module: %s", tmpbuf);
-            mb_mod_length = get_image_size(tmpbuf);
+            }
+            mb_debug("multiboot loading module: %s", one_file);
+            mb_mod_length = get_image_size(one_file);
             if (mb_mod_length < 0) {
-                error_report("Failed to open file '%s'", tmpbuf);
+                error_report("Failed to open file '%s'", one_file);
                 exit(1);
             }
 
             mbs.mb_buf_size = TARGET_PAGE_ALIGN(mb_mod_length + mbs.mb_buf_size);
             mbs.mb_buf = g_realloc(mbs.mb_buf, mbs.mb_buf_size);
 
-            load_image(tmpbuf, (unsigned char *)mbs.mb_buf + offs);
+            if (load_image_size(one_file, (unsigned char *)mbs.mb_buf + offs,
+                                mbs.mb_buf_size - offs) < 0) {
+                error_report("Error loading file '%s'", one_file);
+                exit(1);
+            }
             mb_add_mod(&mbs, mbs.mb_buf_phys + offs,
                        mbs.mb_buf_phys + offs + mb_mod_length, c);
 
             mb_debug("mod_start: %p\nmod_end:   %p\n  cmdline: "TARGET_FMT_plx,
                      (char *)mbs.mb_buf + offs,
                      (char *)mbs.mb_buf + offs + mb_mod_length, c);
-            initrd_filename = next_initrd+1;
-        } while (not_last);
+            g_free(one_file);
+            tmpl = tmpl->next;
+        }
+        g_list_free(mods);
     }
 
     /* Commandline support */

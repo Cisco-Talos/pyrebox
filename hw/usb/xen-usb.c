@@ -27,7 +27,7 @@
 #include "qemu/option.h"
 #include "hw/sysbus.h"
 #include "hw/usb.h"
-#include "hw/xen/xen_backend.h"
+#include "hw/xen/xen-legacy-backend.h"
 #include "monitor/qdev.h"
 #include "qapi/qmp/qdict.h"
 #include "qapi/qmp/qstring.h"
@@ -72,7 +72,7 @@ struct usbback_stub {
     USBPort       port;
     unsigned int  speed;
     bool          attached;
-    QTAILQ_HEAD(submit_q_head, usbback_req) submit_q;
+    QTAILQ_HEAD(, usbback_req) submit_q;
 };
 
 struct usbback_req {
@@ -99,7 +99,7 @@ struct usbback_hotplug {
 };
 
 struct usbback_info {
-    struct XenDevice         xendev;  /* must be first */
+    struct XenLegacyDevice         xendev;  /* must be first */
     USBBus                   bus;
     void                     *urb_sring;
     void                     *conn_sring;
@@ -108,8 +108,8 @@ struct usbback_info {
     int                      num_ports;
     int                      usb_ver;
     bool                     ring_error;
-    QTAILQ_HEAD(req_free_q_head, usbback_req) req_free_q;
-    QSIMPLEQ_HEAD(hotplug_q_head, usbback_hotplug) hotplug_q;
+    QTAILQ_HEAD(, usbback_req) req_free_q;
+    QSIMPLEQ_HEAD(, usbback_hotplug) hotplug_q;
     struct usbback_stub      ports[USBBACK_MAXPORTS];
     struct usbback_stub      *addr_table[USB_DEV_ADDR_SIZE];
     QEMUBH                   *bh;
@@ -142,7 +142,7 @@ static int usbback_gnttab_map(struct usbback_req *usbback_req)
     unsigned int nr_segs, i, prot;
     uint32_t ref[USBIF_MAX_SEGMENTS_PER_REQUEST];
     struct usbback_info *usbif = usbback_req->usbif;
-    struct XenDevice *xendev = &usbif->xendev;
+    struct XenLegacyDevice *xendev = &usbif->xendev;
     struct usbif_request_segment *seg;
     void *addr;
 
@@ -173,8 +173,9 @@ static int usbback_gnttab_map(struct usbback_req *usbback_req)
         for (i = 0; i < usbback_req->nr_buffer_segs; i++) {
             ref[i] = usbback_req->req.seg[i].gref;
         }
-        usbback_req->buffer = xengnttab_map_domain_grant_refs(xendev->gnttabdev,
-            usbback_req->nr_buffer_segs, xendev->dom, ref, prot);
+        usbback_req->buffer =
+            xen_be_map_grant_refs(xendev, ref, usbback_req->nr_buffer_segs,
+                                  prot);
 
         if (!usbback_req->buffer) {
             return -ENOMEM;
@@ -206,8 +207,9 @@ static int usbback_gnttab_map(struct usbback_req *usbback_req)
     for (i = 0; i < usbback_req->nr_extra_segs; i++) {
         ref[i] = usbback_req->req.seg[i + usbback_req->req.nr_buffer_segs].gref;
     }
-    usbback_req->isoc_buffer = xengnttab_map_domain_grant_refs(
-         xendev->gnttabdev, usbback_req->nr_extra_segs, xendev->dom, ref, prot);
+    usbback_req->isoc_buffer =
+        xen_be_map_grant_refs(xendev, ref, usbback_req->nr_extra_segs,
+                              prot);
 
     if (!usbback_req->isoc_buffer) {
         return -ENOMEM;
@@ -218,7 +220,7 @@ static int usbback_gnttab_map(struct usbback_req *usbback_req)
 
 static int usbback_init_packet(struct usbback_req *usbback_req)
 {
-    struct XenDevice *xendev = &usbback_req->usbif->xendev;
+    struct XenLegacyDevice *xendev = &usbback_req->usbif->xendev;
     USBPacket *packet = &usbback_req->packet;
     USBDevice *dev = usbback_req->stub->dev;
     USBEndpoint *ep;
@@ -277,7 +279,7 @@ static void usbback_do_response(struct usbback_req *usbback_req, int32_t status,
 {
     struct usbback_info *usbif;
     struct usbif_urb_response *res;
-    struct XenDevice *xendev;
+    struct XenLegacyDevice *xendev;
     unsigned int notify;
 
     usbif = usbback_req->usbif;
@@ -291,14 +293,14 @@ static void usbback_do_response(struct usbback_req *usbback_req, int32_t status,
     }
 
     if (usbback_req->buffer) {
-        xengnttab_unmap(xendev->gnttabdev, usbback_req->buffer,
-                        usbback_req->nr_buffer_segs);
+        xen_be_unmap_grant_refs(xendev, usbback_req->buffer,
+                                usbback_req->nr_buffer_segs);
         usbback_req->buffer = NULL;
     }
 
     if (usbback_req->isoc_buffer) {
-        xengnttab_unmap(xendev->gnttabdev, usbback_req->isoc_buffer,
-                        usbback_req->nr_extra_segs);
+        xen_be_unmap_grant_refs(xendev, usbback_req->isoc_buffer,
+                                usbback_req->nr_extra_segs);
         usbback_req->isoc_buffer = NULL;
     }
 
@@ -763,7 +765,7 @@ static void usbback_portid_add(struct usbback_info *usbif, unsigned port,
     if (!usbif->ports[port - 1].dev) {
         goto err;
     }
-    QDECREF(qdict);
+    qobject_unref(qdict);
     speed = usbif->ports[port - 1].dev->speed;
     switch (speed) {
     case USB_SPEED_LOW:
@@ -796,7 +798,7 @@ static void usbback_portid_add(struct usbback_info *usbif, unsigned port,
     return;
 
 err:
-    QDECREF(qdict);
+    qobject_unref(qdict);
     xen_pv_printf(&usbif->xendev, 0, "device %s could not be opened\n", busid);
 }
 
@@ -822,7 +824,7 @@ static void usbback_process_port(struct usbback_info *usbif, unsigned port)
     g_free(busid);
 }
 
-static void usbback_disconnect(struct XenDevice *xendev)
+static void usbback_disconnect(struct XenLegacyDevice *xendev)
 {
     struct usbback_info *usbif;
     unsigned int i;
@@ -834,11 +836,11 @@ static void usbback_disconnect(struct XenDevice *xendev)
     xen_pv_unbind_evtchn(xendev);
 
     if (usbif->urb_sring) {
-        xengnttab_unmap(xendev->gnttabdev, usbif->urb_sring, 1);
+        xen_be_unmap_grant_ref(xendev, usbif->urb_sring);
         usbif->urb_sring = NULL;
     }
     if (usbif->conn_sring) {
-        xengnttab_unmap(xendev->gnttabdev, usbif->conn_sring, 1);
+        xen_be_unmap_grant_ref(xendev, usbif->conn_sring);
         usbif->conn_sring = NULL;
     }
 
@@ -851,16 +853,20 @@ static void usbback_disconnect(struct XenDevice *xendev)
     TR_BUS(xendev, "finished\n");
 }
 
-static int usbback_connect(struct XenDevice *xendev)
+static int usbback_connect(struct XenLegacyDevice *xendev)
 {
     struct usbback_info *usbif;
     struct usbif_urb_sring *urb_sring;
     struct usbif_conn_sring *conn_sring;
     int urb_ring_ref;
     int conn_ring_ref;
-    unsigned int i;
+    unsigned int i, max_grants;
 
     TR_BUS(xendev, "start\n");
+
+    /* max_grants: for each request and for the rings (request and connect). */
+    max_grants = USBIF_MAX_SEGMENTS_PER_REQUEST * USB_URB_RING_SIZE + 2;
+    xen_be_set_max_grant_refs(xendev, max_grants);
 
     usbif = container_of(xendev, struct usbback_info, xendev);
 
@@ -877,12 +883,10 @@ static int usbback_connect(struct XenDevice *xendev)
         return -1;
     }
 
-    usbif->urb_sring = xengnttab_map_grant_ref(xendev->gnttabdev, xendev->dom,
-                                               urb_ring_ref,
-                                               PROT_READ | PROT_WRITE);
-    usbif->conn_sring = xengnttab_map_grant_ref(xendev->gnttabdev, xendev->dom,
-                                                conn_ring_ref,
-                                                PROT_READ | PROT_WRITE);
+    usbif->urb_sring = xen_be_map_grant_ref(xendev, urb_ring_ref,
+                                            PROT_READ | PROT_WRITE);
+    usbif->conn_sring = xen_be_map_grant_ref(xendev, conn_ring_ref,
+                                             PROT_READ | PROT_WRITE);
     if (!usbif->urb_sring || !usbif->conn_sring) {
         xen_pv_printf(xendev, 0, "error mapping rings\n");
         usbback_disconnect(xendev);
@@ -909,7 +913,8 @@ static int usbback_connect(struct XenDevice *xendev)
     return 0;
 }
 
-static void usbback_backend_changed(struct XenDevice *xendev, const char *node)
+static void usbback_backend_changed(struct XenLegacyDevice *xendev,
+                                    const char *node)
 {
     struct usbback_info *usbif;
     unsigned int i;
@@ -922,7 +927,7 @@ static void usbback_backend_changed(struct XenDevice *xendev, const char *node)
     }
 }
 
-static int usbback_init(struct XenDevice *xendev)
+static int usbback_init(struct XenLegacyDevice *xendev)
 {
     struct usbback_info *usbif;
 
@@ -1001,11 +1006,11 @@ static USBPortOps xen_usb_port_ops = {
 static USBBusOps xen_usb_bus_ops = {
 };
 
-static void usbback_alloc(struct XenDevice *xendev)
+static void usbback_alloc(struct XenLegacyDevice *xendev)
 {
     struct usbback_info *usbif;
     USBPort *p;
-    unsigned int i, max_grants;
+    unsigned int i;
 
     usbif = container_of(xendev, struct usbback_info, xendev);
 
@@ -1021,16 +1026,9 @@ static void usbback_alloc(struct XenDevice *xendev)
     QTAILQ_INIT(&usbif->req_free_q);
     QSIMPLEQ_INIT(&usbif->hotplug_q);
     usbif->bh = qemu_bh_new(usbback_bh, usbif);
-
-    /* max_grants: for each request and for the rings (request and connect). */
-    max_grants = USBIF_MAX_SEGMENTS_PER_REQUEST * USB_URB_RING_SIZE + 2;
-    if (xengnttab_set_max_grants(xendev->gnttabdev, max_grants) < 0) {
-        xen_pv_printf(xendev, 0, "xengnttab_set_max_grants failed: %s\n",
-                      strerror(errno));
-    }
 }
 
-static int usbback_free(struct XenDevice *xendev)
+static int usbback_free(struct XenLegacyDevice *xendev)
 {
     struct usbback_info *usbif;
     struct usbback_req *usbback_req;
@@ -1069,7 +1067,7 @@ static int usbback_free(struct XenDevice *xendev)
     return 0;
 }
 
-static void usbback_event(struct XenDevice *xendev)
+static void usbback_event(struct XenLegacyDevice *xendev)
 {
     struct usbback_info *usbif;
 

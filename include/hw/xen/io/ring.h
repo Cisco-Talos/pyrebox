@@ -65,7 +65,7 @@ typedef unsigned int RING_IDX;
  */
 #define __CONST_RING_SIZE(_s, _sz) \
     (__RD32(((_sz) - offsetof(struct _s##_sring, ring)) / \
-	    sizeof(((struct _s##_sring *)0)->ring[0])))
+            sizeof_field(struct _s##_sring, ring[0])))
 /*
  * The same for passing in an actual pointer instead of a name tag.
  */
@@ -235,8 +235,8 @@ typedef struct __name##_back_ring __name##_back_ring_t
  * to be ineffective where _req is a struct which consists of only bitfields.
  */
 #define RING_COPY_REQUEST(_r, _idx, _req) do {				\
-	/* Use volatile to force the copy into _req. */			\
-	*(_req) = *(volatile typeof(_req))RING_GET_REQUEST(_r, _idx);	\
+        /* Use volatile to force the copy into _req. */			\
+        *(_req) = *(volatile typeof(_req))RING_GET_REQUEST(_r, _idx);	\
 } while (0)
 
 #define RING_GET_RESPONSE(_r, _idx)                                     \

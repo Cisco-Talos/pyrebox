@@ -255,9 +255,9 @@ typedef union {
 /*
  * the generic syntax is:
  *
- * load: ld{type}{sign}{size}{endian}_p(ptr)
+ * load: ld{type}{sign}{size}_{endian}_p(ptr)
  *
- * store: st{type}{size}{endian}_p(ptr, val)
+ * store: st{type}{size}_{endian}_p(ptr, val)
  *
  * Note there are small differences with the softmmu access API!
  *
@@ -290,6 +290,15 @@ typedef union {
  * For accessors that take a guest address rather than a
  * host address, see the cpu_{ld,st}_* accessors defined in
  * cpu_ldst.h.
+ *
+ * For cases where the size to be used is not fixed at compile time,
+ * there are
+ *  stn_{endian}_p(ptr, sz, val)
+ * which stores @val to @ptr as an @endian-order number @sz bytes in size
+ * and
+ *  ldn_{endian}_p(ptr, sz)
+ * which loads @sz bytes from @ptr as an unsigned @endian-order number
+ * and returns it in a uint64_t.
  */
 
 static inline int ldub_p(const void *ptr)
@@ -307,51 +316,57 @@ static inline void stb_p(void *ptr, uint8_t v)
     *(uint8_t *)ptr = v;
 }
 
-/* Any compiler worth its salt will turn these memcpy into native unaligned
-   operations.  Thus we don't need to play games with packed attributes, or
-   inline byte-by-byte stores.  */
+/*
+ * Any compiler worth its salt will turn these memcpy into native unaligned
+ * operations.  Thus we don't need to play games with packed attributes, or
+ * inline byte-by-byte stores.
+ * Some compilation environments (eg some fortify-source implementations)
+ * may intercept memcpy() in a way that defeats the compiler optimization,
+ * though, so we use __builtin_memcpy() to give ourselves the best chance
+ * of good performance.
+ */
 
 static inline int lduw_he_p(const void *ptr)
 {
     uint16_t r;
-    memcpy(&r, ptr, sizeof(r));
+    __builtin_memcpy(&r, ptr, sizeof(r));
     return r;
 }
 
 static inline int ldsw_he_p(const void *ptr)
 {
     int16_t r;
-    memcpy(&r, ptr, sizeof(r));
+    __builtin_memcpy(&r, ptr, sizeof(r));
     return r;
 }
 
 static inline void stw_he_p(void *ptr, uint16_t v)
 {
-    memcpy(ptr, &v, sizeof(v));
+    __builtin_memcpy(ptr, &v, sizeof(v));
 }
 
 static inline int ldl_he_p(const void *ptr)
 {
     int32_t r;
-    memcpy(&r, ptr, sizeof(r));
+    __builtin_memcpy(&r, ptr, sizeof(r));
     return r;
 }
 
 static inline void stl_he_p(void *ptr, uint32_t v)
 {
-    memcpy(ptr, &v, sizeof(v));
+    __builtin_memcpy(ptr, &v, sizeof(v));
 }
 
 static inline uint64_t ldq_he_p(const void *ptr)
 {
     uint64_t r;
-    memcpy(&r, ptr, sizeof(r));
+    __builtin_memcpy(&r, ptr, sizeof(r));
     return r;
 }
 
 static inline void stq_he_p(void *ptr, uint64_t v)
 {
-    memcpy(ptr, &v, sizeof(v));
+    __builtin_memcpy(ptr, &v, sizeof(v));
 }
 
 static inline int lduw_le_p(const void *ptr)
@@ -494,6 +509,49 @@ static inline unsigned long leul_to_cpu(unsigned long v)
 # error Unknown sizeof long
 #endif
 }
+
+/* Store v to p as a sz byte value in host order */
+#define DO_STN_LDN_P(END) \
+    static inline void stn_## END ## _p(void *ptr, int sz, uint64_t v)  \
+    {                                                                   \
+        switch (sz) {                                                   \
+        case 1:                                                         \
+            stb_p(ptr, v);                                              \
+            break;                                                      \
+        case 2:                                                         \
+            stw_ ## END ## _p(ptr, v);                                  \
+            break;                                                      \
+        case 4:                                                         \
+            stl_ ## END ## _p(ptr, v);                                  \
+            break;                                                      \
+        case 8:                                                         \
+            stq_ ## END ## _p(ptr, v);                                  \
+            break;                                                      \
+        default:                                                        \
+            g_assert_not_reached();                                     \
+        }                                                               \
+    }                                                                   \
+    static inline uint64_t ldn_## END ## _p(const void *ptr, int sz)    \
+    {                                                                   \
+        switch (sz) {                                                   \
+        case 1:                                                         \
+            return ldub_p(ptr);                                         \
+        case 2:                                                         \
+            return lduw_ ## END ## _p(ptr);                             \
+        case 4:                                                         \
+            return (uint32_t)ldl_ ## END ## _p(ptr);                    \
+        case 8:                                                         \
+            return ldq_ ## END ## _p(ptr);                              \
+        default:                                                        \
+            g_assert_not_reached();                                     \
+        }                                                               \
+    }
+
+DO_STN_LDN_P(he)
+DO_STN_LDN_P(le)
+DO_STN_LDN_P(be)
+
+#undef DO_STN_LDN_P
 
 #undef le_bswap
 #undef be_bswap

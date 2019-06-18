@@ -55,8 +55,6 @@ typedef struct SiFivePLICState {
     uint32_t *pending;
     uint32_t *claimed;
     uint32_t *enable;
-    QemuMutex lock;
-    qemu_irq *irqs;
 
     /* config */
     char *hart_config;

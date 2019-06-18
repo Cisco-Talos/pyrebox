@@ -3,6 +3,7 @@
 #include "hw/pci/pci.h"
 #include "vga_int.h"
 #include "hw/virtio/virtio-pci.h"
+#include "hw/virtio/virtio-gpu.h"
 #include "qapi/error.h"
 
 /*
@@ -11,6 +12,10 @@
 #define TYPE_VIRTIO_VGA "virtio-vga"
 #define VIRTIO_VGA(obj) \
         OBJECT_CHECK(VirtIOVGA, (obj), TYPE_VIRTIO_VGA)
+#define VIRTIO_VGA_GET_CLASS(obj) \
+        OBJECT_GET_CLASS(VirtIOVGAClass, obj, TYPE_VIRTIO_VGA)
+#define VIRTIO_VGA_CLASS(klass) \
+        OBJECT_CLASS_CHECK(VirtIOVGAClass, klass, TYPE_VIRTIO_VGA)
 
 typedef struct VirtIOVGA {
     VirtIOPCIProxy parent_obj;
@@ -18,6 +23,11 @@ typedef struct VirtIOVGA {
     VGACommonState vga;
     MemoryRegion   vga_mrs[3];
 } VirtIOVGA;
+
+typedef struct VirtIOVGAClass {
+    VirtioPCIClass parent_class;
+    DeviceReset parent_reset;
+} VirtIOVGAClass;
 
 static void virtio_vga_invalidate_display(void *opaque)
 {
@@ -106,7 +116,7 @@ static void virtio_vga_realize(VirtIOPCIProxy *vpci_dev, Error **errp)
 
     /* init vga compat bits */
     vga->vram_size_mb = 8;
-    vga_common_init(vga, OBJECT(vpci_dev), false);
+    vga_common_init(vga, OBJECT(vpci_dev));
     vga_init(vga, OBJECT(vpci_dev), pci_address_space(&vpci_dev->pci_dev),
              pci_address_space_io(&vpci_dev->pci_dev), true);
     pci_register_bar(&vpci_dev->pci_dev, 0,
@@ -152,8 +162,8 @@ static void virtio_vga_realize(VirtIOPCIProxy *vpci_dev, Error **errp)
     }
 
     /* add stdvga mmio regions */
-    pci_std_vga_mmio_region_init(vga, &vpci_dev->modern_bar,
-                                 vvga->vga_mrs, true);
+    pci_std_vga_mmio_region_init(vga, OBJECT(vvga), &vpci_dev->modern_bar,
+                                 vvga->vga_mrs, true, false);
 
     vga->con = g->scanout[0].con;
     graphic_console_set_hwops(vga->con, &virtio_vga_ops, vvga);
@@ -167,9 +177,14 @@ static void virtio_vga_realize(VirtIOPCIProxy *vpci_dev, Error **errp)
 
 static void virtio_vga_reset(DeviceState *dev)
 {
+    VirtIOVGAClass *klass = VIRTIO_VGA_GET_CLASS(dev);
     VirtIOVGA *vvga = VIRTIO_VGA(dev);
-    vvga->vdev.enable = 0;
 
+    /* reset virtio-gpu */
+    klass->parent_reset(dev);
+
+    /* reset vga */
+    vga_common_reset(&vvga->vga);
     vga_dirty_log_start(&vvga->vga);
 }
 
@@ -182,13 +197,15 @@ static void virtio_vga_class_init(ObjectClass *klass, void *data)
 {
     DeviceClass *dc = DEVICE_CLASS(klass);
     VirtioPCIClass *k = VIRTIO_PCI_CLASS(klass);
+    VirtIOVGAClass *v = VIRTIO_VGA_CLASS(klass);
     PCIDeviceClass *pcidev_k = PCI_DEVICE_CLASS(klass);
 
     set_bit(DEVICE_CATEGORY_DISPLAY, dc->categories);
     dc->props = virtio_vga_properties;
-    dc->reset = virtio_vga_reset;
     dc->vmsd = &vmstate_virtio_vga;
     dc->hotpluggable = false;
+    device_class_set_parent_reset(dc, virtio_vga_reset,
+                                  &v->parent_reset);
 
     k->realize = virtio_vga_realize;
     pcidev_k->romfile = "vgabios-virtio.bin";
@@ -203,17 +220,17 @@ static void virtio_vga_inst_initfn(Object *obj)
                                 TYPE_VIRTIO_GPU);
 }
 
-static TypeInfo virtio_vga_info = {
-    .name          = TYPE_VIRTIO_VGA,
-    .parent        = TYPE_VIRTIO_PCI,
+static VirtioPCIDeviceTypeInfo virtio_vga_info = {
+    .generic_name  = TYPE_VIRTIO_VGA,
     .instance_size = sizeof(struct VirtIOVGA),
     .instance_init = virtio_vga_inst_initfn,
+    .class_size    = sizeof(struct VirtIOVGAClass),
     .class_init    = virtio_vga_class_init,
 };
 
 static void virtio_vga_register_types(void)
 {
-    type_register_static(&virtio_vga_info);
+    virtio_pci_types_register(&virtio_vga_info);
 }
 
 type_init(virtio_vga_register_types)

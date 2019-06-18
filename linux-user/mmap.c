@@ -20,7 +20,6 @@
 
 #include "qemu.h"
 #include "qemu-common.h"
-#include "translate-all.h"
 
 //#define DEBUG_MMAP
 
@@ -392,14 +391,23 @@ abi_long target_mmap(abi_ulong start, abi_ulong len, int prot,
     }
 #endif
 
+    if (!len) {
+        errno = EINVAL;
+        goto fail;
+    }
+
+    /* Also check for overflows... */
+    len = TARGET_PAGE_ALIGN(len);
+    if (!len) {
+        errno = ENOMEM;
+        goto fail;
+    }
+
     if (offset & ~TARGET_PAGE_MASK) {
         errno = EINVAL;
         goto fail;
     }
 
-    len = TARGET_PAGE_ALIGN(len);
-    if (len == 0)
-        goto the_end;
     real_start = start & qemu_host_page_mask;
     host_offset = offset & qemu_host_page_mask;
 
@@ -477,11 +485,11 @@ abi_long target_mmap(abi_ulong start, abi_ulong len, int prot,
         end = start + len;
         real_end = HOST_PAGE_ALIGN(end);
 
-	/*
-	 * Test if requested memory area fits target address space
-	 * It can fail only on 64-bit host with 32-bit target.
-	 * On any other target/host host mmap() handles this error correctly.
-	 */
+        /*
+         * Test if requested memory area fits target address space
+         * It can fail only on 64-bit host with 32-bit target.
+         * On any other target/host host mmap() handles this error correctly.
+         */
         if (!guest_range_valid(start, len)) {
             errno = ENOMEM;
             goto fail;

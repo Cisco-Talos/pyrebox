@@ -10,6 +10,7 @@
 # This work is licensed under the terms of the GNU GPL, version 2 or later.
 # See the COPYING file in the top-level directory.
 
+from __future__ import print_function
 import sys
 import struct
 import random
@@ -79,7 +80,7 @@ class QED(object):
 
     def load_l1_table(self):
         self.l1_table = self.read_table(self.header['l1_table_offset'])
-        self.table_nelems = self.header['table_size'] * self.header['cluster_size'] / table_elem_size
+        self.table_nelems = self.header['table_size'] * self.header['cluster_size'] // table_elem_size
 
     def write_table(self, offset, table):
         s = ''.join(pack_table_elem(x) for x in table)
@@ -108,12 +109,12 @@ def corrupt_table_invalidate(qed, table):
 def cmd_show(qed, *args):
     '''show [header|l1|l2 <offset>]- Show header or l1/l2 tables'''
     if not args or args[0] == 'header':
-        print qed.header
+        print(qed.header)
     elif args[0] == 'l1':
-        print qed.l1_table
+        print(qed.l1_table)
     elif len(args) == 2 and args[0] == 'l2':
         offset = int(args[1])
-        print qed.read_table(offset)
+        print(qed.read_table(offset))
     else:
         err('unrecognized sub-command')
 
@@ -146,7 +147,7 @@ def cmd_invalidate(qed, table_level):
 def cmd_need_check(qed, *args):
     '''need-check [on|off] - Test, set, or clear the QED_F_NEED_CHECK header bit'''
     if not args:
-        print bool(qed.header['features'] & QED_F_NEED_CHECK)
+        print(bool(qed.header['features'] & QED_F_NEED_CHECK))
         return
 
     if args[0] == 'on':
@@ -166,14 +167,14 @@ def cmd_zero_cluster(qed, pos, *args):
         n = int(args[0])
 
     for i in xrange(n):
-        l1_index = pos / qed.header['cluster_size'] / len(qed.l1_table)
+        l1_index = pos // qed.header['cluster_size'] // len(qed.l1_table)
         if qed.l1_table[l1_index] == 0:
             err('no l2 table allocated')
 
         l2_offset = qed.l1_table[l1_index]
         l2_table = qed.read_table(l2_offset)
 
-        l2_index = (pos / qed.header['cluster_size']) % len(qed.l1_table)
+        l2_index = (pos // qed.header['cluster_size']) % len(qed.l1_table)
         l2_table[l2_index] = 1 # zero the data cluster
         qed.write_table(l2_offset, l2_table)
         pos += qed.header['cluster_size']
@@ -208,11 +209,11 @@ def cmd_copy_metadata(qed, outfile):
     out.close()
 
 def usage():
-    print 'Usage: %s <file> <cmd> [<arg>, ...]' % sys.argv[0]
-    print
-    print 'Supported commands:'
+    print('Usage: %s <file> <cmd> [<arg>, ...]' % sys.argv[0])
+    print()
+    print('Supported commands:')
     for cmd in sorted(x for x in globals() if x.startswith('cmd_')):
-        print globals()[cmd].__doc__
+        print(globals()[cmd].__doc__)
     sys.exit(1)
 
 def main():

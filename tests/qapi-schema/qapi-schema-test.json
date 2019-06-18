@@ -11,7 +11,7 @@
         'guest-sync' ] } }
 
 { 'struct': 'TestStruct',
-  'data': { 'integer': 'int', 'boolean': 'bool', 'string': 'str' } }
+  'data': { 'integer': {'type': 'int'}, 'boolean': 'bool', 'string': 'str' } }
 
 # for testing enums
 { 'struct': 'NestedEnumsOne',
@@ -39,7 +39,7 @@
             '*enum1': 'EnumOne' } }   # intentional forward reference
 
 { 'enum': 'EnumOne',
-  'data': [ 'value1', 'value2', 'value3' ] }
+  'data': [ 'value1', 'value2', 'value3', 'value4' ] }
 
 { 'struct': 'UserDefZero',
   'data': { 'integer': 'int' } }
@@ -55,6 +55,9 @@
 { 'struct': 'UserDefTwo',
   'data': { 'string0': 'str',
             'dict1': 'UserDefTwoDict' } }
+
+{ 'struct': 'UserDefThree',
+  'data': { 'string0': 'str' } }
 
 # dummy struct to force generation of array types not otherwise mentioned
 { 'struct': 'ForceArrays',
@@ -74,9 +77,11 @@
 { 'union': 'UserDefFlatUnion',
   'base': 'UserDefUnionBase',   # intentional forward reference
   'discriminator': 'enum1',
-  'data': { 'value1' : 'UserDefA',
+  'data': { 'value1' : {'type': 'UserDefA'},
             'value2' : 'UserDefB',
-            'value3' : 'UserDefB' } }
+            'value3' : 'UserDefB'
+            # 'value4' defaults to empty
+  } }
 
 { 'struct': 'UserDefUnionBase',
   'base': 'UserDefZero',
@@ -93,7 +98,7 @@
 { 'struct': 'WrapAlternate',
   'data': { 'alt': 'UserDefAlternate' } }
 { 'alternate': 'UserDefAlternate',
-  'data': { 'udfu': 'UserDefFlatUnion', 'e': 'EnumOne', 'i': 'int',
+  'data': { 'udfu': {'type': 'UserDefFlatUnion'}, 'e': 'EnumOne', 'i': 'int',
             'n': 'null' } }
 
 { 'struct': 'UserDefC',
@@ -108,8 +113,8 @@
 # for testing use of 'str' within alternates
 { 'alternate': 'AltStrObj', 'data': { 's': 'str', 'o': 'TestStruct' } }
 
-# for testing native lists
-{ 'union': 'UserDefNativeListUnion',
+# for testing lists
+{ 'union': 'UserDefListUnion',
   'data': { 'integer': ['int'],
             's8': ['int8'],
             's16': ['int16'],
@@ -123,24 +128,30 @@
             'boolean': ['bool'],
             'string': ['str'],
             'sizes': ['size'],
-            'any': ['any'] } }
+            'any': ['any'],
+            'user': ['Status'] } } # intentional forward ref. to sub-module
+
+# for testing sub-modules
+{ 'include': 'include/sub-module.json' }
 
 # testing commands
 { 'command': 'user_def_cmd', 'data': {} }
 { 'command': 'user_def_cmd1', 'data': {'ud1a': 'UserDefOne'} }
 { 'command': 'user_def_cmd2',
-  'data': {'ud1a': 'UserDefOne', '*ud1b': 'UserDefOne'},
+  'data': {'ud1a': {'type': 'UserDefOne'}, '*ud1b': 'UserDefOne'},
   'returns': 'UserDefTwo' }
+
+{ 'command': 'cmd-success-response', 'data': {}, 'success-response': false }
 
 # Returning a non-dictionary requires a name from the whitelist
 { 'command': 'guest-get-time', 'data': {'a': 'int', '*b': 'int' },
   'returns': 'int' }
 { 'command': 'guest-sync', 'data': { 'arg': 'any' }, 'returns': 'any' }
 { 'command': 'boxed-struct', 'boxed': true, 'data': 'UserDefZero' }
-{ 'command': 'boxed-union', 'data': 'UserDefNativeListUnion', 'boxed': true }
+{ 'command': 'boxed-union', 'data': 'UserDefListUnion', 'boxed': true }
 
-# Smoke test on Out-Of-Band
-{ 'command': 'an-oob-command', 'allow-oob': true }
+# Smoke test on out-of-band and allow-preconfig-test
+{ 'command': 'test-flags-command', 'allow-oob': true, 'allow-preconfig': true }
 
 # For testing integer range flattening in opts-visitor. The following schema
 # corresponds to the option format:
@@ -159,7 +170,7 @@
 
 # testing event
 { 'struct': 'EventStructOne',
-  'data': { 'struct1': 'UserDefOne', 'string': 'str', '*enum2': 'EnumOne' } }
+  'data': { 'struct1': {'type': 'UserDefOne'}, 'string': 'str', '*enum2': 'EnumOne' } }
 
 { 'event': 'EVENT_A' }
 { 'event': 'EVENT_B',
@@ -191,3 +202,43 @@
   'data': { 'a': ['__org.qemu_x-Enum'], 'b': ['__org.qemu_x-Struct'],
             'c': '__org.qemu_x-Union2', 'd': '__org.qemu_x-Alt' },
   'returns': '__org.qemu_x-Union1' }
+
+# test 'if' condition handling
+
+{ 'struct': 'TestIfStruct', 'data':
+  { 'foo': 'int',
+    'bar': { 'type': 'int', 'if': 'defined(TEST_IF_STRUCT_BAR)'} },
+  'if': 'defined(TEST_IF_STRUCT)' }
+
+{ 'enum': 'TestIfEnum', 'data':
+  [ 'foo', { 'name' : 'bar', 'if': 'defined(TEST_IF_ENUM_BAR)' } ],
+  'if': 'defined(TEST_IF_ENUM)' }
+
+{ 'union': 'TestIfUnion', 'data':
+  { 'foo': 'TestStruct',
+    'union_bar': { 'type': 'str', 'if': 'defined(TEST_IF_UNION_BAR)'} },
+  'if': 'defined(TEST_IF_UNION) && defined(TEST_IF_STRUCT)' }
+
+{ 'command': 'TestIfUnionCmd', 'data': { 'union_cmd_arg': 'TestIfUnion' },
+  'if': 'defined(TEST_IF_UNION)' }
+
+{ 'alternate': 'TestIfAlternate', 'data':
+  { 'foo': 'int',
+    'bar': { 'type': 'TestStruct', 'if': 'defined(TEST_IF_ALT_BAR)'} },
+  'if': 'defined(TEST_IF_ALT) && defined(TEST_IF_STRUCT)' }
+
+{ 'command': 'TestIfAlternateCmd', 'data': { 'alt_cmd_arg': 'TestIfAlternate' },
+  'if': 'defined(TEST_IF_ALT)' }
+
+{ 'command': 'TestIfCmd', 'data':
+  { 'foo': 'TestIfStruct',
+    'bar': { 'type': 'TestIfEnum', 'if': 'defined(TEST_IF_CMD_BAR)' } },
+  'returns': 'UserDefThree',
+  'if': ['defined(TEST_IF_CMD)', 'defined(TEST_IF_STRUCT)'] }
+
+{ 'command': 'TestCmdReturnDefThree', 'returns': 'UserDefThree' }
+
+{ 'event': 'TestIfEvent', 'data':
+  { 'foo': 'TestIfStruct',
+    'bar': { 'type': ['TestIfEnum'], 'if': 'defined(TEST_IF_EVT_BAR)' } },
+  'if': 'defined(TEST_IF_EVT) && defined(TEST_IF_STRUCT)' }

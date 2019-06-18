@@ -16,7 +16,51 @@ wrote 65536/65536 bytes at offset 1048576
 === Perform commit job ===
 
 {
+    "timestamp": {
+        "seconds":  TIMESTAMP,
+        "microseconds":  TIMESTAMP
+    },
+    "event": "JOB_STATUS_CHANGE",
+    "data": {
+        "status": "created",
+        "id": "commit0"
+    }
+}
+{
+    "timestamp": {
+        "seconds":  TIMESTAMP,
+        "microseconds":  TIMESTAMP
+    },
+    "event": "JOB_STATUS_CHANGE",
+    "data": {
+        "status": "running",
+        "id": "commit0"
+    }
+}
+{
     "return": {
+    }
+}
+{
+    "timestamp": {
+        "seconds":  TIMESTAMP,
+        "microseconds":  TIMESTAMP
+    },
+    "event": "JOB_STATUS_CHANGE",
+    "data": {
+        "status": "waiting",
+        "id": "commit0"
+    }
+}
+{
+    "timestamp": {
+        "seconds":  TIMESTAMP,
+        "microseconds":  TIMESTAMP
+    },
+    "event": "JOB_STATUS_CHANGE",
+    "data": {
+        "status": "pending",
+        "id": "commit0"
     }
 }
 {
@@ -31,6 +75,28 @@ wrote 65536/65536 bytes at offset 1048576
         "offset": 67108864,
         "speed": 0,
         "type": "commit"
+    }
+}
+{
+    "timestamp": {
+        "seconds":  TIMESTAMP,
+        "microseconds":  TIMESTAMP
+    },
+    "event": "JOB_STATUS_CHANGE",
+    "data": {
+        "status": "concluded",
+        "id": "commit0"
+    }
+}
+{
+    "timestamp": {
+        "seconds":  TIMESTAMP,
+        "microseconds":  TIMESTAMP
+    },
+    "event": "JOB_STATUS_CHANGE",
+    "data": {
+        "status": "null",
+        "id": "commit0"
     }
 }
 
@@ -323,7 +389,8 @@ wrote 65536/65536 bytes at offset 1048576
     },
     "event": "SHUTDOWN",
     "data": {
-        "guest": false
+        "guest": false,
+        "reason": "host-qmp-quit"
     }
 }
 image: TEST_DIR/t.IMGFMT
@@ -356,7 +423,51 @@ wrote 65536/65536 bytes at offset 1048576
 === Perform commit job ===
 
 {
+    "timestamp": {
+        "seconds":  TIMESTAMP,
+        "microseconds":  TIMESTAMP
+    },
+    "event": "JOB_STATUS_CHANGE",
+    "data": {
+        "status": "created",
+        "id": "commit0"
+    }
+}
+{
+    "timestamp": {
+        "seconds":  TIMESTAMP,
+        "microseconds":  TIMESTAMP
+    },
+    "event": "JOB_STATUS_CHANGE",
+    "data": {
+        "status": "running",
+        "id": "commit0"
+    }
+}
+{
     "return": {
+    }
+}
+{
+    "timestamp": {
+        "seconds":  TIMESTAMP,
+        "microseconds":  TIMESTAMP
+    },
+    "event": "JOB_STATUS_CHANGE",
+    "data": {
+        "status": "waiting",
+        "id": "commit0"
+    }
+}
+{
+    "timestamp": {
+        "seconds":  TIMESTAMP,
+        "microseconds":  TIMESTAMP
+    },
+    "event": "JOB_STATUS_CHANGE",
+    "data": {
+        "status": "pending",
+        "id": "commit0"
     }
 }
 {
@@ -371,6 +482,28 @@ wrote 65536/65536 bytes at offset 1048576
         "offset": 67108864,
         "speed": 0,
         "type": "commit"
+    }
+}
+{
+    "timestamp": {
+        "seconds":  TIMESTAMP,
+        "microseconds":  TIMESTAMP
+    },
+    "event": "JOB_STATUS_CHANGE",
+    "data": {
+        "status": "concluded",
+        "id": "commit0"
+    }
+}
+{
+    "timestamp": {
+        "seconds":  TIMESTAMP,
+        "microseconds":  TIMESTAMP
+    },
+    "event": "JOB_STATUS_CHANGE",
+    "data": {
+        "status": "null",
+        "id": "commit0"
     }
 }
 
@@ -674,7 +807,8 @@ wrote 65536/65536 bytes at offset 1048576
     },
     "event": "SHUTDOWN",
     "data": {
-        "guest": false
+        "guest": false,
+        "reason": "host-qmp-quit"
     }
 }
 image: TEST_DIR/t.IMGFMT

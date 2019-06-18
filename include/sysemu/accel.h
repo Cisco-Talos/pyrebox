@@ -40,6 +40,7 @@ typedef struct AccelClass {
     const char *name;
     int (*available)(void);
     int (*init_machine)(MachineState *ms);
+    void (*setup_post)(MachineState *ms, AccelState *accel);
     bool *allowed;
     /*
      * Array of global properties that would be applied when specific
@@ -48,7 +49,7 @@ typedef struct AccelClass {
      * global properties may be overridden by machine-type
      * compat_props or user-provided global properties.
      */
-    GlobalProperty *global_props;
+    GPtrArray *compat_props;
 } AccelClass;
 
 #define TYPE_ACCEL "accel"
@@ -65,8 +66,8 @@ typedef struct AccelClass {
 
 extern unsigned long tcg_tb_size;
 
-void configure_accelerator(MachineState *ms);
-/* Register accelerator specific global properties */
-void accel_register_compat_props(AccelState *accel);
+void configure_accelerator(MachineState *ms, const char *progname);
+/* Called just before os_setup_post (ie just before drop OS privs) */
+void accel_setup_post(MachineState *ms);
 
 #endif

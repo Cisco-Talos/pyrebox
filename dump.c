@@ -29,6 +29,10 @@
 #include "qemu/error-report.h"
 #include "hw/misc/vmcoreinfo.h"
 
+#ifdef TARGET_X86_64
+#include "win_dump.h"
+#endif
+
 #include <zlib.h>
 #ifdef CONFIG_LZO
 #include <lzo/lzo1x.h>
@@ -188,7 +192,7 @@ static void write_elf64_load(DumpState *s, MemoryMapping *memory_mapping,
     phdr.p_paddr = cpu_to_dump64(s, memory_mapping->phys_addr);
     phdr.p_filesz = cpu_to_dump64(s, filesz);
     phdr.p_memsz = cpu_to_dump64(s, memory_mapping->length);
-    phdr.p_vaddr = cpu_to_dump64(s, memory_mapping->virt_addr);
+    phdr.p_vaddr = cpu_to_dump64(s, memory_mapping->virt_addr) ?: phdr.p_paddr;
 
     assert(memory_mapping->length >= filesz);
 
@@ -212,7 +216,8 @@ static void write_elf32_load(DumpState *s, MemoryMapping *memory_mapping,
     phdr.p_paddr = cpu_to_dump32(s, memory_mapping->phys_addr);
     phdr.p_filesz = cpu_to_dump32(s, filesz);
     phdr.p_memsz = cpu_to_dump32(s, memory_mapping->length);
-    phdr.p_vaddr = cpu_to_dump32(s, memory_mapping->virt_addr);
+    phdr.p_vaddr =
+        cpu_to_dump32(s, memory_mapping->virt_addr) ?: phdr.p_paddr;
 
     assert(memory_mapping->length >= filesz);
 
@@ -1553,7 +1558,7 @@ static void get_max_mapnr(DumpState *s)
 {
     GuestPhysBlock *last_block;
 
-    last_block = QTAILQ_LAST(&s->guest_phys_blocks.head, GuestPhysBlockHead);
+    last_block = QTAILQ_LAST(&s->guest_phys_blocks.head);
     s->max_mapnr = dump_paddr_to_pfn(s, last_block->target_end);
 }
 
@@ -1738,7 +1743,7 @@ static void dump_init(DumpState *s, int fd, bool has_format,
             warn_report("guest note is not present");
         } else if (size < note_head_size || size > MAX_GUEST_NOTE_SIZE) {
             warn_report("guest note size is invalid: %" PRIu32, size);
-        } else if (format != VMCOREINFO_FORMAT_ELF) {
+        } else if (format != FW_CFG_VMCOREINFO_FORMAT_ELF) {
             warn_report("guest note format is unsupported: %" PRIu16, format);
         } else {
             s->guest_note = g_malloc(size + 1); /* +1 for adding \0 */
@@ -1866,7 +1871,11 @@ static void dump_process(DumpState *s, Error **errp)
     Error *local_err = NULL;
     DumpQueryResult *result = NULL;
 
-    if (s->has_format && s->format != DUMP_GUEST_MEMORY_FORMAT_ELF) {
+    if (s->has_format && s->format == DUMP_GUEST_MEMORY_FORMAT_WIN_DMP) {
+#ifdef TARGET_X86_64
+        create_win_dump(s, &local_err);
+#endif
+    } else if (s->has_format && s->format != DUMP_GUEST_MEMORY_FORMAT_ELF) {
         create_kdump_vmcore(s, &local_err);
     } else {
         create_vmcore(s, &local_err);
@@ -1882,8 +1891,7 @@ static void dump_process(DumpState *s, Error **errp)
     /* should never fail */
     assert(result);
     qapi_event_send_dump_completed(result, !!local_err, (local_err ? \
-                                   error_get_pretty(local_err) : NULL),
-                                   &error_abort);
+                                   error_get_pretty(local_err) : NULL));
     qapi_free_DumpQueryResult(result);
 
     error_propagate(errp, local_err);
@@ -1970,6 +1978,13 @@ void qmp_dump_guest_memory(bool paging, const char *file,
     }
 #endif
 
+#ifndef TARGET_X86_64
+    if (has_format && format == DUMP_GUEST_MEMORY_FORMAT_WIN_DMP) {
+        error_setg(errp, "Windows dump is only available for x86-64");
+        return;
+    }
+#endif
+
 #if !defined(WIN32)
     if (strstart(file, "fd:", &p)) {
         fd = monitor_get_fd(cur_mon, p, errp);
@@ -2042,6 +2057,13 @@ DumpGuestMemoryCapability *qmp_query_dump_guest_memory_capability(Error **errp)
     item->next = g_malloc0(sizeof(DumpGuestMemoryFormatList));
     item = item->next;
     item->value = DUMP_GUEST_MEMORY_FORMAT_KDUMP_SNAPPY;
+#endif
+
+    /* Windows dump is available only if target is x86_64 */
+#ifdef TARGET_X86_64
+    item->next = g_malloc0(sizeof(DumpGuestMemoryFormatList));
+    item = item->next;
+    item->value = DUMP_GUEST_MEMORY_FORMAT_WIN_DMP;
 #endif
 
     return cap;

@@ -28,8 +28,7 @@
 
 #include "qemu/queue.h"
 
-const char *get_opt_name(char *buf, int buf_size, const char *p, char delim);
-const char *get_opt_value(char *buf, int buf_size, const char *p);
+const char *get_opt_value(const char *p, char **value);
 
 void parse_option_size(const char *name, const char *value,
                        uint64_t *ret, Error **errp);
@@ -133,7 +132,7 @@ typedef int (*qemu_opts_loopfunc)(void *opaque, QemuOpts *opts, Error **errp);
 int qemu_opts_foreach(QemuOptsList *list, qemu_opts_loopfunc func,
                       void *opaque, Error **errp);
 void qemu_opts_print(QemuOpts *opts, const char *sep);
-void qemu_opts_print_help(QemuOptsList *list);
+void qemu_opts_print_help(QemuOptsList *list, bool print_caption);
 void qemu_opts_free(QemuOptsList *list);
 QemuOptsList *qemu_opts_append(QemuOptsList *dst, QemuOptsList *list);
 

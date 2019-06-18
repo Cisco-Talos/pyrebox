@@ -11,7 +11,7 @@
 
 #include "qemu/osdep.h"
 
-#include "hw/xen/xen_backend.h"
+#include "hw/xen/xen-legacy-backend.h"
 #include "xen_pt.h"
 #include "hw/i386/apic-msidef.h"
 
@@ -498,7 +498,8 @@ static uint64_t pci_msix_read(void *opaque, hwaddr addr,
 }
 
 static bool pci_msix_accepts(void *opaque, hwaddr addr,
-                             unsigned size, bool is_write)
+                             unsigned size, bool is_write,
+                             MemTxAttrs attrs)
 {
     return !(addr & (size - 1));
 }

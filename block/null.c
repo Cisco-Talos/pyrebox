@@ -93,11 +93,8 @@ static int null_file_open(BlockDriverState *bs, QDict *options, int flags,
     }
     s->read_zeroes = qemu_opt_get_bool(opts, NULL_OPT_ZEROES, false);
     qemu_opts_del(opts);
+    bs->supported_write_flags = BDRV_REQ_FUA;
     return ret;
-}
-
-static void null_close(BlockDriverState *bs)
-{
 }
 
 static int64_t null_getlength(BlockDriverState *bs)
@@ -116,22 +113,22 @@ static coroutine_fn int null_co_common(BlockDriverState *bs)
     return 0;
 }
 
-static coroutine_fn int null_co_readv(BlockDriverState *bs,
-                                      int64_t sector_num, int nb_sectors,
-                                      QEMUIOVector *qiov)
+static coroutine_fn int null_co_preadv(BlockDriverState *bs,
+                                       uint64_t offset, uint64_t bytes,
+                                       QEMUIOVector *qiov, int flags)
 {
     BDRVNullState *s = bs->opaque;
 
     if (s->read_zeroes) {
-        qemu_iovec_memset(qiov, 0, 0, nb_sectors * BDRV_SECTOR_SIZE);
+        qemu_iovec_memset(qiov, 0, 0, bytes);
     }
 
     return null_co_common(bs);
 }
 
-static coroutine_fn int null_co_writev(BlockDriverState *bs,
-                                       int64_t sector_num, int nb_sectors,
-                                       QEMUIOVector *qiov)
+static coroutine_fn int null_co_pwritev(BlockDriverState *bs,
+                                        uint64_t offset, uint64_t bytes,
+                                        QEMUIOVector *qiov, int flags)
 {
     return null_co_common(bs);
 }
@@ -186,26 +183,26 @@ static inline BlockAIOCB *null_aio_common(BlockDriverState *bs,
     return &acb->common;
 }
 
-static BlockAIOCB *null_aio_readv(BlockDriverState *bs,
-                                  int64_t sector_num, QEMUIOVector *qiov,
-                                  int nb_sectors,
-                                  BlockCompletionFunc *cb,
-                                  void *opaque)
+static BlockAIOCB *null_aio_preadv(BlockDriverState *bs,
+                                   uint64_t offset, uint64_t bytes,
+                                   QEMUIOVector *qiov, int flags,
+                                   BlockCompletionFunc *cb,
+                                   void *opaque)
 {
     BDRVNullState *s = bs->opaque;
 
     if (s->read_zeroes) {
-        qemu_iovec_memset(qiov, 0, 0, nb_sectors * BDRV_SECTOR_SIZE);
+        qemu_iovec_memset(qiov, 0, 0, bytes);
     }
 
     return null_aio_common(bs, cb, opaque);
 }
 
-static BlockAIOCB *null_aio_writev(BlockDriverState *bs,
-                                   int64_t sector_num, QEMUIOVector *qiov,
-                                   int nb_sectors,
-                                   BlockCompletionFunc *cb,
-                                   void *opaque)
+static BlockAIOCB *null_aio_pwritev(BlockDriverState *bs,
+                                    uint64_t offset, uint64_t bytes,
+                                    QEMUIOVector *qiov, int flags,
+                                    BlockCompletionFunc *cb,
+                                    void *opaque)
 {
     return null_aio_common(bs, cb, opaque);
 }
@@ -242,19 +239,32 @@ static int coroutine_fn null_co_block_status(BlockDriverState *bs,
     return ret;
 }
 
-static void null_refresh_filename(BlockDriverState *bs, QDict *opts)
+static void null_refresh_filename(BlockDriverState *bs)
 {
-    QINCREF(opts);
-    qdict_del(opts, "filename");
+    const QDictEntry *e;
 
-    if (!qdict_size(opts)) {
-        snprintf(bs->exact_filename, sizeof(bs->exact_filename), "%s://",
-                 bs->drv->format_name);
+    for (e = qdict_first(bs->full_open_options); e;
+         e = qdict_next(bs->full_open_options, e))
+    {
+        /* These options can be ignored */
+        if (strcmp(qdict_entry_key(e), "filename") &&
+            strcmp(qdict_entry_key(e), "driver") &&
+            strcmp(qdict_entry_key(e), NULL_OPT_LATENCY))
+        {
+            return;
+        }
     }
 
-    qdict_put_str(opts, "driver", bs->drv->format_name);
-    bs->full_open_options = opts;
+    snprintf(bs->exact_filename, sizeof(bs->exact_filename), "%s://",
+             bs->drv->format_name);
 }
+
+static const char *const null_strong_runtime_opts[] = {
+    BLOCK_OPT_SIZE,
+    NULL_OPT_ZEROES,
+
+    NULL
+};
 
 static BlockDriver bdrv_null_co = {
     .format_name            = "null-co",
@@ -263,17 +273,17 @@ static BlockDriver bdrv_null_co = {
 
     .bdrv_file_open         = null_file_open,
     .bdrv_parse_filename    = null_co_parse_filename,
-    .bdrv_close             = null_close,
     .bdrv_getlength         = null_getlength,
 
-    .bdrv_co_readv          = null_co_readv,
-    .bdrv_co_writev         = null_co_writev,
+    .bdrv_co_preadv         = null_co_preadv,
+    .bdrv_co_pwritev        = null_co_pwritev,
     .bdrv_co_flush_to_disk  = null_co_flush,
     .bdrv_reopen_prepare    = null_reopen_prepare,
 
     .bdrv_co_block_status   = null_co_block_status,
 
     .bdrv_refresh_filename  = null_refresh_filename,
+    .strong_runtime_opts    = null_strong_runtime_opts,
 };
 
 static BlockDriver bdrv_null_aio = {
@@ -283,17 +293,17 @@ static BlockDriver bdrv_null_aio = {
 
     .bdrv_file_open         = null_file_open,
     .bdrv_parse_filename    = null_aio_parse_filename,
-    .bdrv_close             = null_close,
     .bdrv_getlength         = null_getlength,
 
-    .bdrv_aio_readv         = null_aio_readv,
-    .bdrv_aio_writev        = null_aio_writev,
+    .bdrv_aio_preadv        = null_aio_preadv,
+    .bdrv_aio_pwritev       = null_aio_pwritev,
     .bdrv_aio_flush         = null_aio_flush,
     .bdrv_reopen_prepare    = null_reopen_prepare,
 
     .bdrv_co_block_status   = null_co_block_status,
 
     .bdrv_refresh_filename  = null_refresh_filename,
+    .strong_runtime_opts    = null_strong_runtime_opts,
 };
 
 static void bdrv_null_init(void)

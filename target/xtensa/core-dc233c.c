@@ -27,7 +27,6 @@
 
 #include "qemu/osdep.h"
 #include "cpu.h"
-#include "exec/exec-all.h"
 #include "exec/gdbstub.h"
 #include "qemu-common.h"
 #include "qemu/host-utils.h"
@@ -41,8 +40,6 @@
 static XtensaConfig dc233c __attribute__((unused)) = {
     .name = "dc233c",
     .gdb_regmap = {
-        .num_regs = 121,
-        .num_core_regs = 52,
         .reg = {
 #include "core-dc233c/gdb-config.inc.c"
         }

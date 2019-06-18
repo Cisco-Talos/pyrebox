@@ -11,8 +11,11 @@
 #include "qemu/thread.h"
 #include "qemu/qdist.h"
 
+typedef bool (*qht_cmp_func_t)(const void *a, const void *b);
+
 struct qht {
     struct qht_map *map;
+    qht_cmp_func_t cmp;
     QemuMutex lock; /* serializes setters of ht->map */
     unsigned int mode;
 };
@@ -40,17 +43,21 @@ struct qht_stats {
 };
 
 typedef bool (*qht_lookup_func_t)(const void *obj, const void *userp);
-typedef void (*qht_iter_func_t)(struct qht *ht, void *p, uint32_t h, void *up);
+typedef void (*qht_iter_func_t)(void *p, uint32_t h, void *up);
+typedef bool (*qht_iter_bool_func_t)(void *p, uint32_t h, void *up);
 
 #define QHT_MODE_AUTO_RESIZE 0x1 /* auto-resize when heavily loaded */
+#define QHT_MODE_RAW_MUTEXES 0x2 /* bypass the profiler (QSP) */
 
 /**
  * qht_init - Initialize a QHT
  * @ht: QHT to be initialized
+ * @cmp: default comparison function. Cannot be NULL.
  * @n_elems: number of entries the hash table should be optimized for.
  * @mode: bitmask with OR'ed QHT_MODE_*
  */
-void qht_init(struct qht *ht, size_t n_elems, unsigned int mode);
+void qht_init(struct qht *ht, qht_cmp_func_t cmp, size_t n_elems,
+              unsigned int mode);
 
 /**
  * qht_destroy - destroy a previously initialized QHT
@@ -65,6 +72,7 @@ void qht_destroy(struct qht *ht);
  * @ht: QHT to insert to
  * @p: pointer to be inserted
  * @hash: hash corresponding to @p
+ * @existing: address where the pointer to an existing entry can be copied to
  *
  * Attempting to insert a NULL @p is a bug.
  * Inserting the same pointer @p with different @hash values is a bug.
@@ -73,16 +81,18 @@ void qht_destroy(struct qht *ht);
  * inserted into the hash table.
  *
  * Returns true on success.
- * Returns false if the @p-@hash pair already exists in the hash table.
+ * Returns false if there is an existing entry in the table that is equivalent
+ * (i.e. ht->cmp matches and the hash is the same) to @p-@h. If @existing
+ * is !NULL, a pointer to this existing entry is copied to it.
  */
-bool qht_insert(struct qht *ht, void *p, uint32_t hash);
+bool qht_insert(struct qht *ht, void *p, uint32_t hash, void **existing);
 
 /**
- * qht_lookup - Look up a pointer in a QHT
+ * qht_lookup_custom - Look up a pointer using a custom comparison function.
  * @ht: QHT to be looked up
- * @func: function to compare existing pointers against @userp
  * @userp: pointer to pass to @func
  * @hash: hash of the pointer to be looked up
+ * @func: function to compare existing pointers against @userp
  *
  * Needs to be called under an RCU read-critical section.
  *
@@ -94,8 +104,18 @@ bool qht_insert(struct qht *ht, void *p, uint32_t hash);
  * Returns the corresponding pointer when a match is found.
  * Returns NULL otherwise.
  */
-void *qht_lookup(struct qht *ht, qht_lookup_func_t func, const void *userp,
-                 uint32_t hash);
+void *qht_lookup_custom(const struct qht *ht, const void *userp, uint32_t hash,
+                        qht_lookup_func_t func);
+
+/**
+ * qht_lookup - Look up a pointer in a QHT
+ * @ht: QHT to be looked up
+ * @userp: pointer to pass to the comparison function
+ * @hash: hash of the pointer to be looked up
+ *
+ * Calls qht_lookup_custom() using @ht's default comparison function.
+ */
+void *qht_lookup(const struct qht *ht, const void *userp, uint32_t hash);
 
 /**
  * qht_remove - remove a pointer from the hash table
@@ -160,8 +180,25 @@ bool qht_resize(struct qht *ht, size_t n_elems);
  *
  * Each time it is called, user-provided @func is passed a pointer-hash pair,
  * plus @userp.
+ *
+ * Note: @ht cannot be accessed from @func
+ * See also: qht_iter_remove()
  */
 void qht_iter(struct qht *ht, qht_iter_func_t func, void *userp);
+
+/**
+ * qht_iter_remove - Iterate over a QHT, optionally removing entries
+ * @ht: QHT to be iterated over
+ * @func: function to be called for each entry in QHT
+ * @userp: additional pointer to be passed to @func
+ *
+ * Each time it is called, user-provided @func is passed a pointer-hash pair,
+ * plus @userp. If @func returns true, the pointer-hash pair is removed.
+ *
+ * Note: @ht cannot be accessed from @func
+ * See also: qht_iter()
+ */
+void qht_iter_remove(struct qht *ht, qht_iter_bool_func_t func, void *userp);
 
 /**
  * qht_statistics_init - Gather statistics from a QHT
@@ -174,7 +211,7 @@ void qht_iter(struct qht *ht, qht_iter_func_t func, void *userp);
  * When done with @stats, pass the struct to qht_statistics_destroy().
  * Failing to do this will leak memory.
  */
-void qht_statistics_init(struct qht *ht, struct qht_stats *stats);
+void qht_statistics_init(const struct qht *ht, struct qht_stats *stats);
 
 /**
  * qht_statistics_destroy - Destroy a &struct qht_stats

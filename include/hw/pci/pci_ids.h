@@ -255,7 +255,7 @@
 #define PCI_DEVICE_ID_INTEL_82801I_EHCI2 0x293c
 #define PCI_DEVICE_ID_INTEL_82599_SFP_VF 0x10ed
 
-#define PCI_DEVICE_ID_INTEL_Q35_MCH      0x29c0
+#define PCI_DEVICE_ID_INTEL_P35_MCH      0x29c0
 
 #define PCI_VENDOR_ID_XEN                0x5853
 #define PCI_DEVICE_ID_XEN_PLATFORM       0x0001
@@ -270,5 +270,7 @@
 #define PCI_DEVICE_ID_VMWARE_PVRDMA      0x0820
 
 #define PCI_VENDOR_ID_SYNOPSYS           0x16C3
+
+#define PCI_VENDOR_ID_NVIDIA             0x10de
 
 #endif

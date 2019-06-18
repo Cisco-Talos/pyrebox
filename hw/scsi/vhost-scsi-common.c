@@ -17,7 +17,6 @@
 
 #include "qemu/osdep.h"
 #include "qemu/error-report.h"
-#include "migration/migration.h"
 #include "hw/virtio/vhost.h"
 #include "hw/virtio/vhost-scsi-common.h"
 #include "hw/virtio/virtio-scsi.h"
@@ -96,6 +95,9 @@ uint64_t vhost_scsi_common_get_features(VirtIODevice *vdev, uint64_t features,
                                         Error **errp)
 {
     VHostSCSICommon *vsc = VHOST_SCSI_COMMON(vdev);
+
+    /* Turn on predefined features supported by this device */
+    features |= vsc->host_features;
 
     return vhost_get_features(&vsc->dev, vsc->feature_bits, features);
 }

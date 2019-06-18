@@ -1,3 +1,4 @@
+from __future__ import print_function
 # Common utilities and Python wrappers for qemu-iotests
 #
 # Copyright (C) 2012 IBM Corp.
@@ -28,9 +29,11 @@ import json
 import signal
 import logging
 import atexit
+import io
+from collections import OrderedDict
 
-sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', 'scripts'))
-import qtest
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', 'python'))
+from qemu import qtest
 
 
 # This will not work if arguments contain spaces but is necessary if we
@@ -61,7 +64,7 @@ socket_scm_helper = os.environ.get('SOCKET_SCM_HELPER', 'socket_scm_helper')
 debug = False
 
 luks_default_secret_object = 'secret,id=keysec0,data=' + \
-                             os.environ['IMGKEYSECRET']
+                             os.environ.get('IMGKEYSECRET', '')
 luks_default_key_secret_opt = 'key-secret=keysec0'
 
 
@@ -72,6 +75,19 @@ def qemu_img(*args):
     if exitcode < 0:
         sys.stderr.write('qemu-img received signal %i: %s\n' % (-exitcode, ' '.join(qemu_img_args + list(args))))
     return exitcode
+
+def ordered_qmp(qmsg, conv_keys=True):
+    # Dictionaries are not ordered prior to 3.6, therefore:
+    if isinstance(qmsg, list):
+        return [ordered_qmp(atom) for atom in qmsg]
+    if isinstance(qmsg, dict):
+        od = OrderedDict()
+        for k, v in sorted(qmsg.items()):
+            if conv_keys:
+                k = k.replace('_', '-')
+            od[k] = ordered_qmp(v, conv_keys=False)
+        return od
+    return qmsg
 
 def qemu_img_create(*args):
     args = list(args)
@@ -103,21 +119,46 @@ def qemu_img_pipe(*args):
     '''Run qemu-img and return its output'''
     subp = subprocess.Popen(qemu_img_args + list(args),
                             stdout=subprocess.PIPE,
-                            stderr=subprocess.STDOUT)
+                            stderr=subprocess.STDOUT,
+                            universal_newlines=True)
     exitcode = subp.wait()
     if exitcode < 0:
         sys.stderr.write('qemu-img received signal %i: %s\n' % (-exitcode, ' '.join(qemu_img_args + list(args))))
     return subp.communicate()[0]
 
+def img_info_log(filename, filter_path=None, imgopts=False, extra_args=[]):
+    args = [ 'info' ]
+    if imgopts:
+        args.append('--image-opts')
+    else:
+        args += [ '-f', imgfmt ]
+    args += extra_args
+    args.append(filename)
+
+    output = qemu_img_pipe(*args)
+    if not filter_path:
+        filter_path = filename
+    log(filter_img_info(output, filter_path))
+
 def qemu_io(*args):
     '''Run qemu-io and return the stdout data'''
     args = qemu_io_args + list(args)
     subp = subprocess.Popen(args, stdout=subprocess.PIPE,
-                            stderr=subprocess.STDOUT)
+                            stderr=subprocess.STDOUT,
+                            universal_newlines=True)
     exitcode = subp.wait()
     if exitcode < 0:
         sys.stderr.write('qemu-io received signal %i: %s\n' % (-exitcode, ' '.join(args)))
     return subp.communicate()[0]
+
+def qemu_io_silent(*args):
+    '''Run qemu-io and return the exit code, suppressing stdout'''
+    args = qemu_io_args + list(args)
+    exitcode = subprocess.call(args, stdout=open('/dev/null', 'w'))
+    if exitcode < 0:
+        sys.stderr.write('qemu-io received signal %i: %s\n' %
+                         (-exitcode, ' '.join(args)))
+    return exitcode
 
 
 class QemuIoInteractive:
@@ -125,7 +166,8 @@ class QemuIoInteractive:
         self.args = qemu_io_args + list(args)
         self._p = subprocess.Popen(self.args, stdin=subprocess.PIPE,
                                    stdout=subprocess.PIPE,
-                                   stderr=subprocess.STDOUT)
+                                   stderr=subprocess.STDOUT,
+                                   universal_newlines=True)
         assert self._p.stdout.read(9) == 'qemu-io> '
 
     def close(self):
@@ -154,12 +196,27 @@ class QemuIoInteractive:
         cmd = cmd.strip()
         assert cmd != 'q' and cmd != 'quit'
         self._p.stdin.write(cmd + '\n')
+        self._p.stdin.flush()
         return self._read_output()
 
 
 def qemu_nbd(*args):
     '''Run qemu-nbd in daemon mode and return the parent's exit code'''
     return subprocess.call(qemu_nbd_args + ['--fork'] + list(args))
+
+def qemu_nbd_pipe(*args):
+    '''Run qemu-nbd in daemon mode and return both the parent's exit code
+       and its output'''
+    subp = subprocess.Popen(qemu_nbd_args + ['--fork'] + list(args),
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT,
+                            universal_newlines=True)
+    exitcode = subp.wait()
+    if exitcode < 0:
+        sys.stderr.write('qemu-nbd received signal %i: %s\n' %
+                         (-exitcode,
+                          ' '.join(qemu_nbd_args + ['--fork'] + list(args))))
+    return exitcode, subp.communicate()[0]
 
 def compare_images(img1, img2, fmt1=imgfmt, fmt2=imgfmt):
     '''Return True if two image files are identical'''
@@ -168,10 +225,10 @@ def compare_images(img1, img2, fmt1=imgfmt, fmt2=imgfmt):
 
 def create_image(name, size):
     '''Create a fully-allocated raw image with sector markers'''
-    file = open(name, 'w')
+    file = open(name, 'wb')
     i = 0
     while i < size:
-        sector = struct.pack('>l504xl', i / 512, i / 512)
+        sector = struct.pack('>l504xl', i // 512, i // 512)
         file.write(sector)
         i = i + 512
     file.close()
@@ -180,6 +237,12 @@ def image_size(img):
     '''Return image's virtual size'''
     r = qemu_img_pipe('info', '--output=json', '-f', imgfmt, img)
     return json.loads(r)['virtual-size']
+
+def is_str(val):
+    if sys.version_info.major >= 3:
+        return isinstance(val, str)
+    else:
+        return isinstance(val, str) or isinstance(val, unicode)
 
 test_dir_re = re.compile(r"%s" % test_dir)
 def filter_test_dir(msg):
@@ -206,10 +269,73 @@ def filter_qmp_event(event):
         event['timestamp']['microseconds'] = 'USECS'
     return event
 
-def log(msg, filters=[]):
+def filter_qmp(qmsg, filter_fn):
+    '''Given a string filter, filter a QMP object's values.
+    filter_fn takes a (key, value) pair.'''
+    # Iterate through either lists or dicts;
+    if isinstance(qmsg, list):
+        items = enumerate(qmsg)
+    else:
+        items = qmsg.items()
+
+    for k, v in items:
+        if isinstance(v, list) or isinstance(v, dict):
+            qmsg[k] = filter_qmp(v, filter_fn)
+        else:
+            qmsg[k] = filter_fn(k, v)
+    return qmsg
+
+def filter_testfiles(msg):
+    prefix = os.path.join(test_dir, "%s-" % (os.getpid()))
+    return msg.replace(prefix, 'TEST_DIR/PID-')
+
+def filter_qmp_testfiles(qmsg):
+    def _filter(key, value):
+        if is_str(value):
+            return filter_testfiles(value)
+        return value
+    return filter_qmp(qmsg, _filter)
+
+def filter_generated_node_ids(msg):
+    return re.sub("#block[0-9]+", "NODE_NAME", msg)
+
+def filter_img_info(output, filename):
+    lines = []
+    for line in output.split('\n'):
+        if 'disk size' in line or 'actual-size' in line:
+            continue
+        line = line.replace(filename, 'TEST_IMG') \
+                   .replace(imgfmt, 'IMGFMT')
+        line = re.sub('iters: [0-9]+', 'iters: XXX', line)
+        line = re.sub('uuid: [-a-f0-9]+', 'uuid: XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX', line)
+        line = re.sub('cid: [0-9]+', 'cid: XXXXXXXXXX', line)
+        lines.append(line)
+    return '\n'.join(lines)
+
+def filter_imgfmt(msg):
+    return msg.replace(imgfmt, 'IMGFMT')
+
+def filter_qmp_imgfmt(qmsg):
+    def _filter(key, value):
+        if is_str(value):
+            return filter_imgfmt(value)
+        return value
+    return filter_qmp(qmsg, _filter)
+
+def log(msg, filters=[], indent=None):
+    '''Logs either a string message or a JSON serializable message (like QMP).
+    If indent is provided, JSON serializable messages are pretty-printed.'''
     for flt in filters:
         msg = flt(msg)
-    print msg
+    if isinstance(msg, dict) or isinstance(msg, list):
+        # Python < 3.4 needs to know not to add whitespace when pretty-printing:
+        separators = (', ', ': ') if indent is None else (',', ': ')
+        # Don't sort if it's already sorted
+        do_sort = not isinstance(msg, OrderedDict)
+        print(json.dumps(msg, sort_keys=do_sort,
+                         indent=indent, separators=separators))
+    else:
+        print(msg)
 
 class Timeout:
     def __init__(self, seconds, errmsg = "Timeout"):
@@ -281,6 +407,13 @@ def file_path(*names):
 
     return paths[0] if len(paths) == 1 else paths
 
+def remote_filename(path):
+    if imgproto == 'file':
+        return path
+    elif imgproto == 'ssh':
+        return "ssh://127.0.0.1%s" % (path)
+    else:
+        raise Exception("Protocol %s not supported" % (imgproto))
 
 class VM(qtest.QEMUQtestMachine):
     '''A QEMU VM'''
@@ -363,6 +496,71 @@ class VM(qtest.QEMUQtestMachine):
         return self.qmp('human-monitor-command',
                         command_line='qemu-io %s "%s"' % (drive, cmd))
 
+    def flatten_qmp_object(self, obj, output=None, basestr=''):
+        if output is None:
+            output = dict()
+        if isinstance(obj, list):
+            for i in range(len(obj)):
+                self.flatten_qmp_object(obj[i], output, basestr + str(i) + '.')
+        elif isinstance(obj, dict):
+            for key in obj:
+                self.flatten_qmp_object(obj[key], output, basestr + key + '.')
+        else:
+            output[basestr[:-1]] = obj # Strip trailing '.'
+        return output
+
+    def qmp_to_opts(self, obj):
+        obj = self.flatten_qmp_object(obj)
+        output_list = list()
+        for key in obj:
+            output_list += [key + '=' + obj[key]]
+        return ','.join(output_list)
+
+    def get_qmp_events_filtered(self, wait=True):
+        result = []
+        for ev in self.get_qmp_events(wait=wait):
+            result.append(filter_qmp_event(ev))
+        return result
+
+    def qmp_log(self, cmd, filters=[], indent=None, **kwargs):
+        full_cmd = OrderedDict((
+            ("execute", cmd),
+            ("arguments", ordered_qmp(kwargs))
+        ))
+        log(full_cmd, filters, indent=indent)
+        result = self.qmp(cmd, **kwargs)
+        log(result, filters, indent=indent)
+        return result
+
+    # Returns None on success, and an error string on failure
+    def run_job(self, job, auto_finalize=True, auto_dismiss=False):
+        error = None
+        while True:
+            for ev in self.get_qmp_events_filtered(wait=True):
+                if ev['event'] == 'JOB_STATUS_CHANGE':
+                    status = ev['data']['status']
+                    if status == 'aborting':
+                        result = self.qmp('query-jobs')
+                        for j in result['return']:
+                            if j['id'] == job:
+                                error = j['error']
+                                log('Job failed: %s' % (j['error']))
+                    elif status == 'pending' and not auto_finalize:
+                        self.qmp_log('job-finalize', id=job)
+                    elif status == 'concluded' and not auto_dismiss:
+                        self.qmp_log('job-dismiss', id=job)
+                    elif status == 'null':
+                        return error
+                else:
+                    iotests.log(ev)
+
+    def node_info(self, node_name):
+        nodes = self.qmp('query-named-block-nodes')
+        for x in nodes['return']:
+            if x['node-name'] == node_name:
+                return x
+        return None
+
 
 index_re = re.compile(r'([^\[]+)\[([^\]]+)\]')
 
@@ -389,26 +587,6 @@ class QMPTestCase(unittest.TestCase):
                 except IndexError:
                     self.fail('invalid index "%s" in path "%s" in "%s"' % (idx, path, str(d)))
         return d
-
-    def flatten_qmp_object(self, obj, output=None, basestr=''):
-        if output is None:
-            output = dict()
-        if isinstance(obj, list):
-            for i in range(len(obj)):
-                self.flatten_qmp_object(obj[i], output, basestr + str(i) + '.')
-        elif isinstance(obj, dict):
-            for key in obj:
-                self.flatten_qmp_object(obj[key], output, basestr + key + '.')
-        else:
-            output[basestr[:-1]] = obj # Strip trailing '.'
-        return output
-
-    def qmp_to_opts(self, obj):
-        obj = self.flatten_qmp_object(obj)
-        output_list = list()
-        for key in obj:
-            output_list += [key + '=' + obj[key]]
-        return ','.join(output_list)
 
     def assert_qmp_absent(self, d, path):
         try:
@@ -444,8 +622,8 @@ class QMPTestCase(unittest.TestCase):
         '''Asserts that the given filename is a json: filename and that its
            content is equal to the given reference object'''
         self.assertEqual(json_filename[:5], 'json:')
-        self.assertEqual(self.flatten_qmp_object(json.loads(json_filename[5:])),
-                         self.flatten_qmp_object(reference))
+        self.assertEqual(self.vm.flatten_qmp_object(json.loads(json_filename[5:])),
+                         self.vm.flatten_qmp_object(reference))
 
     def cancel_and_wait(self, drive='drive0', force=False, resume=False):
         '''Cancel a block job and wait for it to finish, returning the event'''
@@ -464,6 +642,9 @@ class QMPTestCase(unittest.TestCase):
                     self.assert_qmp(event, 'data/device', drive)
                     result = event
                     cancelled = True
+                elif event['event'] == 'JOB_STATUS_CHANGE':
+                    self.assert_qmp(event, 'data/id', drive)
+
 
         self.assert_no_active_block_jobs()
         return result
@@ -479,6 +660,8 @@ class QMPTestCase(unittest.TestCase):
                         self.assert_qmp(event, 'data/offset', event['data']['len'])
                     self.assert_no_active_block_jobs()
                     return event
+                elif event['event'] == 'JOB_STATUS_CHANGE':
+                    self.assert_qmp(event, 'data/id', drive)
 
     def wait_ready(self, drive='drive0'):
         '''Wait until a block job BLOCK_JOB_READY event'''
@@ -488,7 +671,7 @@ class QMPTestCase(unittest.TestCase):
     def wait_ready_and_cancel(self, drive='drive0'):
         self.wait_ready(drive=drive)
         event = self.cancel_and_wait(drive=drive)
-        self.assertEquals(event['event'], 'BLOCK_JOB_COMPLETED')
+        self.assertEqual(event['event'], 'BLOCK_JOB_COMPLETED')
         self.assert_qmp(event, 'data/type', 'mirror')
         self.assert_qmp(event, 'data/offset', event['data']['len'])
 
@@ -507,9 +690,14 @@ class QMPTestCase(unittest.TestCase):
         with Timeout(1, "Timeout waiting for job to pause"):
             while True:
                 result = self.vm.qmp('query-block-jobs')
+                found = False
                 for job in result['return']:
-                    if job['device'] == job_id and job['paused'] == True and job['busy'] == False:
-                        return job
+                    if job['device'] == job_id:
+                        found = True
+                        if job['paused'] == True and job['busy'] == False:
+                            return job
+                        break
+                assert found
 
     def pause_job(self, job_id='job0', wait=True):
         result = self.vm.qmp('block-job-pause', device=job_id)
@@ -524,9 +712,17 @@ def notrun(reason):
     # Each test in qemu-iotests has a number ("seq")
     seq = os.path.basename(sys.argv[0])
 
-    open('%s/%s.notrun' % (output_dir, seq), 'wb').write(reason + '\n')
-    print '%s not run: %s' % (seq, reason)
+    open('%s/%s.notrun' % (output_dir, seq), 'w').write(reason + '\n')
+    print('%s not run: %s' % (seq, reason))
     sys.exit(0)
+
+def case_notrun(reason):
+    '''Skip this test case'''
+    # Each test in qemu-iotests has a number ("seq")
+    seq = os.path.basename(sys.argv[0])
+
+    open('%s/%s.casenotrun' % (output_dir, seq), 'a').write(
+        '    [case not run] ' + reason + '\n')
 
 def verify_image_format(supported_fmts=[], unsupported_fmts=[]):
     assert not (supported_fmts and unsupported_fmts)
@@ -541,6 +737,16 @@ def verify_image_format(supported_fmts=[], unsupported_fmts=[]):
     not_sup = supported_fmts and (imgfmt not in supported_fmts)
     if not_sup or (imgfmt in unsupported_fmts):
         notrun('not suitable for this image format: %s' % imgfmt)
+
+def verify_protocol(supported=[], unsupported=[]):
+    assert not (supported and unsupported)
+
+    if 'generic' in supported:
+        return
+
+    not_sup = supported and (imgproto not in supported)
+    if not_sup or (imgproto in unsupported):
+        notrun('not suitable for this protocol: %s' % imgproto)
 
 def verify_platform(supported_oses=['linux']):
     if True not in [sys.platform.startswith(x) for x in supported_oses]:
@@ -557,6 +763,41 @@ def verify_quorum():
     '''Skip test suite if quorum support is not available'''
     if not supports_quorum():
         notrun('quorum support missing')
+
+def qemu_pipe(*args):
+    '''Run qemu with an option to print something and exit (e.g. a help option),
+    and return its output'''
+    args = [qemu_prog] + qemu_opts + list(args)
+    subp = subprocess.Popen(args, stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT,
+                            universal_newlines=True)
+    exitcode = subp.wait()
+    if exitcode < 0:
+        sys.stderr.write('qemu received signal %i: %s\n' % (-exitcode,
+                         ' '.join(args)))
+    return subp.communicate()[0]
+
+def supported_formats(read_only=False):
+    '''Set 'read_only' to True to check ro-whitelist
+       Otherwise, rw-whitelist is checked'''
+    format_message = qemu_pipe("-drive", "format=help")
+    line = 1 if read_only else 0
+    return format_message.splitlines()[line].split(":")[1].split()
+
+def skip_if_unsupported(required_formats=[], read_only=False):
+    '''Skip Test Decorator
+       Runs the test if all the required formats are whitelisted'''
+    def skip_test_decorator(func):
+        def func_wrapper(*args, **kwargs):
+            usf_list = list(set(required_formats) -
+                            set(supported_formats(read_only)))
+            if usf_list:
+                case_notrun('{}: formats {} are not whitelisted'.format(
+                    args[0], usf_list))
+            else:
+                return func(*args, **kwargs)
+        return func_wrapper
+    return skip_test_decorator
 
 def main(supported_fmts=[], supported_oses=['linux'], supported_cache_modes=[],
          unsupported_fmts=[]):
@@ -578,15 +819,19 @@ def main(supported_fmts=[], supported_oses=['linux'], supported_cache_modes=[],
     verify_platform(supported_oses)
     verify_cache_mode(supported_cache_modes)
 
-    # We need to filter out the time taken from the output so that qemu-iotest
-    # can reliably diff the results against master output.
-    import StringIO
     if debug:
         output = sys.stdout
         verbosity = 2
         sys.argv.remove('-d')
     else:
-        output = StringIO.StringIO()
+        # We need to filter out the time taken from the output so that
+        # qemu-iotest can reliably diff the results against master output.
+        if sys.version_info.major >= 3:
+            output = io.StringIO()
+        else:
+            # io.StringIO is for unicode strings, which is not what
+            # 2.x's test runner emits.
+            output = io.BytesIO()
 
     logging.basicConfig(level=(logging.DEBUG if debug else logging.WARN))
 
