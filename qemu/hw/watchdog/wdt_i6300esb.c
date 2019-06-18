@@ -361,19 +361,43 @@ static void i6300esb_mem_writel(void *vp, hwaddr addr, uint32_t val)
     }
 }
 
+static uint64_t i6300esb_mem_readfn(void *opaque, hwaddr addr, unsigned size)
+{
+    switch (size) {
+    case 1:
+        return i6300esb_mem_readb(opaque, addr);
+    case 2:
+        return i6300esb_mem_readw(opaque, addr);
+    case 4:
+        return i6300esb_mem_readl(opaque, addr);
+    default:
+        g_assert_not_reached();
+    }
+}
+
+static void i6300esb_mem_writefn(void *opaque, hwaddr addr,
+                                 uint64_t value, unsigned size)
+{
+    switch (size) {
+    case 1:
+        i6300esb_mem_writeb(opaque, addr, value);
+        break;
+    case 2:
+        i6300esb_mem_writew(opaque, addr, value);
+        break;
+    case 4:
+        i6300esb_mem_writel(opaque, addr, value);
+        break;
+    default:
+        g_assert_not_reached();
+    }
+}
+
 static const MemoryRegionOps i6300esb_ops = {
-    .old_mmio = {
-        .read = {
-            i6300esb_mem_readb,
-            i6300esb_mem_readw,
-            i6300esb_mem_readl,
-        },
-        .write = {
-            i6300esb_mem_writeb,
-            i6300esb_mem_writew,
-            i6300esb_mem_writel,
-        },
-    },
+    .read = i6300esb_mem_readfn,
+    .write = i6300esb_mem_writefn,
+    .valid.min_access_size = 1,
+    .valid.max_access_size = 4,
     .endianness = DEVICE_LITTLE_ENDIAN,
 };
 
@@ -425,7 +449,6 @@ static void i6300esb_realize(PCIDevice *dev, Error **errp)
     memory_region_init_io(&d->io_mem, OBJECT(d), &i6300esb_ops, d,
                           "i6300esb", 0x10);
     pci_register_bar(&d->dev, 0, 0, &d->io_mem);
-    /* qemu_register_coalesced_mmio (addr, 0x10); ? */
 }
 
 static void i6300esb_exit(PCIDevice *dev)

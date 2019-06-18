@@ -1,4 +1,5 @@
 #include "qemu/osdep.h"
+#include "qemu/units.h"
 #include "hw/hw.h"
 #include "hw/sh4/sh.h"
 #include "hw/loader.h"
@@ -26,7 +27,7 @@ typedef struct {
 
 static tc58128_dev tc58128_devs[2];
 
-#define FLASH_SIZE (16*1024*1024)
+#define FLASH_SIZE (16 * MiB)
 
 static void init_dev(tc58128_dev * dev, const char *filename)
 {
@@ -37,7 +38,8 @@ static void init_dev(tc58128_dev * dev, const char *filename)
     memset(dev->flash_contents, 0xff, FLASH_SIZE);
     if (filename) {
 	/* Load flash image skipping the first block */
-	ret = load_image(filename, dev->flash_contents + 528 * 32);
+        ret = load_image_size(filename, dev->flash_contents + 528 * 32,
+                              FLASH_SIZE - 528 * 32);
 	if (ret < 0) {
             if (!qtest_enabled()) {
                 error_report("Could not load flash image %s", filename);

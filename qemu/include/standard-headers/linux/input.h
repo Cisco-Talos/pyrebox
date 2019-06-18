@@ -28,8 +28,8 @@ struct input_event {
 #define input_event_sec time.tv_sec
 #define input_event_usec time.tv_usec
 #else
-	__kernel_ulong_t __sec;
-	__kernel_ulong_t __usec;
+	unsigned long __sec;
+	unsigned long __usec;
 #define input_event_sec  __sec
 #define input_event_usec __usec
 #endif
@@ -267,10 +267,11 @@ struct input_mask {
 /*
  * MT_TOOL types
  */
-#define MT_TOOL_FINGER		0
-#define MT_TOOL_PEN		1
-#define MT_TOOL_PALM		2
-#define MT_TOOL_MAX		2
+#define MT_TOOL_FINGER		0x00
+#define MT_TOOL_PEN		0x01
+#define MT_TOOL_PALM		0x02
+#define MT_TOOL_DIAL		0x0a
+#define MT_TOOL_MAX		0x0f
 
 /*
  * Values describing the status of a force-feedback effect

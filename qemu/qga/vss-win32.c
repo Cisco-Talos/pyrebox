@@ -14,9 +14,9 @@
 #include <windows.h>
 #include "qapi/error.h"
 #include "qemu/error-report.h"
-#include "qga/guest-agent-core.h"
-#include "qga/vss-win32.h"
-#include "qga/vss-win32/requester.h"
+#include "guest-agent-core.h"
+#include "vss-win32.h"
+#include "vss-win32/requester.h"
 
 #define QGA_VSS_DLL "qga-vss.dll"
 
@@ -147,7 +147,8 @@ void ga_uninstall_vss_provider(void)
 }
 
 /* Call VSS requester and freeze/thaw filesystems and applications */
-void qga_vss_fsfreeze(int *nr_volume, bool freeze, Error **errp)
+void qga_vss_fsfreeze(int *nr_volume, bool freeze,
+                      strList *mountpoints, Error **errp)
 {
     const char *func_name = freeze ? "requester_freeze" : "requester_thaw";
     QGAVSSRequesterFunc func;
@@ -164,5 +165,5 @@ void qga_vss_fsfreeze(int *nr_volume, bool freeze, Error **errp)
         return;
     }
 
-    func(nr_volume, &errset);
+    func(nr_volume, mountpoints, &errset);
 }

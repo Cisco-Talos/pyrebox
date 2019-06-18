@@ -66,6 +66,8 @@
 
 /* CEx Control Register */
 #define R_CTRL0           (0x10 / 4)
+#define   CTRL_IO_DUAL_DATA        (1 << 29)
+#define   CTRL_IO_DUAL_ADDR_DATA   (1 << 28) /* Includes dummies */
 #define   CTRL_CMD_SHIFT           16
 #define   CTRL_CMD_MASK            0xff
 #define   CTRL_DUMMY_HIGH_SHIFT    14
@@ -96,8 +98,8 @@
 /* Misc Control Register #1 */
 #define R_MISC_CTRL1      (0x50 / 4)
 
-/* Misc Control Register #2 */
-#define R_MISC_CTRL2      (0x54 / 4)
+/* SPI dummy cycle data */
+#define R_DUMMY_DATA      (0x54 / 4)
 
 /* DMA Control/Status Register */
 #define R_DMA_CTRL        (0x80 / 4)
@@ -142,6 +144,9 @@
 
 /* Flash opcodes. */
 #define SPI_OP_READ       0x03    /* Read data bytes (low frequency) */
+
+#define SNOOP_OFF         0xFF
+#define SNOOP_START       0x0
 
 /*
  * Default segments mapping addresses and size for each slave per
@@ -386,8 +391,8 @@ static uint64_t aspeed_smc_flash_default_read(void *opaque, hwaddr addr,
 static void aspeed_smc_flash_default_write(void *opaque, hwaddr addr,
                                            uint64_t data, unsigned size)
 {
-   qemu_log_mask(LOG_GUEST_ERROR, "%s: To 0x%" HWADDR_PRIx " of size %u: 0x%"
-                 PRIx64 "\n", __func__, addr, size, data);
+    qemu_log_mask(LOG_GUEST_ERROR, "%s: To 0x%" HWADDR_PRIx " of size %u: 0x%"
+                  PRIx64 "\n", __func__, addr, size, data);
 }
 
 static const MemoryRegionOps aspeed_smc_flash_default_ops = {
@@ -492,14 +497,20 @@ static int aspeed_smc_flash_dummies(const AspeedSMCFlash *fl)
     uint32_t r_ctrl0 = s->regs[s->r_ctrl0 + fl->id];
     uint32_t dummy_high = (r_ctrl0 >> CTRL_DUMMY_HIGH_SHIFT) & 0x1;
     uint32_t dummy_low = (r_ctrl0 >> CTRL_DUMMY_LOW_SHIFT) & 0x3;
+    uint32_t dummies = ((dummy_high << 2) | dummy_low) * 8;
 
-    return ((dummy_high << 2) | dummy_low) * 8;
+    if (r_ctrl0 & CTRL_IO_DUAL_ADDR_DATA) {
+        dummies /= 2;
+    }
+
+    return dummies;
 }
 
-static void aspeed_smc_flash_send_addr(AspeedSMCFlash *fl, uint32_t addr)
+static void aspeed_smc_flash_setup(AspeedSMCFlash *fl, uint32_t addr)
 {
     const AspeedSMCState *s = fl->controller;
     uint8_t cmd = aspeed_smc_flash_cmd(fl);
+    int i;
 
     /* Flash access can not exceed CS segment */
     addr = aspeed_smc_check_segment_addr(fl, addr);
@@ -512,6 +523,18 @@ static void aspeed_smc_flash_send_addr(AspeedSMCFlash *fl, uint32_t addr)
     ssi_transfer(s->spi, (addr >> 16) & 0xff);
     ssi_transfer(s->spi, (addr >> 8) & 0xff);
     ssi_transfer(s->spi, (addr & 0xff));
+
+    /*
+     * Use fake transfers to model dummy bytes. The value should
+     * be configured to some non-zero value in fast read mode and
+     * zero in read mode. But, as the HW allows inconsistent
+     * settings, let's check for fast read mode.
+     */
+    if (aspeed_smc_flash_mode(fl) == CTRL_FREADMODE) {
+        for (i = 0; i < aspeed_smc_flash_dummies(fl); i++) {
+            ssi_transfer(fl->controller->spi, s->regs[R_DUMMY_DATA] & 0xff);
+        }
+    }
 }
 
 static uint64_t aspeed_smc_flash_read(void *opaque, hwaddr addr, unsigned size)
@@ -530,19 +553,7 @@ static uint64_t aspeed_smc_flash_read(void *opaque, hwaddr addr, unsigned size)
     case CTRL_READMODE:
     case CTRL_FREADMODE:
         aspeed_smc_flash_select(fl);
-        aspeed_smc_flash_send_addr(fl, addr);
-
-        /*
-         * Use fake transfers to model dummy bytes. The value should
-         * be configured to some non-zero value in fast read mode and
-         * zero in read mode. But, as the HW allows inconsistent
-         * settings, let's check for fast read mode.
-         */
-        if (aspeed_smc_flash_mode(fl) == CTRL_FREADMODE) {
-            for (i = 0; i < aspeed_smc_flash_dummies(fl); i++) {
-                ssi_transfer(fl->controller->spi, 0xFF);
-            }
-        }
+        aspeed_smc_flash_setup(fl, addr);
 
         for (i = 0; i < size; i++) {
             ret |= ssi_transfer(s->spi, 0x0) << (8 * i);
@@ -558,8 +569,103 @@ static uint64_t aspeed_smc_flash_read(void *opaque, hwaddr addr, unsigned size)
     return ret;
 }
 
+/*
+ * TODO (clg@kaod.org): stolen from xilinx_spips.c. Should move to a
+ * common include header.
+ */
+typedef enum {
+    READ = 0x3,         READ_4 = 0x13,
+    FAST_READ = 0xb,    FAST_READ_4 = 0x0c,
+    DOR = 0x3b,         DOR_4 = 0x3c,
+    QOR = 0x6b,         QOR_4 = 0x6c,
+    DIOR = 0xbb,        DIOR_4 = 0xbc,
+    QIOR = 0xeb,        QIOR_4 = 0xec,
+
+    PP = 0x2,           PP_4 = 0x12,
+    DPP = 0xa2,
+    QPP = 0x32,         QPP_4 = 0x34,
+} FlashCMD;
+
+static int aspeed_smc_num_dummies(uint8_t command)
+{
+    switch (command) { /* check for dummies */
+    case READ: /* no dummy bytes/cycles */
+    case PP:
+    case DPP:
+    case QPP:
+    case READ_4:
+    case PP_4:
+    case QPP_4:
+        return 0;
+    case FAST_READ:
+    case DOR:
+    case QOR:
+    case DOR_4:
+    case QOR_4:
+        return 1;
+    case DIOR:
+    case FAST_READ_4:
+    case DIOR_4:
+        return 2;
+    case QIOR:
+    case QIOR_4:
+        return 4;
+    default:
+        return -1;
+    }
+}
+
+static bool aspeed_smc_do_snoop(AspeedSMCFlash *fl,  uint64_t data,
+                                unsigned size)
+{
+    AspeedSMCState *s = fl->controller;
+    uint8_t addr_width = aspeed_smc_flash_is_4byte(fl) ? 4 : 3;
+
+    if (s->snoop_index == SNOOP_OFF) {
+        return false; /* Do nothing */
+
+    } else if (s->snoop_index == SNOOP_START) {
+        uint8_t cmd = data & 0xff;
+        int ndummies = aspeed_smc_num_dummies(cmd);
+
+        /*
+         * No dummy cycles are expected with the current command. Turn
+         * off snooping and let the transfer proceed normally.
+         */
+        if (ndummies <= 0) {
+            s->snoop_index = SNOOP_OFF;
+            return false;
+        }
+
+        s->snoop_dummies = ndummies * 8;
+
+    } else if (s->snoop_index >= addr_width + 1) {
+
+        /* The SPI transfer has reached the dummy cycles sequence */
+        for (; s->snoop_dummies; s->snoop_dummies--) {
+            ssi_transfer(s->spi, s->regs[R_DUMMY_DATA] & 0xff);
+        }
+
+        /* If no more dummy cycles are expected, turn off snooping */
+        if (!s->snoop_dummies) {
+            s->snoop_index = SNOOP_OFF;
+        } else {
+            s->snoop_index += size;
+        }
+
+        /*
+         * Dummy cycles have been faked already. Ignore the current
+         * SPI transfer
+         */
+        return true;
+    }
+
+    s->snoop_index += size;
+    return false;
+}
+
 static void aspeed_smc_flash_write(void *opaque, hwaddr addr, uint64_t data,
-                           unsigned size)
+                                   unsigned size)
 {
     AspeedSMCFlash *fl = opaque;
     AspeedSMCState *s = fl->controller;
@@ -573,13 +679,17 @@ static void aspeed_smc_flash_write(void *opaque, hwaddr addr, uint64_t data,
 
     switch (aspeed_smc_flash_mode(fl)) {
     case CTRL_USERMODE:
+        if (aspeed_smc_do_snoop(fl, data, size)) {
+            break;
+        }
+
         for (i = 0; i < size; i++) {
             ssi_transfer(s->spi, (data >> (8 * i)) & 0xff);
         }
         break;
     case CTRL_WRITEMODE:
         aspeed_smc_flash_select(fl);
-        aspeed_smc_flash_send_addr(fl, addr);
+        aspeed_smc_flash_setup(fl, addr);
 
         for (i = 0; i < size; i++) {
             ssi_transfer(s->spi, (data >> (8 * i)) & 0xff);
@@ -605,7 +715,9 @@ static const MemoryRegionOps aspeed_smc_flash_ops = {
 
 static void aspeed_smc_flash_update_cs(AspeedSMCFlash *fl)
 {
-    const AspeedSMCState *s = fl->controller;
+    AspeedSMCState *s = fl->controller;
+
+    s->snoop_index = aspeed_smc_is_ce_stop_active(fl) ? SNOOP_OFF : SNOOP_START;
 
     qemu_set_irq(s->cs_lines[fl->id], aspeed_smc_is_ce_stop_active(fl));
 }
@@ -632,24 +744,21 @@ static void aspeed_smc_reset(DeviceState *d)
             aspeed_smc_segment_to_reg(&s->ctrl->segments[i]);
     }
 
-    /* HW strapping for AST2500 FMC controllers  */
+    /* HW strapping flash type for FMC controllers  */
     if (s->ctrl->segments == aspeed_segments_ast2500_fmc) {
         /* flash type is fixed to SPI for CE0 and CE1 */
         s->regs[s->r_conf] |= (CONF_FLASH_TYPE_SPI << CONF_FLASH_TYPE0);
         s->regs[s->r_conf] |= (CONF_FLASH_TYPE_SPI << CONF_FLASH_TYPE1);
-
-        /* 4BYTE mode is autodetected for CE0. Let's force it to 1 for
-         * now */
-        s->regs[s->r_ce_ctrl] |= (1 << (CTRL_EXTENDED0));
     }
 
     /* HW strapping for AST2400 FMC controllers (SCU70). Let's use the
      * configuration of the palmetto-bmc machine */
     if (s->ctrl->segments == aspeed_segments_fmc) {
         s->regs[s->r_conf] |= (CONF_FLASH_TYPE_SPI << CONF_FLASH_TYPE0);
-
-        s->regs[s->r_ce_ctrl] |= (1 << (CTRL_EXTENDED0));
     }
+
+    s->snoop_index = SNOOP_OFF;
+    s->snoop_dummies = 0;
 }
 
 static uint64_t aspeed_smc_read(void *opaque, hwaddr addr, unsigned int size)
@@ -662,13 +771,14 @@ static uint64_t aspeed_smc_read(void *opaque, hwaddr addr, unsigned int size)
         addr == s->r_timings ||
         addr == s->r_ce_ctrl ||
         addr == R_INTR_CTRL ||
+        addr == R_DUMMY_DATA ||
         (addr >= R_SEG_ADDR0 && addr < R_SEG_ADDR0 + s->ctrl->max_slaves) ||
-        (addr >= s->r_ctrl0 && addr < s->r_ctrl0 + s->num_cs)) {
+        (addr >= s->r_ctrl0 && addr < s->r_ctrl0 + s->ctrl->max_slaves)) {
         return s->regs[addr];
     } else {
         qemu_log_mask(LOG_UNIMP, "%s: not implemented: 0x%" HWADDR_PRIx "\n",
                       __func__, addr);
-        return 0;
+        return -1;
     }
 }
 
@@ -695,6 +805,8 @@ static void aspeed_smc_write(void *opaque, hwaddr addr, uint64_t data,
         if (value != s->regs[R_SEG_ADDR0 + cs]) {
             aspeed_smc_flash_set_segment(s, cs, value);
         }
+    } else if (addr == R_DUMMY_DATA) {
+        s->regs[addr] = value & 0xff;
     } else {
         qemu_log_mask(LOG_UNIMP, "%s: not implemented: 0x%" HWADDR_PRIx "\n",
                       __func__, addr);
@@ -788,10 +900,12 @@ static void aspeed_smc_realize(DeviceState *dev, Error **errp)
 
 static const VMStateDescription vmstate_aspeed_smc = {
     .name = "aspeed.smc",
-    .version_id = 1,
-    .minimum_version_id = 1,
+    .version_id = 2,
+    .minimum_version_id = 2,
     .fields = (VMStateField[]) {
         VMSTATE_UINT32_ARRAY(regs, AspeedSMCState, ASPEED_SMC_R_MAX),
+        VMSTATE_UINT8(snoop_index, AspeedSMCState),
+        VMSTATE_UINT8(snoop_dummies, AspeedSMCState),
         VMSTATE_END_OF_LIST()
     }
 };

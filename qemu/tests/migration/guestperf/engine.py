@@ -1,3 +1,4 @@
+from __future__ import print_function
 #
 # Migration test main engine
 #
@@ -23,12 +24,13 @@ import re
 import sys
 import time
 
-sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', '..', 'scripts'))
-import qemu
-import qmp.qmp
 from guestperf.progress import Progress, ProgressStats
 from guestperf.report import Report
 from guestperf.timings import TimingRecord, Timings
+
+sys.path.append(os.path.join(os.path.dirname(__file__),
+                             '..', '..', '..', 'python'))
+import qemu
 
 
 class Engine(object):
@@ -117,7 +119,7 @@ class Engine(object):
         # XXX how to get dst timings on remote host ?
 
         if self._verbose:
-            print "Sleeping %d seconds for initial guest workload run" % self._sleep
+            print("Sleeping %d seconds for initial guest workload run" % self._sleep)
         sleep_secs = self._sleep
         while sleep_secs > 1:
             src_qemu_time.append(self._cpu_timing(src_pid))
@@ -126,7 +128,7 @@ class Engine(object):
             sleep_secs -= 1
 
         if self._verbose:
-            print "Starting migration"
+            print("Starting migration")
         if scenario._auto_converge:
             resp = src.command("migrate-set-capabilities",
                                capabilities = [
@@ -216,7 +218,7 @@ class Engine(object):
 
                 if progress._status == "completed":
                     if self._verbose:
-                        print "Sleeping %d seconds for final guest workload run" % self._sleep
+                        print("Sleeping %d seconds for final guest workload run" % self._sleep)
                     sleep_secs = self._sleep
                     while sleep_secs > 1:
                         time.sleep(1)
@@ -227,23 +229,23 @@ class Engine(object):
                 return [progress_history, src_qemu_time, src_vcpu_time]
 
             if self._verbose and (loop % 20) == 0:
-                print "Iter %d: remain %5dMB of %5dMB (total %5dMB @ %5dMb/sec)" % (
+                print("Iter %d: remain %5dMB of %5dMB (total %5dMB @ %5dMb/sec)" % (
                     progress._ram._iterations,
                     progress._ram._remaining_bytes / (1024 * 1024),
                     progress._ram._total_bytes / (1024 * 1024),
                     progress._ram._transferred_bytes / (1024 * 1024),
                     progress._ram._transfer_rate_mbs,
-                )
+                ))
 
             if progress._ram._iterations > scenario._max_iters:
                 if self._verbose:
-                    print "No completion after %d iterations over RAM" % scenario._max_iters
+                    print("No completion after %d iterations over RAM" % scenario._max_iters)
                 src.command("migrate_cancel")
                 continue
 
             if time.time() > (start + scenario._max_time):
                 if self._verbose:
-                    print "No completion after %d seconds" % scenario._max_time
+                    print("No completion after %d seconds" % scenario._max_time)
                 src.command("migrate_cancel")
                 continue
 
@@ -251,7 +253,7 @@ class Engine(object):
                 progress._ram._iterations >= scenario._post_copy_iters and
                 not post_copy):
                 if self._verbose:
-                    print "Switching to post-copy after %d iterations" % scenario._post_copy_iters
+                    print("Switching to post-copy after %d iterations" % scenario._post_copy_iters)
                 resp = src.command("migrate-start-postcopy")
                 post_copy = True
 
@@ -259,7 +261,7 @@ class Engine(object):
                 progress._ram._iterations >= scenario._pause_iters and
                 not paused):
                 if self._verbose:
-                    print "Pausing VM after %d iterations" % scenario._pause_iters
+                    print("Pausing VM after %d iterations" % scenario._pause_iters)
                 resp = src.command("stop")
                 paused = True
 
@@ -348,7 +350,7 @@ class Engine(object):
         if not log:
             return []
         if self._debug:
-            print log
+            print(log)
 
         regex = r"[^\s]+\s\((\d+)\):\sINFO:\s(\d+)ms\scopied\s\d+\sGB\sin\s(\d+)ms"
         matcher = re.compile(regex)
@@ -407,7 +409,7 @@ class Engine(object):
             if uri[0:5] == "unix:":
                 os.remove(uri[5:])
             if self._verbose:
-                print "Finished migration"
+                print("Finished migration")
 
             src.shutdown()
             dst.shutdown()
@@ -420,7 +422,7 @@ class Engine(object):
                           self._initrd, self._transport, self._sleep)
         except Exception as e:
             if self._debug:
-                print "Failed: %s" % str(e)
+                print("Failed: %s" % str(e))
             try:
                 src.shutdown()
             except:
@@ -431,7 +433,7 @@ class Engine(object):
                 pass
 
             if self._debug:
-                print src.get_log()
-                print dst.get_log()
+                print(src.get_log())
+                print(dst.get_log())
             raise
 

@@ -1,17 +1,18 @@
-QA output created by 206
-
 === Successful image creation (defaults) ===
 
-Testing:
-QMP_VERSION
+{"execute": "blockdev-create", "arguments": {"job-id": "job0", "options": {"driver": "file", "filename": "TEST_DIR/PID-t.qcow2", "size": 0}}}
 {"return": {}}
+{"execute": "job-dismiss", "arguments": {"id": "job0"}}
 {"return": {}}
-{"return": {}}
-{"return": {}}
-{"return": {}}
-{"timestamp": {"seconds":  TIMESTAMP, "microseconds":  TIMESTAMP}, "event": "SHUTDOWN", "data": {"guest": false}}
 
-image: TEST_DIR/t.IMGFMT
+{"execute": "blockdev-add", "arguments": {"driver": "file", "filename": "TEST_DIR/PID-t.qcow2", "node-name": "imgfile"}}
+{"return": {}}
+{"execute": "blockdev-create", "arguments": {"job-id": "job0", "options": {"driver": "qcow2", "file": "imgfile", "size": 134217728}}}
+{"return": {}}
+{"execute": "job-dismiss", "arguments": {"id": "job0"}}
+{"return": {}}
+
+image: TEST_IMG
 file format: IMGFMT
 virtual size: 128M (134217728 bytes)
 cluster_size: 65536
@@ -23,15 +24,17 @@ Format specific information:
 
 === Successful image creation (inline blockdev-add, explicit defaults) ===
 
-Testing:
-QMP_VERSION
+{"execute": "blockdev-create", "arguments": {"job-id": "job0", "options": {"driver": "file", "filename": "TEST_DIR/PID-t.qcow2", "nocow": false, "preallocation": "off", "size": 0}}}
 {"return": {}}
+{"execute": "job-dismiss", "arguments": {"id": "job0"}}
 {"return": {}}
-{"return": {}}
-{"return": {}}
-{"timestamp": {"seconds":  TIMESTAMP, "microseconds":  TIMESTAMP}, "event": "SHUTDOWN", "data": {"guest": false}}
 
-image: TEST_DIR/t.IMGFMT
+{"execute": "blockdev-create", "arguments": {"job-id": "job0", "options": {"cluster-size": 65536, "driver": "qcow2", "file": {"driver": "file", "filename": "TEST_DIR/PID-t.qcow2"}, "lazy-refcounts": false, "preallocation": "off", "refcount-bits": 16, "size": 67108864, "version": "v3"}}}
+{"return": {}}
+{"execute": "job-dismiss", "arguments": {"id": "job0"}}
+{"return": {}}
+
+image: TEST_IMG
 file format: IMGFMT
 virtual size: 64M (67108864 bytes)
 cluster_size: 65536
@@ -43,15 +46,17 @@ Format specific information:
 
 === Successful image creation (v3 non-default options) ===
 
-Testing:
-QMP_VERSION
+{"execute": "blockdev-create", "arguments": {"job-id": "job0", "options": {"driver": "file", "filename": "TEST_DIR/PID-t.qcow2", "nocow": true, "preallocation": "falloc", "size": 0}}}
 {"return": {}}
+{"execute": "job-dismiss", "arguments": {"id": "job0"}}
 {"return": {}}
-{"return": {}}
-{"return": {}}
-{"timestamp": {"seconds":  TIMESTAMP, "microseconds":  TIMESTAMP}, "event": "SHUTDOWN", "data": {"guest": false}}
 
-image: TEST_DIR/t.IMGFMT
+{"execute": "blockdev-create", "arguments": {"job-id": "job0", "options": {"cluster-size": 2097152, "driver": "qcow2", "file": {"driver": "file", "filename": "TEST_DIR/PID-t.qcow2"}, "lazy-refcounts": true, "preallocation": "metadata", "refcount-bits": 1, "size": 33554432, "version": "v3"}}}
+{"return": {}}
+{"execute": "job-dismiss", "arguments": {"id": "job0"}}
+{"return": {}}
+
+image: TEST_IMG
 file format: IMGFMT
 virtual size: 32M (33554432 bytes)
 cluster_size: 2097152
@@ -63,19 +68,21 @@ Format specific information:
 
 === Successful image creation (v2 non-default options) ===
 
-Testing:
-QMP_VERSION
+{"execute": "blockdev-create", "arguments": {"job-id": "job0", "options": {"driver": "file", "filename": "TEST_DIR/PID-t.qcow2", "size": 0}}}
 {"return": {}}
+{"execute": "job-dismiss", "arguments": {"id": "job0"}}
 {"return": {}}
-{"return": {}}
-{"return": {}}
-{"timestamp": {"seconds":  TIMESTAMP, "microseconds":  TIMESTAMP}, "event": "SHUTDOWN", "data": {"guest": false}}
 
-image: TEST_DIR/t.IMGFMT
+{"execute": "blockdev-create", "arguments": {"job-id": "job0", "options": {"backing-file": "TEST_DIR/PID-t.qcow2.base", "backing-fmt": "qcow2", "cluster-size": 512, "driver": "qcow2", "file": {"driver": "file", "filename": "TEST_DIR/PID-t.qcow2"}, "size": 33554432, "version": "v2"}}}
+{"return": {}}
+{"execute": "job-dismiss", "arguments": {"id": "job0"}}
+{"return": {}}
+
+image: TEST_IMG
 file format: IMGFMT
 virtual size: 32M (33554432 bytes)
 cluster_size: 512
-backing file: TEST_DIR/t.IMGFMT.base
+backing file: TEST_IMG.base
 backing file format: IMGFMT
 Format specific information:
     compat: 0.10
@@ -83,16 +90,16 @@ Format specific information:
 
 === Successful image creation (encrypted) ===
 
-Testing: -object secret,id=keysec0,data=foo
-QMP_VERSION
+{"execute": "blockdev-create", "arguments": {"job-id": "job0", "options": {"driver": "qcow2", "encrypt": {"cipher-alg": "twofish-128", "cipher-mode": "ctr", "format": "luks", "hash-alg": "sha1", "iter-time": 10, "ivgen-alg": "plain64", "ivgen-hash-alg": "md5", "key-secret": "keysec0"}, "file": {"driver": "file", "filename": "TEST_DIR/PID-t.qcow2"}, "size": 33554432}}}
 {"return": {}}
+{"execute": "job-dismiss", "arguments": {"id": "job0"}}
 {"return": {}}
-{"return": {}}
-{"timestamp": {"seconds":  TIMESTAMP, "microseconds":  TIMESTAMP}, "event": "SHUTDOWN", "data": {"guest": false}}
 
-image: TEST_DIR/t.IMGFMT
+image: TEST_IMG
 file format: IMGFMT
 virtual size: 32M (33554432 bytes)
+encrypted: yes
+cluster_size: 65536
 Format specific information:
     compat: 1.1
     lazy refcounts: false
@@ -101,13 +108,13 @@ Format specific information:
         ivgen alg: plain64
         hash alg: sha1
         cipher alg: twofish-128
-        uuid: 00000000-0000-0000-0000-000000000000
+        uuid: XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX
         format: luks
         cipher mode: ctr
         slots:
             [0]:
                 active: true
-                iters: 1024
+                iters: XXX
                 key offset: 4096
                 stripes: 4000
             [1]:
@@ -132,78 +139,118 @@ Format specific information:
                 active: false
                 key offset: 462848
         payload offset: 528384
-        master key iters: 1024
+        master key iters: XXX
     corrupt: false
 
 === Invalid BlockdevRef ===
 
-Testing:
-QMP_VERSION
+{"execute": "blockdev-create", "arguments": {"job-id": "job0", "options": {"driver": "qcow2", "file": "this doesn't exist", "size": 33554432}}}
 {"return": {}}
-{"error": {"class": "GenericError", "desc": "Cannot find device=this doesn't exist nor node_name=this doesn't exist"}}
+Job failed: Cannot find device=this doesn't exist nor node_name=this doesn't exist
+{"execute": "job-dismiss", "arguments": {"id": "job0"}}
 {"return": {}}
-{"timestamp": {"seconds":  TIMESTAMP, "microseconds":  TIMESTAMP}, "event": "SHUTDOWN", "data": {"guest": false}}
-
 
 === Invalid sizes ===
-
-Testing: -blockdev driver=file,filename=TEST_DIR/t.IMGFMT,node-name=node0
-QMP_VERSION
+{"execute": "blockdev-create", "arguments": {"job-id": "job0", "options": {"driver": "qcow2", "file": "node0", "size": 1234}}}
 {"return": {}}
-{"error": {"class": "GenericError", "desc": "Image size must be a multiple of 512 bytes"}}
-{"error": {"class": "GenericError", "desc": "Could not resize image: Image size cannot be negative"}}
-{"error": {"class": "GenericError", "desc": "Could not resize image: Image size cannot be negative"}}
-{"error": {"class": "GenericError", "desc": "Could not resize image: Failed to grow the L1 table: File too large"}}
+Job failed: Image size must be a multiple of 512 bytes
+{"execute": "job-dismiss", "arguments": {"id": "job0"}}
 {"return": {}}
-{"timestamp": {"seconds":  TIMESTAMP, "microseconds":  TIMESTAMP}, "event": "SHUTDOWN", "data": {"guest": false}}
 
+{"execute": "blockdev-create", "arguments": {"job-id": "job0", "options": {"driver": "qcow2", "file": "node0", "size": 18446744073709551104}}}
+{"return": {}}
+Job failed: Could not resize image: Image size cannot be negative
+{"execute": "job-dismiss", "arguments": {"id": "job0"}}
+{"return": {}}
+
+{"execute": "blockdev-create", "arguments": {"job-id": "job0", "options": {"driver": "qcow2", "file": "node0", "size": 9223372036854775808}}}
+{"return": {}}
+Job failed: Could not resize image: Image size cannot be negative
+{"execute": "job-dismiss", "arguments": {"id": "job0"}}
+{"return": {}}
+
+{"execute": "blockdev-create", "arguments": {"job-id": "job0", "options": {"driver": "qcow2", "file": "node0", "size": 9223372036854775296}}}
+{"return": {}}
+Job failed: Could not resize image: Failed to grow the L1 table: File too large
+{"execute": "job-dismiss", "arguments": {"id": "job0"}}
+{"return": {}}
 
 === Invalid version ===
-
-Testing: -blockdev driver=file,filename=TEST_DIR/t.IMGFMT,node-name=node0
-QMP_VERSION
-{"return": {}}
+{"execute": "blockdev-create", "arguments": {"job-id": "job0", "options": {"driver": "qcow2", "file": "node0", "size": 67108864, "version": "v1"}}}
 {"error": {"class": "GenericError", "desc": "Invalid parameter 'v1'"}}
-{"error": {"class": "GenericError", "desc": "Lazy refcounts only supported with compatibility level 1.1 and above (use version=v3 or greater)"}}
-{"error": {"class": "GenericError", "desc": "Different refcount widths than 16 bits require compatibility level 1.1 or above (use version=v3 or greater)"}}
-{"return": {}}
-{"timestamp": {"seconds":  TIMESTAMP, "microseconds":  TIMESTAMP}, "event": "SHUTDOWN", "data": {"guest": false}}
 
+{"execute": "blockdev-create", "arguments": {"job-id": "job0", "options": {"driver": "qcow2", "file": "node0", "lazy-refcounts": true, "size": 67108864, "version": "v2"}}}
+{"return": {}}
+Job failed: Lazy refcounts only supported with compatibility level 1.1 and above (use version=v3 or greater)
+{"execute": "job-dismiss", "arguments": {"id": "job0"}}
+{"return": {}}
+
+{"execute": "blockdev-create", "arguments": {"job-id": "job0", "options": {"driver": "qcow2", "file": "node0", "refcount-bits": 8, "size": 67108864, "version": "v2"}}}
+{"return": {}}
+Job failed: Different refcount widths than 16 bits require compatibility level 1.1 or above (use version=v3 or greater)
+{"execute": "job-dismiss", "arguments": {"id": "job0"}}
+{"return": {}}
 
 === Invalid backing file options ===
-
-Testing: -blockdev driver=file,filename=TEST_DIR/t.IMGFMT,node-name=node0
-QMP_VERSION
+{"execute": "blockdev-create", "arguments": {"job-id": "job0", "options": {"backing-file": "/dev/null", "driver": "qcow2", "file": "node0", "preallocation": "full", "size": 67108864}}}
 {"return": {}}
-{"error": {"class": "GenericError", "desc": "Backing file and preallocation cannot be used at the same time"}}
-{"error": {"class": "GenericError", "desc": "Backing format cannot be used without backing file"}}
+Job failed: Backing file and preallocation cannot be used at the same time
+{"execute": "job-dismiss", "arguments": {"id": "job0"}}
 {"return": {}}
-{"timestamp": {"seconds":  TIMESTAMP, "microseconds":  TIMESTAMP}, "event": "SHUTDOWN", "data": {"guest": false}}
 
+{"execute": "blockdev-create", "arguments": {"job-id": "job0", "options": {"backing-fmt": "qcow2", "driver": "qcow2", "file": "node0", "size": 67108864}}}
+{"return": {}}
+Job failed: Backing format cannot be used without backing file
+{"execute": "job-dismiss", "arguments": {"id": "job0"}}
+{"return": {}}
 
 === Invalid cluster size ===
-
-Testing: -blockdev driver=file,filename=TEST_DIR/t.IMGFMT,node-name=node0
-QMP_VERSION
+{"execute": "blockdev-create", "arguments": {"job-id": "job0", "options": {"cluster-size": 1234, "driver": "qcow2", "file": "node0", "size": 67108864}}}
 {"return": {}}
-{"error": {"class": "GenericError", "desc": "Cluster size must be a power of two between 512 and 2048k"}}
-{"error": {"class": "GenericError", "desc": "Cluster size must be a power of two between 512 and 2048k"}}
-{"error": {"class": "GenericError", "desc": "Cluster size must be a power of two between 512 and 2048k"}}
-{"error": {"class": "GenericError", "desc": "Cluster size must be a power of two between 512 and 2048k"}}
-{"error": {"class": "GenericError", "desc": "Could not resize image: Failed to grow the L1 table: File too large"}}
+Job failed: Cluster size must be a power of two between 512 and 2048k
+{"execute": "job-dismiss", "arguments": {"id": "job0"}}
 {"return": {}}
-{"timestamp": {"seconds":  TIMESTAMP, "microseconds":  TIMESTAMP}, "event": "SHUTDOWN", "data": {"guest": false}}
 
+{"execute": "blockdev-create", "arguments": {"job-id": "job0", "options": {"cluster-size": 128, "driver": "qcow2", "file": "node0", "size": 67108864}}}
+{"return": {}}
+Job failed: Cluster size must be a power of two between 512 and 2048k
+{"execute": "job-dismiss", "arguments": {"id": "job0"}}
+{"return": {}}
+
+{"execute": "blockdev-create", "arguments": {"job-id": "job0", "options": {"cluster-size": 4194304, "driver": "qcow2", "file": "node0", "size": 67108864}}}
+{"return": {}}
+Job failed: Cluster size must be a power of two between 512 and 2048k
+{"execute": "job-dismiss", "arguments": {"id": "job0"}}
+{"return": {}}
+
+{"execute": "blockdev-create", "arguments": {"job-id": "job0", "options": {"cluster-size": 0, "driver": "qcow2", "file": "node0", "size": 67108864}}}
+{"return": {}}
+Job failed: Cluster size must be a power of two between 512 and 2048k
+{"execute": "job-dismiss", "arguments": {"id": "job0"}}
+{"return": {}}
+
+{"execute": "blockdev-create", "arguments": {"job-id": "job0", "options": {"cluster-size": 512, "driver": "qcow2", "file": "node0", "size": 281474976710656}}}
+{"return": {}}
+Job failed: Could not resize image: Failed to grow the L1 table: File too large
+{"execute": "job-dismiss", "arguments": {"id": "job0"}}
+{"return": {}}
 
 === Invalid refcount width ===
-
-Testing: -blockdev driver=file,filename=TEST_DIR/t.IMGFMT,node-name=node0
-QMP_VERSION
+{"execute": "blockdev-create", "arguments": {"job-id": "job0", "options": {"driver": "qcow2", "file": "node0", "refcount-bits": 128, "size": 67108864}}}
 {"return": {}}
-{"error": {"class": "GenericError", "desc": "Refcount width must be a power of two and may not exceed 64 bits"}}
-{"error": {"class": "GenericError", "desc": "Refcount width must be a power of two and may not exceed 64 bits"}}
-{"error": {"class": "GenericError", "desc": "Refcount width must be a power of two and may not exceed 64 bits"}}
+Job failed: Refcount width must be a power of two and may not exceed 64 bits
+{"execute": "job-dismiss", "arguments": {"id": "job0"}}
 {"return": {}}
-{"timestamp": {"seconds":  TIMESTAMP, "microseconds":  TIMESTAMP}, "event": "SHUTDOWN", "data": {"guest": false}}
 
-*** done
+{"execute": "blockdev-create", "arguments": {"job-id": "job0", "options": {"driver": "qcow2", "file": "node0", "refcount-bits": 0, "size": 67108864}}}
+{"return": {}}
+Job failed: Refcount width must be a power of two and may not exceed 64 bits
+{"execute": "job-dismiss", "arguments": {"id": "job0"}}
+{"return": {}}
+
+{"execute": "blockdev-create", "arguments": {"job-id": "job0", "options": {"driver": "qcow2", "file": "node0", "refcount-bits": 7, "size": 67108864}}}
+{"return": {}}
+Job failed: Refcount width must be a power of two and may not exceed 64 bits
+{"execute": "job-dismiss", "arguments": {"id": "job0"}}
+{"return": {}}
+

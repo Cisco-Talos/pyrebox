@@ -29,48 +29,50 @@ enum {
     STREAM_BUFFER_SIZE = 512 * 1024, /* in bytes */
 };
 
-#define SLICE_TIME 100000000ULL /* ns */
-
 typedef struct StreamBlockJob {
     BlockJob common;
-    RateLimit limit;
     BlockDriverState *base;
     BlockdevOnError on_error;
     char *backing_file_str;
-    int bs_flags;
+    bool bs_read_only;
+    bool chain_frozen;
 } StreamBlockJob;
 
 static int coroutine_fn stream_populate(BlockBackend *blk,
                                         int64_t offset, uint64_t bytes,
                                         void *buf)
 {
-    struct iovec iov = {
-        .iov_base = buf,
-        .iov_len  = bytes,
-    };
-    QEMUIOVector qiov;
+    QEMUIOVector qiov = QEMU_IOVEC_INIT_BUF(qiov, buf, bytes);
 
     assert(bytes < SIZE_MAX);
-    qemu_iovec_init_external(&qiov, &iov, 1);
 
     /* Copy-on-read the unallocated clusters */
     return blk_co_preadv(blk, offset, qiov.size, &qiov, BDRV_REQ_COPY_ON_READ);
 }
 
-typedef struct {
-    int ret;
-} StreamCompleteData;
-
-static void stream_complete(BlockJob *job, void *opaque)
+static void stream_abort(Job *job)
 {
-    StreamBlockJob *s = container_of(job, StreamBlockJob, common);
-    StreamCompleteData *data = opaque;
-    BlockDriverState *bs = blk_bs(job->blk);
+    StreamBlockJob *s = container_of(job, StreamBlockJob, common.job);
+
+    if (s->chain_frozen) {
+        BlockJob *bjob = &s->common;
+        bdrv_unfreeze_backing_chain(blk_bs(bjob->blk), s->base);
+    }
+}
+
+static int stream_prepare(Job *job)
+{
+    StreamBlockJob *s = container_of(job, StreamBlockJob, common.job);
+    BlockJob *bjob = &s->common;
+    BlockDriverState *bs = blk_bs(bjob->blk);
     BlockDriverState *base = s->base;
     Error *local_err = NULL;
+    int ret = 0;
 
-    if (!block_job_is_cancelled(&s->common) && bs->backing &&
-        data->ret == 0) {
+    bdrv_unfreeze_backing_chain(bs, base);
+    s->chain_frozen = false;
+
+    if (bs->backing) {
         const char *base_id = NULL, *base_fmt = NULL;
         if (base) {
             base_id = s->backing_file_str;
@@ -78,35 +80,40 @@ static void stream_complete(BlockJob *job, void *opaque)
                 base_fmt = base->drv->format_name;
             }
         }
-        data->ret = bdrv_change_backing_file(bs, base_id, base_fmt);
+        ret = bdrv_change_backing_file(bs, base_id, base_fmt);
         bdrv_set_backing_hd(bs, base, &local_err);
         if (local_err) {
             error_report_err(local_err);
-            data->ret = -EPERM;
-            goto out;
+            return -EPERM;
         }
     }
 
-out:
+    return ret;
+}
+
+static void stream_clean(Job *job)
+{
+    StreamBlockJob *s = container_of(job, StreamBlockJob, common.job);
+    BlockJob *bjob = &s->common;
+    BlockDriverState *bs = blk_bs(bjob->blk);
+
     /* Reopen the image back in read-only mode if necessary */
-    if (s->bs_flags != bdrv_get_flags(bs)) {
+    if (s->bs_read_only) {
         /* Give up write permissions before making it read-only */
-        blk_set_perm(job->blk, 0, BLK_PERM_ALL, &error_abort);
-        bdrv_reopen(bs, s->bs_flags, NULL);
+        blk_set_perm(bjob->blk, 0, BLK_PERM_ALL, &error_abort);
+        bdrv_reopen_set_read_only(bs, true, NULL);
     }
 
     g_free(s->backing_file_str);
-    block_job_completed(&s->common, data->ret);
-    g_free(data);
 }
 
-static void coroutine_fn stream_run(void *opaque)
+static int coroutine_fn stream_run(Job *job, Error **errp)
 {
-    StreamBlockJob *s = opaque;
-    StreamCompleteData *data;
+    StreamBlockJob *s = container_of(job, StreamBlockJob, common.job);
     BlockBackend *blk = s->common.blk;
     BlockDriverState *bs = blk_bs(blk);
     BlockDriverState *base = s->base;
+    int64_t len;
     int64_t offset = 0;
     uint64_t delay_ns = 0;
     int error = 0;
@@ -118,11 +125,12 @@ static void coroutine_fn stream_run(void *opaque)
         goto out;
     }
 
-    s->common.len = bdrv_getlength(bs);
-    if (s->common.len < 0) {
-        ret = s->common.len;
+    len = bdrv_getlength(bs);
+    if (len < 0) {
+        ret = len;
         goto out;
     }
+    job_progress_set_remaining(&s->common.job, len);
 
     buf = qemu_blockalign(bs, STREAM_BUFFER_SIZE);
 
@@ -135,14 +143,14 @@ static void coroutine_fn stream_run(void *opaque)
         bdrv_enable_copy_on_read(bs);
     }
 
-    for ( ; offset < s->common.len; offset += n) {
+    for ( ; offset < len; offset += n) {
         bool copy;
 
         /* Note that even when no rate limit is applied we need to yield
          * with no pending I/O here so that bdrv_drain_all() returns.
          */
-        block_job_sleep_ns(&s->common, delay_ns);
-        if (block_job_is_cancelled(&s->common)) {
+        job_sleep_ns(&s->common.job, delay_ns);
+        if (job_is_cancelled(&s->common.job)) {
             break;
         }
 
@@ -159,7 +167,7 @@ static void coroutine_fn stream_run(void *opaque)
 
             /* Finish early if end of backing file has been reached */
             if (ret == 0 && n == 0) {
-                n = s->common.len - offset;
+                n = len - offset;
             }
 
             copy = (ret == 1);
@@ -185,9 +193,9 @@ static void coroutine_fn stream_run(void *opaque)
         ret = 0;
 
         /* Publish progress */
-        s->common.offset += n;
-        if (copy && s->common.speed) {
-            delay_ns = ratelimit_calculate_delay(&s->limit, n);
+        job_progress_update(&s->common.job, n);
+        if (copy) {
+            delay_ns = block_job_ratelimit_get_delay(&s->common, n);
         } else {
             delay_ns = 0;
         }
@@ -204,42 +212,42 @@ static void coroutine_fn stream_run(void *opaque)
 
 out:
     /* Modify backing chain and close BDSes in main loop */
-    data = g_malloc(sizeof(*data));
-    data->ret = ret;
-    block_job_defer_to_main_loop(&s->common, stream_complete, data);
-}
-
-static void stream_set_speed(BlockJob *job, int64_t speed, Error **errp)
-{
-    StreamBlockJob *s = container_of(job, StreamBlockJob, common);
-
-    if (speed < 0) {
-        error_setg(errp, QERR_INVALID_PARAMETER, "speed");
-        return;
-    }
-    ratelimit_set_speed(&s->limit, speed, SLICE_TIME);
+    return ret;
 }
 
 static const BlockJobDriver stream_job_driver = {
-    .instance_size = sizeof(StreamBlockJob),
-    .job_type      = BLOCK_JOB_TYPE_STREAM,
-    .set_speed     = stream_set_speed,
-    .start         = stream_run,
+    .job_driver = {
+        .instance_size = sizeof(StreamBlockJob),
+        .job_type      = JOB_TYPE_STREAM,
+        .free          = block_job_free,
+        .run           = stream_run,
+        .prepare       = stream_prepare,
+        .abort         = stream_abort,
+        .clean         = stream_clean,
+        .user_resume   = block_job_user_resume,
+        .drain         = block_job_drain,
+    },
 };
 
 void stream_start(const char *job_id, BlockDriverState *bs,
                   BlockDriverState *base, const char *backing_file_str,
-                  int64_t speed, BlockdevOnError on_error, Error **errp)
+                  int creation_flags, int64_t speed,
+                  BlockdevOnError on_error, Error **errp)
 {
     StreamBlockJob *s;
     BlockDriverState *iter;
-    int orig_bs_flags;
+    bool bs_read_only;
+
+    if (bdrv_freeze_backing_chain(bs, base, errp) < 0) {
+        return;
+    }
 
     /* Make sure that the image is opened in read-write mode */
-    orig_bs_flags = bdrv_get_flags(bs);
-    if (!(orig_bs_flags & BDRV_O_RDWR)) {
-        if (bdrv_reopen(bs, orig_bs_flags | BDRV_O_RDWR, errp) != 0) {
-            return;
+    bs_read_only = bdrv_is_read_only(bs);
+    if (bs_read_only) {
+        if (bdrv_reopen_set_read_only(bs, false, errp) != 0) {
+            bs_read_only = false;
+            goto fail;
         }
     }
 
@@ -251,7 +259,7 @@ void stream_start(const char *job_id, BlockDriverState *bs,
                          BLK_PERM_GRAPH_MOD,
                          BLK_PERM_CONSISTENT_READ | BLK_PERM_WRITE_UNCHANGED |
                          BLK_PERM_WRITE,
-                         speed, BLOCK_JOB_DEFAULT, NULL, NULL, errp);
+                         speed, creation_flags, NULL, NULL, errp);
     if (!s) {
         goto fail;
     }
@@ -268,15 +276,17 @@ void stream_start(const char *job_id, BlockDriverState *bs,
 
     s->base = base;
     s->backing_file_str = g_strdup(backing_file_str);
-    s->bs_flags = orig_bs_flags;
+    s->bs_read_only = bs_read_only;
+    s->chain_frozen = true;
 
     s->on_error = on_error;
     trace_stream_start(bs, base, s);
-    block_job_start(&s->common);
+    job_start(&s->common.job);
     return;
 
 fail:
-    if (orig_bs_flags != bdrv_get_flags(bs)) {
-        bdrv_reopen(bs, orig_bs_flags, NULL);
+    if (bs_read_only) {
+        bdrv_reopen_set_read_only(bs, true, NULL);
     }
+    bdrv_unfreeze_backing_chain(bs, base);
 }

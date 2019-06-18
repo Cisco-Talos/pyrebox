@@ -6,21 +6,18 @@
  * Copyright (c) 2012 SUSE LINUX Products GmbH
  * Copyright (c) 2012 IBM Corp.
  *
- * This library is free software; you can redistribute it and/or
- * modify it under the terms of the GNU Lesser General Public
- * License as published by the Free Software Foundation; either
- * version 2.1 of the License, or (at your option) any later version.
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
  *
- * This library is distributed in the hope that it will be useful,
+ * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * Lesser General Public License for more details.
+ * General Public License for more details.
  *
- * You should have received a copy of the GNU Lesser General Public
- * License along with this library; if not, see
- * <http://www.gnu.org/licenses/lgpl-2.1.html>
- * Contributions after 2012-12-11 are licensed under the terms of the
- * GNU GPL, version 2 or (at your option) any later version.
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, see <http://www.gnu.org/licenses/>.
  */
 
 #include "qemu/osdep.h"
@@ -30,7 +27,6 @@
 #include "kvm_s390x.h"
 #include "sysemu/kvm.h"
 #include "qemu-common.h"
-#include "qemu/cutils.h"
 #include "qemu/timer.h"
 #include "qemu/error-report.h"
 #include "trace.h"
@@ -38,7 +34,6 @@
 #include "qapi/qapi-visit-misc.h"
 #include "qapi/qapi-visit-run-state.h"
 #include "sysemu/hw_accel.h"
-#include "exec/exec-all.h"
 #include "hw/qdev-properties.h"
 #ifndef CONFIG_USER_ONLY
 #include "hw/hw.h"
@@ -147,6 +142,11 @@ static void s390_cpu_full_reset(CPUState *s)
     env->cregs[0] = CR0_RESET;
     env->cregs[14] = CR14_RESET;
 
+#if defined(CONFIG_USER_ONLY)
+    /* user mode should always be allowed to use the full FPU */
+    env->cregs[0] |= CR0_AFP;
+#endif
+
     /* architectured initial value for Breaking-Event-Address register */
     env->gbea = 1;
 
@@ -220,11 +220,18 @@ static void s390_cpu_realizefn(DeviceState *dev, Error **errp)
 #endif
     s390_cpu_gdb_init(cs);
     qemu_init_vcpu(cs);
-#if !defined(CONFIG_USER_ONLY)
-    run_on_cpu(cs, s390_do_cpu_full_reset, RUN_ON_CPU_NULL);
-#else
-    cpu_reset(cs);
-#endif
+
+    /*
+     * KVM requires the initial CPU reset ioctl to be executed on the target
+     * CPU thread. CPU hotplug under single-threaded TCG will not work with
+     * run_on_cpu(), as run_on_cpu() will not work properly if called while
+     * the main thread is already running but the CPU hasn't been realized.
+     */
+    if (kvm_enabled()) {
+        run_on_cpu(cs, s390_do_cpu_full_reset, RUN_ON_CPU_NULL);
+    } else {
+        cpu_reset(cs);
+    }
 
     scc->parent_realize(dev, &err);
 out:
@@ -276,9 +283,6 @@ static void s390_cpu_initfn(Object *obj)
     CPUState *cs = CPU(obj);
     S390CPU *cpu = S390_CPU(obj);
     CPUS390XState *env = &cpu->env;
-#if !defined(CONFIG_USER_ONLY)
-    struct tm tm;
-#endif
 
     cs->env_ptr = env;
     cs->halted = 1;
@@ -287,10 +291,6 @@ static void s390_cpu_initfn(Object *obj)
                         s390_cpu_get_crash_info_qom, NULL, NULL, NULL, NULL);
     s390_cpu_model_register_props(obj);
 #if !defined(CONFIG_USER_ONLY)
-    qemu_get_timedate(&tm, 0);
-    env->tod_offset = TOD_UNIX_EPOCH +
-                      (time2tod(mktimegm(&tm)) * 1000000000ULL);
-    env->tod_basetime = 0;
     env->tod_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, s390x_tod_timer, cpu);
     env->cpu_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, s390x_cpu_timer, cpu);
     s390_cpu_set_state(S390_CPU_STATE_STOPPED, cpu);
@@ -391,38 +391,6 @@ unsigned int s390_cpu_set_state(uint8_t cpu_state, S390CPU *cpu)
     return s390_count_running_cpus();
 }
 
-int s390_get_clock(uint8_t *tod_high, uint64_t *tod_low)
-{
-    int r = 0;
-
-    if (kvm_enabled()) {
-        r = kvm_s390_get_clock_ext(tod_high, tod_low);
-        if (r == -ENXIO) {
-            return kvm_s390_get_clock(tod_high, tod_low);
-        }
-    } else {
-        /* Fixme TCG */
-        *tod_high = 0;
-        *tod_low = 0;
-    }
-
-    return r;
-}
-
-int s390_set_clock(uint8_t *tod_high, uint64_t *tod_low)
-{
-    int r = 0;
-
-    if (kvm_enabled()) {
-        r = kvm_s390_set_clock_ext(tod_high, tod_low);
-        if (r == -ENXIO) {
-            return kvm_s390_set_clock(tod_high, tod_low);
-        }
-    }
-    /* Fixme TCG */
-    return r;
-}
-
 int s390_set_memory_limit(uint64_t new_limit, uint64_t *hw_limit)
 {
     if (kvm_enabled()) {
@@ -453,16 +421,6 @@ void s390_crypto_reset(void)
     if (kvm_enabled()) {
         kvm_s390_crypto_reset();
     }
-}
-
-bool s390_get_squash_mcss(void)
-{
-    if (object_property_get_bool(OBJECT(qdev_get_machine()), "s390-squash-mcss",
-                                 NULL)) {
-        return true;
-    }
-
-    return false;
 }
 
 void s390_enable_css_support(S390CPU *cpu)

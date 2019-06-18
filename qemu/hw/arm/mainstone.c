@@ -21,7 +21,6 @@
 #include "hw/devices.h"
 #include "hw/boards.h"
 #include "hw/block/flash.h"
-#include "sysemu/block-backend.h"
 #include "hw/sysbus.h"
 #include "exec/address-spaces.h"
 #include "sysemu/qtest.h"
@@ -149,12 +148,11 @@ static void mainstone_common_init(MemoryRegion *address_space_mem,
             exit(1);
         }
 
-        if (!pflash_cfi01_register(mainstone_flash_base[i], NULL,
+        if (!pflash_cfi01_register(mainstone_flash_base[i],
                                    i ? "mainstone.flash1" : "mainstone.flash0",
                                    MAINSTONE_FLASH,
                                    blk_by_legacy_dinfo(dinfo),
-                                   sector_len, MAINSTONE_FLASH / sector_len,
-                                   4, 0, 0, 0, 0, be)) {
+                                   sector_len, 4, 0, 0, 0, 0, be)) {
             error_report("Error registering flash memory");
             exit(1);
         }

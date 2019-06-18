@@ -50,11 +50,12 @@
  */
 
 #include "qemu/osdep.h"
+#include "qemu/units.h"
 #include "qapi/error.h"
-#include "qapi/qmp/qdict.h"
 #include "qapi/qobject-input-visitor.h"
 #include "qapi/qapi-visit-block-core.h"
 #include "block/block_int.h"
+#include "block/qdict.h"
 #include "sysemu/block-backend.h"
 #include "qemu/module.h"
 #include "qemu/option.h"
@@ -83,11 +84,9 @@
 /* Command line option for static images. */
 #define BLOCK_OPT_STATIC "static"
 
-#define KiB     1024
-#define MiB     (KiB * KiB)
-
 #define SECTOR_SIZE 512
-#define DEFAULT_CLUSTER_SIZE (1 * MiB)
+#define DEFAULT_CLUSTER_SIZE 1048576
+/* Note: can't use 1 * MiB, because it's passed to stringify() */
 
 #if defined(CONFIG_VDI_DEBUG)
 #define VDI_DEBUG 1
@@ -189,55 +188,56 @@ typedef struct {
 
 static void vdi_header_to_cpu(VdiHeader *header)
 {
-    le32_to_cpus(&header->signature);
-    le32_to_cpus(&header->version);
-    le32_to_cpus(&header->header_size);
-    le32_to_cpus(&header->image_type);
-    le32_to_cpus(&header->image_flags);
-    le32_to_cpus(&header->offset_bmap);
-    le32_to_cpus(&header->offset_data);
-    le32_to_cpus(&header->cylinders);
-    le32_to_cpus(&header->heads);
-    le32_to_cpus(&header->sectors);
-    le32_to_cpus(&header->sector_size);
-    le64_to_cpus(&header->disk_size);
-    le32_to_cpus(&header->block_size);
-    le32_to_cpus(&header->block_extra);
-    le32_to_cpus(&header->blocks_in_image);
-    le32_to_cpus(&header->blocks_allocated);
-    qemu_uuid_bswap(&header->uuid_image);
-    qemu_uuid_bswap(&header->uuid_last_snap);
-    qemu_uuid_bswap(&header->uuid_link);
-    qemu_uuid_bswap(&header->uuid_parent);
+    header->signature = le32_to_cpu(header->signature);
+    header->version = le32_to_cpu(header->version);
+    header->header_size = le32_to_cpu(header->header_size);
+    header->image_type = le32_to_cpu(header->image_type);
+    header->image_flags = le32_to_cpu(header->image_flags);
+    header->offset_bmap = le32_to_cpu(header->offset_bmap);
+    header->offset_data = le32_to_cpu(header->offset_data);
+    header->cylinders = le32_to_cpu(header->cylinders);
+    header->heads = le32_to_cpu(header->heads);
+    header->sectors = le32_to_cpu(header->sectors);
+    header->sector_size = le32_to_cpu(header->sector_size);
+    header->disk_size = le64_to_cpu(header->disk_size);
+    header->block_size = le32_to_cpu(header->block_size);
+    header->block_extra = le32_to_cpu(header->block_extra);
+    header->blocks_in_image = le32_to_cpu(header->blocks_in_image);
+    header->blocks_allocated = le32_to_cpu(header->blocks_allocated);
+    header->uuid_image = qemu_uuid_bswap(header->uuid_image);
+    header->uuid_last_snap = qemu_uuid_bswap(header->uuid_last_snap);
+    header->uuid_link = qemu_uuid_bswap(header->uuid_link);
+    header->uuid_parent = qemu_uuid_bswap(header->uuid_parent);
 }
 
 static void vdi_header_to_le(VdiHeader *header)
 {
-    cpu_to_le32s(&header->signature);
-    cpu_to_le32s(&header->version);
-    cpu_to_le32s(&header->header_size);
-    cpu_to_le32s(&header->image_type);
-    cpu_to_le32s(&header->image_flags);
-    cpu_to_le32s(&header->offset_bmap);
-    cpu_to_le32s(&header->offset_data);
-    cpu_to_le32s(&header->cylinders);
-    cpu_to_le32s(&header->heads);
-    cpu_to_le32s(&header->sectors);
-    cpu_to_le32s(&header->sector_size);
-    cpu_to_le64s(&header->disk_size);
-    cpu_to_le32s(&header->block_size);
-    cpu_to_le32s(&header->block_extra);
-    cpu_to_le32s(&header->blocks_in_image);
-    cpu_to_le32s(&header->blocks_allocated);
-    qemu_uuid_bswap(&header->uuid_image);
-    qemu_uuid_bswap(&header->uuid_last_snap);
-    qemu_uuid_bswap(&header->uuid_link);
-    qemu_uuid_bswap(&header->uuid_parent);
+    header->signature = cpu_to_le32(header->signature);
+    header->version = cpu_to_le32(header->version);
+    header->header_size = cpu_to_le32(header->header_size);
+    header->image_type = cpu_to_le32(header->image_type);
+    header->image_flags = cpu_to_le32(header->image_flags);
+    header->offset_bmap = cpu_to_le32(header->offset_bmap);
+    header->offset_data = cpu_to_le32(header->offset_data);
+    header->cylinders = cpu_to_le32(header->cylinders);
+    header->heads = cpu_to_le32(header->heads);
+    header->sectors = cpu_to_le32(header->sectors);
+    header->sector_size = cpu_to_le32(header->sector_size);
+    header->disk_size = cpu_to_le64(header->disk_size);
+    header->block_size = cpu_to_le32(header->block_size);
+    header->block_extra = cpu_to_le32(header->block_extra);
+    header->blocks_in_image = cpu_to_le32(header->blocks_in_image);
+    header->blocks_allocated = cpu_to_le32(header->blocks_allocated);
+    header->uuid_image = qemu_uuid_bswap(header->uuid_image);
+    header->uuid_last_snap = qemu_uuid_bswap(header->uuid_last_snap);
+    header->uuid_link = qemu_uuid_bswap(header->uuid_link);
+    header->uuid_parent = qemu_uuid_bswap(header->uuid_parent);
 }
 
 static void vdi_header_print(VdiHeader *header)
 {
-    char uuid[37];
+    char uuidstr[37];
+    QemuUUID uuid;
     logout("text        %s", header->text);
     logout("signature   0x%08x\n", header->signature);
     logout("header size 0x%04x\n", header->header_size);
@@ -256,14 +256,18 @@ static void vdi_header_print(VdiHeader *header)
     logout("block extra 0x%04x\n", header->block_extra);
     logout("blocks tot. 0x%04x\n", header->blocks_in_image);
     logout("blocks all. 0x%04x\n", header->blocks_allocated);
-    qemu_uuid_unparse(&header->uuid_image, uuid);
-    logout("uuid image  %s\n", uuid);
-    qemu_uuid_unparse(&header->uuid_last_snap, uuid);
-    logout("uuid snap   %s\n", uuid);
-    qemu_uuid_unparse(&header->uuid_link, uuid);
-    logout("uuid link   %s\n", uuid);
-    qemu_uuid_unparse(&header->uuid_parent, uuid);
-    logout("uuid parent %s\n", uuid);
+    uuid = header->uuid_image;
+    qemu_uuid_unparse(&uuid, uuidstr);
+    logout("uuid image  %s\n", uuidstr);
+    uuid = header->uuid_last_snap;
+    qemu_uuid_unparse(&uuid, uuidstr);
+    logout("uuid snap   %s\n", uuidstr);
+    uuid = header->uuid_link;
+    qemu_uuid_unparse(&uuid, uuidstr);
+    logout("uuid link   %s\n", uuidstr);
+    uuid = header->uuid_parent;
+    qemu_uuid_unparse(&uuid, uuidstr);
+    logout("uuid parent %s\n", uuidstr);
 }
 
 static int coroutine_fn vdi_co_check(BlockDriverState *bs, BdrvCheckResult *res,
@@ -370,6 +374,7 @@ static int vdi_open(BlockDriverState *bs, QDict *options, int flags,
     size_t bmap_size;
     int ret;
     Error *local_err = NULL;
+    QemuUUID uuid_link, uuid_parent;
 
     bs->file = bdrv_open_child(NULL, options, "file", bs, &child_file,
                                false, errp);
@@ -396,6 +401,9 @@ static int vdi_open(BlockDriverState *bs, QDict *options, int flags,
         ret = -ENOTSUP;
         goto fail;
     }
+
+    uuid_link = header.uuid_link;
+    uuid_parent = header.uuid_parent;
 
     if (header.disk_size % SECTOR_SIZE != 0) {
         /* 'VBoxManage convertfromraw' can create images with odd disk sizes.
@@ -434,7 +442,8 @@ static int vdi_open(BlockDriverState *bs, QDict *options, int flags,
         goto fail;
     } else if (header.block_size != DEFAULT_CLUSTER_SIZE) {
         error_setg(errp, "unsupported VDI image (block size %" PRIu32
-                   " is not %u)", header.block_size, DEFAULT_CLUSTER_SIZE);
+                         " is not %" PRIu32 ")",
+                   header.block_size, DEFAULT_CLUSTER_SIZE);
         ret = -ENOTSUP;
         goto fail;
     } else if (header.disk_size >
@@ -445,11 +454,11 @@ static int vdi_open(BlockDriverState *bs, QDict *options, int flags,
                    (uint64_t)header.blocks_in_image * header.block_size);
         ret = -ENOTSUP;
         goto fail;
-    } else if (!qemu_uuid_is_null(&header.uuid_link)) {
+    } else if (!qemu_uuid_is_null(&uuid_link)) {
         error_setg(errp, "unsupported VDI image (non-NULL link UUID)");
         ret = -ENOTSUP;
         goto fail;
-    } else if (!qemu_uuid_is_null(&header.uuid_parent)) {
+    } else if (!qemu_uuid_is_null(&uuid_parent)) {
         error_setg(errp, "unsupported VDI image (non-NULL parent UUID)");
         ret = -ENOTSUP;
         goto fail;
@@ -734,6 +743,7 @@ static int coroutine_fn vdi_co_do_create(BlockdevCreateOptions *create_options,
     BlockDriverState *bs_file = NULL;
     BlockBackend *blk = NULL;
     uint32_t *bmap = NULL;
+    QemuUUID uuid;
 
     assert(create_options->driver == BLOCKDEV_DRIVER_VDI);
     vdi_opts = &create_options->u.vdi;
@@ -820,8 +830,10 @@ static int coroutine_fn vdi_co_do_create(BlockdevCreateOptions *create_options,
     if (image_type == VDI_TYPE_STATIC) {
         header.blocks_allocated = blocks;
     }
-    qemu_uuid_generate(&header.uuid_image);
-    qemu_uuid_generate(&header.uuid_last_snap);
+    qemu_uuid_generate(&uuid);
+    header.uuid_image = uuid;
+    qemu_uuid_generate(&uuid);
+    header.uuid_last_snap = uuid;
     /* There is no need to set header.uuid_link or header.uuid_parent here. */
     if (VDI_DEBUG) {
         vdi_header_print(&header);
@@ -865,6 +877,7 @@ static int coroutine_fn vdi_co_do_create(BlockdevCreateOptions *create_options,
         }
     }
 
+    ret = 0;
 exit:
     blk_unref(blk);
     bdrv_unref(bs_file);
@@ -933,7 +946,11 @@ static int coroutine_fn vdi_co_create_opts(const char *filename, QemuOpts *opts,
     }
 
     /* Get the QAPI object */
-    v = qobject_input_visitor_new_keyval(QOBJECT(qdict));
+    v = qobject_input_visitor_new_flat_confused(qdict, errp);
+    if (!v) {
+        ret = -EINVAL;
+        goto done;
+    }
     visit_type_BlockdevCreateOptions(v, NULL, &create_options, &local_err);
     visit_free(v);
 
@@ -951,7 +968,7 @@ static int coroutine_fn vdi_co_create_opts(const char *filename, QemuOpts *opts,
     /* Create the vdi image (format layer) */
     ret = vdi_co_do_create(create_options, block_size, errp);
 done:
-    QDECREF(qdict);
+    qobject_unref(qdict);
     qapi_free_BlockdevCreateOptions(create_options);
     bdrv_unref(bs_file);
     return ret;

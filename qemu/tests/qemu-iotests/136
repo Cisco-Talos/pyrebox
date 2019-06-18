@@ -24,7 +24,7 @@ import os
 
 interval_length = 10
 nsec_per_sec = 1000000000
-op_latency = nsec_per_sec / 1000 # See qtest_latency_ns in accounting.c
+op_latency = nsec_per_sec // 1000 # See qtest_latency_ns in accounting.c
 bad_sector = 8192
 bad_offset = bad_sector * 512
 blkdebug_file = os.path.join(iotests.test_dir, 'blkdebug.conf')
@@ -203,7 +203,7 @@ sector = "%d"
         if (self.accounted_ops(read = True, write = True, flush = True) != 0):
             self.assertLess(0, stats['idle_time_ns'])
         else:
-            self.assertFalse(stats.has_key('idle_time_ns'))
+            self.assertFalse('idle_time_ns' in stats)
 
         # This test does not alter these, so they must be all 0
         self.assertEqual(0, stats['rd_merged'])

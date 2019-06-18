@@ -33,7 +33,6 @@
 #include "cpu.h"
 #include "qemu-common.h"
 #include "migration/vmstate.h"
-#include "exec/exec-all.h"
 
 
 static void xtensa_cpu_set_pc(CPUState *cs, vaddr value)
@@ -150,7 +149,7 @@ static void xtensa_cpu_initfn(Object *obj)
 #ifndef CONFIG_USER_ONLY
     env->address_space_er = g_malloc(sizeof(*env->address_space_er));
     env->system_er = g_malloc(sizeof(*env->system_er));
-    memory_region_init_io(env->system_er, NULL, NULL, env, "er",
+    memory_region_init_io(env->system_er, obj, NULL, env, "er",
                           UINT64_C(0x100000000));
     address_space_init(env->address_space_er, env->system_er, "ER");
 #endif
@@ -187,7 +186,7 @@ static void xtensa_cpu_class_init(ObjectClass *oc, void *data)
 #else
     cc->do_unaligned_access = xtensa_cpu_do_unaligned_access;
     cc->get_phys_page_debug = xtensa_cpu_get_phys_page_debug;
-    cc->do_unassigned_access = xtensa_cpu_do_unassigned_access;
+    cc->do_transaction_failed = xtensa_cpu_do_transaction_failed;
 #endif
     cc->debug_excp_handler = xtensa_breakpoint_handler;
     cc->disas_set_info = xtensa_cpu_disas_set_info;

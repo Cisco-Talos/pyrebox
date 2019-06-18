@@ -23,6 +23,8 @@ struct ESPState {
     int32_t ti_size;
     uint32_t ti_rptr, ti_wptr;
     uint32_t status;
+    uint32_t deferred_status;
+    bool deferred_complete;
     uint32_t dma;
     uint8_t ti_buf[TI_BUFSZ];
     SCSIBus bus;
@@ -131,11 +133,6 @@ typedef struct {
 #define TCHI_FAS100A 0x4
 #define TCHI_AM53C974 0x12
 
-ESPState *esp_init(hwaddr espaddr, int it_shift,
-                   ESPDMAMemoryReadWriteFunc dma_memory_read,
-                   ESPDMAMemoryReadWriteFunc dma_memory_write,
-                   void *dma_opaque, qemu_irq irq, qemu_irq *reset,
-                   qemu_irq *dma_enable);
 void esp_dma_enable(ESPState *s, int irq, int level);
 void esp_request_cancelled(SCSIRequest *req);
 void esp_command_complete(SCSIRequest *req, uint32_t status, size_t resid);

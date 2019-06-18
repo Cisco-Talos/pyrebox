@@ -53,9 +53,24 @@ The ``_{endian}`` infix is omitted for target-endian accesses.
 The target endian accessors are only available to source
 files which are built per-target.
 
+There are also functions which take the size as an argument:
+
+load: ``ldn{endian}_p(ptr, sz)``
+
+which performs an unsigned load of ``sz`` bytes from ``ptr``
+as an ``{endian}`` order value and returns it in a uint64_t.
+
+store: ``stn{endian}_p(ptr, sz, val)``
+
+which stores ``val`` to ``ptr`` as an ``{endian}`` order value
+of size ``sz`` bytes.
+
+
 Regexes for git grep
  - ``\<ldf\?[us]\?[bwlq]\(_[hbl]e\)\?_p\>``
  - ``\<stf\?[bwlq]\(_[hbl]e\)\?_p\>``
+ - ``\<ldn_\([hbl]e\)?_p\>``
+ - ``\<stn_\([hbl]e\)?_p\>``
 
 ``cpu_{ld,st}_*``
 ~~~~~~~~~~~~~~~~~
@@ -238,6 +253,22 @@ Regexes for git grep
  - ``\<address_space_ldu\?[bwql]\(_[lb]e\)\?\>``
  - ``\<address_space_st[bwql]\(_[lb]e\)\?\>``
 
+``address_space_write_rom``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+This function performs a write by physical address like
+``address_space_write``, except that if the write is to a ROM then
+the ROM contents will be modified, even though a write by the guest
+CPU to the ROM would be ignored. This is used for non-guest writes
+like writes from the gdb debug stub or initial loading of ROM contents.
+
+Note that portions of the write which attempt to write data to a
+device will be silently ignored -- only real RAM and ROM will
+be written to.
+
+Regexes for git grep
+ - ``address_space_write_rom``
+
 ``{ld,st}*_phys``
 ~~~~~~~~~~~~~~~~~
 
@@ -299,25 +330,6 @@ For new code they are better avoided:
 
 Regexes for git grep
  - ``\<cpu_physical_memory_\(read\|write\|rw\)\>``
-
-``cpu_physical_memory_write_rom``
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-This function performs a write by physical address like
-``address_space_write``, except that if the write is to a ROM then
-the ROM contents will be modified, even though a write by the guest
-CPU to the ROM would be ignored.
-
-Note that unlike ``cpu_physical_memory_write()`` this function takes
-an AddressSpace argument, but unlike ``address_space_write()`` this
-function does not take a ``MemTxAttrs`` or return a ``MemTxResult``.
-
-**TODO**: we should probably clean up this inconsistency and
-turn the function into ``address_space_write_rom`` with an API
-matching ``address_space_write``.
-
-``cpu_physical_memory_write_rom``
-
 
 ``cpu_memory_rw_debug``
 ~~~~~~~~~~~~~~~~~~~~~~~

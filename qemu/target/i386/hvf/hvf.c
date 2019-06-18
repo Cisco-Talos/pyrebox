@@ -13,10 +13,10 @@
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * Lesser General Public License for more details.
+ * General Public License for more details.
  *
- * You should have received a copy of the GNU Lesser General Public
- * License along with this program; if not, see <http://www.gnu.org/licenses/>.
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, see <http://www.gnu.org/licenses/>.
  *
  * This file contain code under public domain from the hvdos project:
  * https://github.com/mist64/hvdos
@@ -65,8 +65,6 @@
 #include <Hypervisor/hv_vmx.h>
 
 #include "exec/address-spaces.h"
-#include "exec/exec-all.h"
-#include "exec/ioport.h"
 #include "hw/i386/apic_internal.h"
 #include "hw/boards.h"
 #include "qemu/main-loop.h"
@@ -74,9 +72,7 @@
 #include "sysemu/sysemu.h"
 #include "target/i386/cpu.h"
 
-pthread_rwlock_t mem_lock = PTHREAD_RWLOCK_INITIALIZER;
 HVFState *hvf_state;
-int hvf_disabled = 1;
 
 static void assert_hvf_ok(hv_return_t ret)
 {
@@ -503,7 +499,6 @@ void hvf_reset_vcpu(CPUState *cpu) {
     }
 
     hv_vm_sync_tsc(0);
-    cpu->halted = 0;
     hv_vcpu_invalidate_tlb(cpu->hvf_fd);
     hv_vcpu_flush(cpu->hvf_fd);
 }
@@ -586,10 +581,8 @@ int hvf_init_vcpu(CPUState *cpu)
 
     wvmcs(cpu->hvf_fd, VMCS_TPR_THRESHOLD, 0);
 
-    hvf_reset_vcpu(cpu);
-
     x86cpu = X86_CPU(cpu);
-    x86cpu->env.kvm_xsave_buf = qemu_memalign(4096, 4096);
+    x86cpu->env.xsave_buf = qemu_memalign(4096, 4096);
 
     hv_vcpu_enable_native_msr(cpu->hvf_fd, MSR_STAR, 1);
     hv_vcpu_enable_native_msr(cpu->hvf_fd, MSR_LSTAR, 1);
@@ -605,11 +598,6 @@ int hvf_init_vcpu(CPUState *cpu)
     hv_vcpu_enable_native_msr(cpu->hvf_fd, MSR_IA32_SYSENTER_ESP, 1);
 
     return 0;
-}
-
-void hvf_disable(int shouldDisable)
-{
-    hvf_disabled = shouldDisable;
 }
 
 static void hvf_store_events(CPUState *cpu, uint32_t ins_len, uint64_t idtvec_info)
@@ -667,8 +655,6 @@ int hvf_vcpu_exec(CPUState *cpu)
     CPUX86State *env = &x86_cpu->env;
     int ret = 0;
     uint64_t rip = 0;
-
-    cpu->halted = 0;
 
     if (hvf_process_events(cpu)) {
         return EXCP_HLT;
@@ -937,7 +923,7 @@ int hvf_vcpu_exec(CPUState *cpu)
     return ret;
 }
 
-static bool hvf_allowed;
+bool hvf_allowed;
 
 static int hvf_accel_init(MachineState *ms)
 {
@@ -945,7 +931,6 @@ static int hvf_accel_init(MachineState *ms)
     hv_return_t ret;
     HVFState *s;
 
-    hvf_disable(0);
     ret = hv_vm_create(HV_VM_DEFAULT);
     assert_hvf_ok(ret);
 

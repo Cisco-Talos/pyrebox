@@ -5,7 +5,7 @@
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
- * as published by the Free Software Foundation; either version 2 of
+ * as published by the Free Software Foundation; either version 2.1 of
  * the License, or (at your option) any later version.
  *
  * This library is distributed in the hope that it will be useful, but
@@ -13,7 +13,7 @@
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
  * Lesser General Public License for more details.
  *
- * You should have received a copy of the GNU General Public License
+ * You should have received a copy of the GNU Lesser General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
@@ -132,13 +132,13 @@ static inline void gen_goto_tb(CPUMoxieState *env, DisasContext *ctx,
     if (use_goto_tb(ctx, dest)) {
         tcg_gen_goto_tb(n);
         tcg_gen_movi_i32(cpu_pc, dest);
-        tcg_gen_exit_tb((uintptr_t)ctx->tb + n);
+        tcg_gen_exit_tb(ctx->tb, n);
     } else {
         tcg_gen_movi_i32(cpu_pc, dest);
         if (ctx->singlestep_enabled) {
             gen_helper_debug(cpu_env);
         }
-        tcg_gen_exit_tb(0);
+        tcg_gen_exit_tb(NULL, 0);
     }
 }
 
@@ -328,7 +328,7 @@ static int decode_opc(MoxieCPU *cpu, DisasContext *ctx)
                 tcg_temp_free_i32(t1);
 
                 /* Jump... */
-                tcg_gen_exit_tb(0);
+                tcg_gen_exit_tb(NULL, 0);
 
                 ctx->bstate = BS_BRANCH;
             }
@@ -472,14 +472,14 @@ static int decode_opc(MoxieCPU *cpu, DisasContext *ctx)
                 tcg_gen_mov_i32(cpu_pc, REG(fnreg));
                 tcg_temp_free_i32(t1);
                 tcg_temp_free_i32(t2);
-                tcg_gen_exit_tb(0);
+                tcg_gen_exit_tb(NULL, 0);
                 ctx->bstate = BS_BRANCH;
             }
             break;
         case 0x1a: /* jmpa */
             {
                 tcg_gen_movi_i32(cpu_pc, cpu_ldl_code(env, ctx->pc+2));
-                tcg_gen_exit_tb(0);
+                tcg_gen_exit_tb(NULL, 0);
                 ctx->bstate = BS_BRANCH;
                 length = 6;
             }
@@ -584,7 +584,7 @@ static int decode_opc(MoxieCPU *cpu, DisasContext *ctx)
             {
                 int reg = (opcode >> 4) & 0xf;
                 tcg_gen_mov_i32(cpu_pc, REG(reg));
-                tcg_gen_exit_tb(0);
+                tcg_gen_exit_tb(NULL, 0);
                 ctx->bstate = BS_BRANCH;
             }
             break;
@@ -878,7 +878,7 @@ void gen_intermediate_code(CPUState *cs, struct TranslationBlock *tb)
             gen_goto_tb(env, &ctx, 0, ctx.pc);
             break;
         case BS_EXCP:
-            tcg_gen_exit_tb(0);
+            tcg_gen_exit_tb(NULL, 0);
             break;
         case BS_BRANCH:
         default:

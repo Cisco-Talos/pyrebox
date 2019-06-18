@@ -80,7 +80,7 @@ static void blkverify_parse_filename(const char *filename, QDict *options,
     }
 
     /* TODO Implement option pass-through and set raw.filename here */
-    raw_path = qstring_from_substr(filename, 0, c - filename - 1);
+    raw_path = qstring_from_substr(filename, 0, c - filename);
     qdict_put(options, "x-raw", raw_path);
 
     /* TODO Allow multi-level nesting and set file.filename here */
@@ -140,6 +140,9 @@ static int blkverify_open(BlockDriverState *bs, QDict *options, int flags,
         error_propagate(errp, local_err);
         goto fail;
     }
+
+    bs->supported_write_flags = BDRV_REQ_WRITE_UNCHANGED;
+    bs->supported_zero_flags = BDRV_REQ_WRITE_UNCHANGED;
 
     ret = 0;
 fail:
@@ -278,26 +281,9 @@ static bool blkverify_recurse_is_first_non_filter(BlockDriverState *bs,
     return bdrv_recurse_is_first_non_filter(s->test_file->bs, candidate);
 }
 
-static void blkverify_refresh_filename(BlockDriverState *bs, QDict *options)
+static void blkverify_refresh_filename(BlockDriverState *bs)
 {
     BDRVBlkverifyState *s = bs->opaque;
-
-    /* bs->file->bs has already been refreshed */
-    bdrv_refresh_filename(s->test_file->bs);
-
-    if (bs->file->bs->full_open_options
-        && s->test_file->bs->full_open_options)
-    {
-        QDict *opts = qdict_new();
-        qdict_put_str(opts, "driver", "blkverify");
-
-        QINCREF(bs->file->bs->full_open_options);
-        qdict_put(opts, "raw", bs->file->bs->full_open_options);
-        QINCREF(s->test_file->bs->full_open_options);
-        qdict_put(opts, "test", s->test_file->bs->full_open_options);
-
-        bs->full_open_options = opts;
-    }
 
     if (bs->file->bs->exact_filename[0]
         && s->test_file->bs->exact_filename[0])
@@ -313,6 +299,15 @@ static void blkverify_refresh_filename(BlockDriverState *bs, QDict *options)
     }
 }
 
+static char *blkverify_dirname(BlockDriverState *bs, Error **errp)
+{
+    /* In general, there are two BDSs with different dirnames below this one;
+     * so there is no unique dirname we could return (unless both are equal by
+     * chance). Therefore, to be consistent, just always return NULL. */
+    error_setg(errp, "Cannot generate a base directory for blkverify nodes");
+    return NULL;
+}
+
 static BlockDriver bdrv_blkverify = {
     .format_name                      = "blkverify",
     .protocol_name                    = "blkverify",
@@ -324,6 +319,7 @@ static BlockDriver bdrv_blkverify = {
     .bdrv_child_perm                  = bdrv_filter_default_perms,
     .bdrv_getlength                   = blkverify_getlength,
     .bdrv_refresh_filename            = blkverify_refresh_filename,
+    .bdrv_dirname                     = blkverify_dirname,
 
     .bdrv_co_preadv                   = blkverify_co_preadv,
     .bdrv_co_pwritev                  = blkverify_co_pwritev,

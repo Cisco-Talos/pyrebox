@@ -25,7 +25,7 @@ typedef enum {
 
 /*
  * QNum encapsulates how our dialect of JSON fills in the blanks left
- * by the JSON specification (RFC 7159) regarding numbers.
+ * by the JSON specification (RFC 8259) regarding numbers.
  *
  * Conceptually, we treat number as an abstract type with three
  * concrete subtypes: floating-point, signed integer, unsigned
@@ -45,7 +45,7 @@ typedef enum {
  * convert under the hood.
  */
 struct QNum {
-    QObject base;
+    struct QObjectBase_ base;
     QNumKind kind;
     union {
         int64_t i64;

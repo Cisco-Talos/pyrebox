@@ -26,7 +26,7 @@
  * allows us to more safely make assumptions about the bitmap size and
  * simplify the calling code somewhat
  */
-struct sPAPROptionVector {
+struct SpaprOptionVector {
     unsigned long *bitmap;
     int32_t bitmap_size; /* only used for migration */
 };
@@ -36,25 +36,25 @@ const VMStateDescription vmstate_spapr_ovec = {
     .version_id = 1,
     .minimum_version_id = 1,
     .fields = (VMStateField[]) {
-        VMSTATE_BITMAP(bitmap, sPAPROptionVector, 1, bitmap_size),
+        VMSTATE_BITMAP(bitmap, SpaprOptionVector, 1, bitmap_size),
         VMSTATE_END_OF_LIST()
     }
 };
 
-sPAPROptionVector *spapr_ovec_new(void)
+SpaprOptionVector *spapr_ovec_new(void)
 {
-    sPAPROptionVector *ov;
+    SpaprOptionVector *ov;
 
-    ov = g_new0(sPAPROptionVector, 1);
+    ov = g_new0(SpaprOptionVector, 1);
     ov->bitmap = bitmap_new(OV_MAXBITS);
     ov->bitmap_size = OV_MAXBITS;
 
     return ov;
 }
 
-sPAPROptionVector *spapr_ovec_clone(sPAPROptionVector *ov_orig)
+SpaprOptionVector *spapr_ovec_clone(SpaprOptionVector *ov_orig)
 {
-    sPAPROptionVector *ov;
+    SpaprOptionVector *ov;
 
     g_assert(ov_orig);
 
@@ -64,9 +64,9 @@ sPAPROptionVector *spapr_ovec_clone(sPAPROptionVector *ov_orig)
     return ov;
 }
 
-void spapr_ovec_intersect(sPAPROptionVector *ov,
-                          sPAPROptionVector *ov1,
-                          sPAPROptionVector *ov2)
+void spapr_ovec_intersect(SpaprOptionVector *ov,
+                          SpaprOptionVector *ov1,
+                          SpaprOptionVector *ov2)
 {
     g_assert(ov);
     g_assert(ov1);
@@ -76,9 +76,9 @@ void spapr_ovec_intersect(sPAPROptionVector *ov,
 }
 
 /* returns true if options bits were removed, false otherwise */
-bool spapr_ovec_diff(sPAPROptionVector *ov,
-                     sPAPROptionVector *ov_old,
-                     sPAPROptionVector *ov_new)
+bool spapr_ovec_diff(SpaprOptionVector *ov,
+                     SpaprOptionVector *ov_old,
+                     SpaprOptionVector *ov_new)
 {
     unsigned long *change_mask = bitmap_new(OV_MAXBITS);
     unsigned long *removed_bits = bitmap_new(OV_MAXBITS);
@@ -102,7 +102,7 @@ bool spapr_ovec_diff(sPAPROptionVector *ov,
     return bits_were_removed;
 }
 
-void spapr_ovec_cleanup(sPAPROptionVector *ov)
+void spapr_ovec_cleanup(SpaprOptionVector *ov)
 {
     if (ov) {
         g_free(ov->bitmap);
@@ -110,26 +110,26 @@ void spapr_ovec_cleanup(sPAPROptionVector *ov)
     }
 }
 
-void spapr_ovec_set(sPAPROptionVector *ov, long bitnr)
+void spapr_ovec_set(SpaprOptionVector *ov, long bitnr)
 {
     g_assert(ov);
-    g_assert_cmpint(bitnr, <, OV_MAXBITS);
+    g_assert(bitnr < OV_MAXBITS);
 
     set_bit(bitnr, ov->bitmap);
 }
 
-void spapr_ovec_clear(sPAPROptionVector *ov, long bitnr)
+void spapr_ovec_clear(SpaprOptionVector *ov, long bitnr)
 {
     g_assert(ov);
-    g_assert_cmpint(bitnr, <, OV_MAXBITS);
+    g_assert(bitnr < OV_MAXBITS);
 
     clear_bit(bitnr, ov->bitmap);
 }
 
-bool spapr_ovec_test(sPAPROptionVector *ov, long bitnr)
+bool spapr_ovec_test(SpaprOptionVector *ov, long bitnr)
 {
     g_assert(ov);
-    g_assert_cmpint(bitnr, <, OV_MAXBITS);
+    g_assert(bitnr < OV_MAXBITS);
 
     return test_bit(bitnr, ov->bitmap) ? true : false;
 }
@@ -178,15 +178,15 @@ static target_ulong vector_addr(target_ulong table_addr, int vector)
     return table_addr;
 }
 
-sPAPROptionVector *spapr_ovec_parse_vector(target_ulong table_addr, int vector)
+SpaprOptionVector *spapr_ovec_parse_vector(target_ulong table_addr, int vector)
 {
-    sPAPROptionVector *ov;
+    SpaprOptionVector *ov;
     target_ulong addr;
     uint16_t vector_len;
     int i;
 
     g_assert(table_addr);
-    g_assert_cmpint(vector, >=, 1); /* vector numbering starts at 1 */
+    g_assert(vector >= 1);      /* vector numbering starts at 1 */
 
     addr = vector_addr(table_addr, vector);
     if (!addr) {
@@ -195,7 +195,7 @@ sPAPROptionVector *spapr_ovec_parse_vector(target_ulong table_addr, int vector)
     }
 
     vector_len = ldub_phys(&address_space_memory, addr++) + 1;
-    g_assert_cmpint(vector_len, <=, OV_MAXBYTES);
+    g_assert(vector_len <= OV_MAXBYTES);
     ov = spapr_ovec_new();
 
     for (i = 0; i < vector_len; i++) {
@@ -210,7 +210,7 @@ sPAPROptionVector *spapr_ovec_parse_vector(target_ulong table_addr, int vector)
 }
 
 int spapr_ovec_populate_dt(void *fdt, int fdt_offset,
-                           sPAPROptionVector *ov, const char *name)
+                           SpaprOptionVector *ov, const char *name)
 {
     uint8_t vec[OV_MAXBYTES + 1];
     uint16_t vec_len;
@@ -225,7 +225,7 @@ int spapr_ovec_populate_dt(void *fdt, int fdt_offset,
      * encoding/sizing expected in ibm,client-architecture-support
      */
     vec_len = (lastbit == OV_MAXBITS) ? 1 : lastbit / BITS_PER_BYTE + 1;
-    g_assert_cmpint(vec_len, <=, OV_MAXBYTES);
+    g_assert(vec_len <= OV_MAXBYTES);
     /* guest expects vector len encoded as vec_len - 1, since the length byte
      * is assumed and not included, and the first byte of the vector
      * is assumed as well

@@ -118,7 +118,8 @@
 { 'struct': 'SpiceBasicInfo',
   'data': { 'host': 'str',
             'port': 'str',
-            'family': 'NetworkAddressFamily' } }
+            'family': 'NetworkAddressFamily' },
+  'if': 'defined(CONFIG_SPICE)' }
 
 ##
 # @SpiceServerInfo:
@@ -131,7 +132,8 @@
 ##
 { 'struct': 'SpiceServerInfo',
   'base': 'SpiceBasicInfo',
-  'data': { '*auth': 'str' } }
+  'data': { '*auth': 'str' },
+  'if': 'defined(CONFIG_SPICE)' }
 
 ##
 # @SpiceChannel:
@@ -156,7 +158,8 @@
 { 'struct': 'SpiceChannel',
   'base': 'SpiceBasicInfo',
   'data': {'connection-id': 'int', 'channel-type': 'int', 'channel-id': 'int',
-           'tls': 'bool'} }
+           'tls': 'bool'},
+  'if': 'defined(CONFIG_SPICE)' }
 
 ##
 # @SpiceQueryMouseMode:
@@ -175,7 +178,8 @@
 # Since: 1.1
 ##
 { 'enum': 'SpiceQueryMouseMode',
-  'data': [ 'client', 'server', 'unknown' ] }
+  'data': [ 'client', 'server', 'unknown' ],
+  'if': 'defined(CONFIG_SPICE)' }
 
 ##
 # @SpiceInfo:
@@ -212,7 +216,8 @@
 { 'struct': 'SpiceInfo',
   'data': {'enabled': 'bool', 'migrated': 'bool', '*host': 'str', '*port': 'int',
            '*tls-port': 'int', '*auth': 'str', '*compiled-version': 'str',
-           'mouse-mode': 'SpiceQueryMouseMode', '*channels': ['SpiceChannel']} }
+           'mouse-mode': 'SpiceQueryMouseMode', '*channels': ['SpiceChannel']},
+  'if': 'defined(CONFIG_SPICE)' }
 
 ##
 # @query-spice:
@@ -257,7 +262,8 @@
 #    }
 #
 ##
-{ 'command': 'query-spice', 'returns': 'SpiceInfo' }
+{ 'command': 'query-spice', 'returns': 'SpiceInfo',
+  'if': 'defined(CONFIG_SPICE)' }
 
 ##
 # @SPICE_CONNECTED:
@@ -282,7 +288,8 @@
 ##
 { 'event': 'SPICE_CONNECTED',
   'data': { 'server': 'SpiceBasicInfo',
-            'client': 'SpiceBasicInfo' } }
+            'client': 'SpiceBasicInfo' },
+  'if': 'defined(CONFIG_SPICE)' }
 
 ##
 # @SPICE_INITIALIZED:
@@ -310,7 +317,8 @@
 ##
 { 'event': 'SPICE_INITIALIZED',
   'data': { 'server': 'SpiceServerInfo',
-            'client': 'SpiceChannel' } }
+            'client': 'SpiceChannel' },
+  'if': 'defined(CONFIG_SPICE)' }
 
 ##
 # @SPICE_DISCONNECTED:
@@ -335,7 +343,8 @@
 ##
 { 'event': 'SPICE_DISCONNECTED',
   'data': { 'server': 'SpiceBasicInfo',
-            'client': 'SpiceBasicInfo' } }
+            'client': 'SpiceBasicInfo' },
+  'if': 'defined(CONFIG_SPICE)' }
 
 ##
 # @SPICE_MIGRATE_COMPLETED:
@@ -350,7 +359,8 @@
 #      "event": "SPICE_MIGRATE_COMPLETED" }
 #
 ##
-{ 'event': 'SPICE_MIGRATE_COMPLETED' }
+{ 'event': 'SPICE_MIGRATE_COMPLETED',
+  'if': 'defined(CONFIG_SPICE)' }
 
 ##
 # == VNC
@@ -377,7 +387,8 @@
   'data': { 'host': 'str',
             'service': 'str',
             'family': 'NetworkAddressFamily',
-            'websocket': 'bool' } }
+            'websocket': 'bool' },
+  'if': 'defined(CONFIG_VNC)' }
 
 ##
 # @VncServerInfo:
@@ -391,7 +402,8 @@
 ##
 { 'struct': 'VncServerInfo',
   'base': 'VncBasicInfo',
-  'data': { '*auth': 'str' } }
+  'data': { '*auth': 'str' },
+  'if': 'defined(CONFIG_VNC)' }
 
 ##
 # @VncClientInfo:
@@ -408,7 +420,8 @@
 ##
 { 'struct': 'VncClientInfo',
   'base': 'VncBasicInfo',
-  'data': { '*x509_dname': 'str', '*sasl_username': 'str' } }
+  'data': { '*x509_dname': 'str', '*sasl_username': 'str' },
+  'if': 'defined(CONFIG_VNC)' }
 
 ##
 # @VncInfo:
@@ -449,7 +462,8 @@
 { 'struct': 'VncInfo',
   'data': {'enabled': 'bool', '*host': 'str',
            '*family': 'NetworkAddressFamily',
-           '*service': 'str', '*auth': 'str', '*clients': ['VncClientInfo']} }
+           '*service': 'str', '*auth': 'str', '*clients': ['VncClientInfo']},
+  'if': 'defined(CONFIG_VNC)' }
 
 ##
 # @VncPrimaryAuth:
@@ -460,7 +474,8 @@
 ##
 { 'enum': 'VncPrimaryAuth',
   'data': [ 'none', 'vnc', 'ra2', 'ra2ne', 'tight', 'ultra',
-            'tls', 'vencrypt', 'sasl' ] }
+            'tls', 'vencrypt', 'sasl' ],
+  'if': 'defined(CONFIG_VNC)' }
 
 ##
 # @VncVencryptSubAuth:
@@ -474,8 +489,8 @@
             'tls-none',  'x509-none',
             'tls-vnc',   'x509-vnc',
             'tls-plain', 'x509-plain',
-            'tls-sasl',  'x509-sasl' ] }
-
+            'tls-sasl',  'x509-sasl' ],
+  'if': 'defined(CONFIG_VNC)' }
 
 ##
 # @VncServerInfo2:
@@ -492,8 +507,8 @@
 { 'struct': 'VncServerInfo2',
   'base': 'VncBasicInfo',
   'data': { 'auth'      : 'VncPrimaryAuth',
-            '*vencrypt' : 'VncVencryptSubAuth' } }
-
+            '*vencrypt' : 'VncVencryptSubAuth' },
+  'if': 'defined(CONFIG_VNC)' }
 
 ##
 # @VncInfo2:
@@ -525,7 +540,8 @@
             'clients'   : ['VncClientInfo'],
             'auth'      : 'VncPrimaryAuth',
             '*vencrypt' : 'VncVencryptSubAuth',
-            '*display'  : 'str' } }
+            '*display'  : 'str' },
+  'if': 'defined(CONFIG_VNC)' }
 
 ##
 # @query-vnc:
@@ -556,8 +572,8 @@
 #    }
 #
 ##
-{ 'command': 'query-vnc', 'returns': 'VncInfo' }
-
+{ 'command': 'query-vnc', 'returns': 'VncInfo',
+  'if': 'defined(CONFIG_VNC)' }
 ##
 # @query-vnc-servers:
 #
@@ -567,7 +583,8 @@
 #
 # Since: 2.3
 ##
-{ 'command': 'query-vnc-servers', 'returns': ['VncInfo2'] }
+{ 'command': 'query-vnc-servers', 'returns': ['VncInfo2'],
+  'if': 'defined(CONFIG_VNC)' }
 
 ##
 # @change-vnc-password:
@@ -581,7 +598,9 @@
 # Notes:  An empty password in this command will set the password to the empty
 #         string.  Existing clients are unaffected by executing this command.
 ##
-{ 'command': 'change-vnc-password', 'data': {'password': 'str'} }
+{ 'command': 'change-vnc-password',
+  'data': { 'password': 'str' },
+  'if': 'defined(CONFIG_VNC)' }
 
 ##
 # @VNC_CONNECTED:
@@ -610,7 +629,8 @@
 ##
 { 'event': 'VNC_CONNECTED',
   'data': { 'server': 'VncServerInfo',
-            'client': 'VncBasicInfo' } }
+            'client': 'VncBasicInfo' },
+  'if': 'defined(CONFIG_VNC)' }
 
 ##
 # @VNC_INITIALIZED:
@@ -637,7 +657,8 @@
 ##
 { 'event': 'VNC_INITIALIZED',
   'data': { 'server': 'VncServerInfo',
-            'client': 'VncClientInfo' } }
+            'client': 'VncClientInfo' },
+  'if': 'defined(CONFIG_VNC)' }
 
 ##
 # @VNC_DISCONNECTED:
@@ -663,7 +684,8 @@
 ##
 { 'event': 'VNC_DISCONNECTED',
   'data': { 'server': 'VncServerInfo',
-            'client': 'VncClientInfo' } }
+            'client': 'VncClientInfo' },
+  'if': 'defined(CONFIG_VNC)' }
 
 ##
 # = Input
@@ -994,17 +1016,16 @@
             '*head'  : 'int',
             'events' : [ 'InputEvent' ] } }
 
-
 ##
-# @DisplayNoOpts:
+# @GrabToggleKeys:
 #
-# Empty struct for displays without config options.
+# Keys to toggle input-linux between host and guest.
 #
-# Since: 2.12
+# Since: 4.0
 #
 ##
-{ 'struct'  : 'DisplayNoOpts',
-  'data'    : { } }
+{ 'enum': 'GrabToggleKeys',
+  'data': [ 'ctrl-ctrl', 'alt-alt', 'meta-meta', 'scrolllock', 'ctrl-scrolllock' ] }
 
 ##
 # @DisplayGTK:
@@ -1012,24 +1033,107 @@
 # GTK display options.
 #
 # @grab-on-hover: Grab keyboard input on mouse hover.
+# @zoom-to-fit: Zoom guest display to fit into the host window.  When
+#               turned off the host window will be resized instead.
+#               In case the display device can notify the guest on
+#               window resizes (virtio-gpu) this will default to "on",
+#               assuming the guest will resize the display to match
+#               the window size then.  Otherwise it defaults to "off".
+#               Since 3.1
 #
 # Since: 2.12
 #
 ##
 { 'struct'  : 'DisplayGTK',
-  'data'    : { '*grab-on-hover' : 'bool' } }
+  'data'    : { '*grab-on-hover' : 'bool',
+                '*zoom-to-fit'   : 'bool'  } }
+
+##
+# @DisplayEGLHeadless:
+#
+# EGL headless display options.
+#
+# @rendernode: Which DRM render node should be used. Default is the first
+#              available node on the host.
+#
+# Since: 3.1
+#
+##
+{ 'struct'  : 'DisplayEGLHeadless',
+  'data'    : { '*rendernode' : 'str' } }
+
+ ##
+ # @DisplayGLMode:
+ #
+ # Display OpenGL mode.
+ #
+ # @off: Disable OpenGL (default).
+ # @on: Use OpenGL, pick context type automatically.
+ #      Would better be named 'auto' but is called 'on' for backward
+ #      compatibility with bool type.
+ # @core: Use OpenGL with Core (desktop) Context.
+ # @es: Use OpenGL with ES (embedded systems) Context.
+ #
+ # Since: 3.0
+ #
+ ##
+ { 'enum'    : 'DisplayGLMode',
+   'data'    : [ 'off', 'on', 'core', 'es' ] }
+
+##
+# @DisplayCurses:
+#
+# Curses display options.
+#
+# @charset:       Font charset used by guest (default: CP437).
+#
+# Since: 4.0
+#
+##
+{ 'struct'  : 'DisplayCurses',
+  'data'    : { '*charset'       : 'str' } }
 
 ##
 # @DisplayType:
 #
 # Display (user interface) type.
 #
+# @default: The default user interface, selecting from the first available
+#           of gtk, sdl, cocoa, and vnc.
+#
+# @none: No user interface or video output display. The guest will
+#        still see an emulated graphics card, but its output will not
+#        be displayed to the QEMU user.
+#
+# @gtk: The GTK user interface.
+#
+# @sdl: The SDL user interface.
+#
+# @egl-headless: No user interface, offload GL operations to a local
+#                DRI device. Graphical display need to be paired with
+#                VNC or Spice. (Since 3.1)
+#
+# @curses: Display video output via curses.  For graphics device
+#          models which support a text mode, QEMU can display this
+#          output using a curses/ncurses interface. Nothing is
+#          displayed when the graphics device is in graphical mode or
+#          if the graphics device does not support a text
+#          mode. Generally only the VGA device models support text
+#          mode.
+#
+# @cocoa: The Cocoa user interface.
+#
+# @spice-app: Set up a Spice server and run the default associated
+#             application to connect to it. The server will redirect
+#             the serial console and QEMU monitors. (Since 4.0)
+#
 # Since: 2.12
 #
 ##
 { 'enum'    : 'DisplayType',
   'data'    : [ 'default', 'none', 'gtk', 'sdl',
-                'egl-headless', 'curses', 'cocoa' ] }
+                'egl-headless', 'curses', 'cocoa',
+                'spice-app'] }
 
 ##
 # @DisplayOptions:
@@ -1048,12 +1152,21 @@
   'base'    : { 'type'           : 'DisplayType',
                 '*full-screen'   : 'bool',
                 '*window-close'  : 'bool',
-                '*gl'            : 'bool' },
+                '*gl'            : 'DisplayGLMode' },
   'discriminator' : 'type',
-  'data'    : { 'default'        : 'DisplayNoOpts',
-                'none'           : 'DisplayNoOpts',
-                'gtk'            : 'DisplayGTK',
-                'sdl'            : 'DisplayNoOpts',
-                'egl-headless'   : 'DisplayNoOpts',
-                'curses'         : 'DisplayNoOpts',
-                'cocoa'          : 'DisplayNoOpts' } }
+  'data'    : { 'gtk'            : 'DisplayGTK',
+                'curses'         : 'DisplayCurses',
+                'egl-headless'   : 'DisplayEGLHeadless'} }
+
+##
+# @query-display-options:
+#
+# Returns information about display configuration
+#
+# Returns: @DisplayOptions
+#
+# Since: 3.1
+#
+##
+{ 'command': 'query-display-options',
+  'returns': 'DisplayOptions' }

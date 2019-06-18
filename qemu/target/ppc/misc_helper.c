@@ -20,6 +20,7 @@
 #include "cpu.h"
 #include "exec/exec-all.h"
 #include "exec/helper-proto.h"
+#include "qemu/error-report.h"
 
 #include "helper_regs.h"
 
@@ -88,11 +89,46 @@ void helper_store_sdr1(CPUPPCState *env, target_ulong val)
     }
 }
 
+#if defined(TARGET_PPC64)
+void helper_store_ptcr(CPUPPCState *env, target_ulong val)
+{
+    PowerPCCPU *cpu = ppc_env_get_cpu(env);
+
+    if (env->spr[SPR_PTCR] != val) {
+        ppc_store_ptcr(env, val);
+        tlb_flush(CPU(cpu));
+    }
+}
+
+void helper_store_pcr(CPUPPCState *env, target_ulong value)
+{
+    PowerPCCPU *cpu = ppc_env_get_cpu(env);
+    PowerPCCPUClass *pcc = POWERPC_CPU_GET_CLASS(cpu);
+
+    env->spr[SPR_PCR] = value & pcc->pcr_mask;
+}
+#endif /* defined(TARGET_PPC64) */
+
 void helper_store_pidr(CPUPPCState *env, target_ulong val)
 {
     PowerPCCPU *cpu = ppc_env_get_cpu(env);
 
     env->spr[SPR_BOOKS_PID] = val;
+    tlb_flush(CPU(cpu));
+}
+
+void helper_store_lpidr(CPUPPCState *env, target_ulong val)
+{
+    PowerPCCPU *cpu = ppc_env_get_cpu(env);
+
+    env->spr[SPR_LPIDR] = val;
+
+    /*
+     * We need to flush the TLB on LPID changes as we only tag HV vs
+     * guest in TCG TLB. Also the quadrants means the HV will
+     * potentially access and cache entries for the current LPID as
+     * well.
+     */
     tlb_flush(CPU(cpu));
 }
 

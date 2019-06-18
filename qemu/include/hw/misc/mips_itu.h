@@ -20,6 +20,8 @@
 #ifndef MIPS_ITU_H
 #define MIPS_ITU_H
 
+#include "hw/sysbus.h"
+
 #define TYPE_MIPS_ITU "mips-itu"
 #define MIPS_ITU(obj) OBJECT_CHECK(MIPSITUState, (obj), TYPE_MIPS_ITU)
 
@@ -64,6 +66,14 @@ typedef struct MIPSITUState {
     /* ITC Configuration Tags */
     uint64_t ITCAddressMap[ITC_ADDRESSMAP_NUM];
     MemoryRegion tag_io;
+
+    /* ITU Control Register */
+    uint64_t icr0;
+
+    /* SAAR */
+    bool saar_present;
+    void *saar;
+
 } MIPSITUState;
 
 /* Get ITC Configuration Tag memory region. */

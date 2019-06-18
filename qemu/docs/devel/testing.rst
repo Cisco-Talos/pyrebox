@@ -43,15 +43,13 @@ add a new unit test:
 
 3. Add the test to ``tests/Makefile.include``. First, name the unit test
    program and add it to ``$(check-unit-y)``; then add a rule to build the
-   executable. Optionally, you can add a magical variable to support ``gcov``.
-   For example:
+   executable.  For example:
 
 .. code::
 
   check-unit-y += tests/foo-test$(EXESUF)
   tests/foo-test$(EXESUF): tests/foo-test.o $(test-util-obj-y)
   ...
-  gcov-files-foo-test-y = util/foo.c
 
 Since unit tests don't require environment variables, the simplest way to debug
 a unit test failure is often directly invoking it or even running it under
@@ -61,6 +59,7 @@ variable (which affects memory reclamation and catches invalid pointers better)
 and gtester options. If necessary, you can run
 
 .. code::
+
   make check-unit V=1
 
 and copy the actual command line which executes the unit test, then run
@@ -118,6 +117,7 @@ and using gdb on the test is still simple to do: find out the actual command
 from the output of
 
 .. code::
+
   make check-qtest V=1
 
 which you can run manually.
@@ -158,12 +158,21 @@ rarely used. See "QEMU iotests" section below for more information.
 GCC gcov support
 ----------------
 
-``gcov`` is a GCC tool to analyze the testing coverage by instrumenting the
-tested code. To use it, configure QEMU with ``--enable-gcov`` option and build.
-Then run ``make check`` as usual. There will be additional ``gcov`` output as
-the testing goes on, showing the test coverage percentage numbers per analyzed
-source file. More detailed reports can be obtained by running ``gcov`` command
-on the output files under ``$build_dir/tests/``, please read the ``gcov``
+``gcov`` is a GCC tool to analyze the testing coverage by
+instrumenting the tested code. To use it, configure QEMU with
+``--enable-gcov`` option and build. Then run ``make check`` as usual.
+
+If you want to gather coverage information on a single test the ``make
+clean-coverage`` target can be used to delete any existing coverage
+information before running a single test.
+
+You can generate a HTML coverage report by executing ``make
+coverage-report`` which will create
+./reports/coverage/coverage-report.html. If you want to create it
+elsewhere simply execute ``make /foo/bar/baz/coverage-report.html``.
+
+Further analysis can be conducted by running the ``gcov`` command
+directly on the various .gcda output files. Please read the ``gcov``
 documentation for more information.
 
 QEMU iotests
@@ -246,6 +255,17 @@ comparable library support for invoking and interacting with QEMU programs. If
 you opt for Python, it is strongly recommended to write Python 3 compatible
 code.
 
+Both Python and Bash frameworks in iotests provide helpers to manage test
+images. They can be used to create and clean up images under the test
+directory. If no I/O or any protocol specific feature is needed, it is often
+more convenient to use the pseudo block driver, ``null-co://``, as the test
+image, which doesn't require image creation or cleaning up. Avoid system-wide
+devices or files whenever possible, such as ``/dev/null`` or ``/dev/zero``.
+Otherwise, image locking implications have to be considered.  For example,
+another application on the host may have locked the file, possibly leading to a
+test failure.  If using such devices are explicitly desired, consider adding
+``locking=off`` option to disable image locking.
+
 Docker based tests
 ==================
 
@@ -281,7 +301,7 @@ An alternative method to set up permissions is by adding the current user to
 .. code::
 
   $ sudo groupadd docker
-  $ sudo usermod $USER -G docker
+  $ sudo usermod $USER -a -G docker
   $ sudo chown :docker /var/run/docker.sock
 
 Note that any one of above configurations makes it possible for the user to
@@ -414,6 +434,7 @@ Debugging
 
 Add ``DEBUG=1`` and/or ``V=1`` to the make command to allow interactive
 debugging and verbose output. If this is not enough, see the next section.
+``V=1`` will be propagated down into the make jobs in the guest.
 
 Manual invocation
 -----------------
@@ -484,3 +505,266 @@ supported. To start the fuzzer, run
 
 Alternatively, some command different from "qemu-img info" can be tested, by
 changing the ``-c`` option.
+
+Acceptance tests using the Avocado Framework
+============================================
+
+The ``tests/acceptance`` directory hosts functional tests, also known
+as acceptance level tests.  They're usually higher level tests, and
+may interact with external resources and with various guest operating
+systems.
+
+These tests are written using the Avocado Testing Framework (which must
+be installed separately) in conjunction with a the ``avocado_qemu.Test``
+class, implemented at ``tests/acceptance/avocado_qemu``.
+
+Tests based on ``avocado_qemu.Test`` can easily:
+
+ * Customize the command line arguments given to the convenience
+   ``self.vm`` attribute (a QEMUMachine instance)
+
+ * Interact with the QEMU monitor, send QMP commands and check
+   their results
+
+ * Interact with the guest OS, using the convenience console device
+   (which may be useful to assert the effectiveness and correctness of
+   command line arguments or QMP commands)
+
+ * Interact with external data files that accompany the test itself
+   (see ``self.get_data()``)
+
+ * Download (and cache) remote data files, such as firmware and kernel
+   images
+
+ * Have access to a library of guest OS images (by means of the
+   ``avocado.utils.vmimage`` library)
+
+ * Make use of various other test related utilities available at the
+   test class itself and at the utility library:
+
+   - http://avocado-framework.readthedocs.io/en/latest/api/test/avocado.html#avocado.Test
+   - http://avocado-framework.readthedocs.io/en/latest/api/utils/avocado.utils.html
+
+Running tests
+-------------
+
+You can run the acceptance tests simply by executing:
+
+.. code::
+
+  make check-acceptance
+
+This involves the automatic creation of Python virtual environment
+within the build tree (at ``tests/venv``) which will have all the
+right dependencies, and will save tests results also within the
+build tree (at ``tests/results``).
+
+Note: the build environment must be using a Python 3 stack, and have
+the ``venv`` and ``pip`` packages installed.  If necessary, make sure
+``configure`` is called with ``--python=`` and that those modules are
+available.  On Debian and Ubuntu based systems, depending on the
+specific version, they may be on packages named ``python3-venv`` and
+``python3-pip``.
+
+The scripts installed inside the virtual environment may be used
+without an "activation".  For instance, the Avocado test runner
+may be invoked by running:
+
+ .. code::
+
+  tests/venv/bin/avocado run $OPTION1 $OPTION2 tests/acceptance/
+
+Manual Installation
+-------------------
+
+To manually install Avocado and its dependencies, run:
+
+.. code::
+
+  pip install --user avocado-framework
+
+Alternatively, follow the instructions on this link:
+
+  http://avocado-framework.readthedocs.io/en/latest/GetStartedGuide.html#installing-avocado
+
+Overview
+--------
+
+This directory provides the ``avocado_qemu`` Python module, containing
+the ``avocado_qemu.Test`` class.  Here's a simple usage example:
+
+.. code::
+
+  from avocado_qemu import Test
+
+
+  class Version(Test):
+      """
+      :avocado: tags=quick
+      """
+      def test_qmp_human_info_version(self):
+          self.vm.launch()
+          res = self.vm.command('human-monitor-command',
+                                command_line='info version')
+          self.assertRegexpMatches(res, r'^(\d+\.\d+\.\d)')
+
+To execute your test, run:
+
+.. code::
+
+  avocado run version.py
+
+Tests may be classified according to a convention by using docstring
+directives such as ``:avocado: tags=TAG1,TAG2``.  To run all tests
+in the current directory, tagged as "quick", run:
+
+.. code::
+
+  avocado run -t quick .
+
+The ``avocado_qemu.Test`` base test class
+-----------------------------------------
+
+The ``avocado_qemu.Test`` class has a number of characteristics that
+are worth being mentioned right away.
+
+First of all, it attempts to give each test a ready to use QEMUMachine
+instance, available at ``self.vm``.  Because many tests will tweak the
+QEMU command line, launching the QEMUMachine (by using ``self.vm.launch()``)
+is left to the test writer.
+
+The base test class has also support for tests with more than one
+QEMUMachine. The way to get machines is through the ``self.get_vm()``
+method which will return a QEMUMachine instance. The ``self.get_vm()``
+method accepts arguments that will be passed to the QEMUMachine creation
+and also an optional `name` attribute so you can identify a specific
+machine and get it more than once through the tests methods. A simple
+and hypothetical example follows:
+
+.. code::
+
+  from avocado_qemu import Test
+
+
+  class MultipleMachines(Test):
+      """
+      :avocado: enable
+      """
+      def test_multiple_machines(self):
+          first_machine = self.get_vm()
+          second_machine = self.get_vm()
+          self.get_vm(name='third_machine').launch()
+
+          first_machine.launch()
+          second_machine.launch()
+
+          first_res = first_machine.command(
+              'human-monitor-command',
+              command_line='info version')
+
+          second_res = second_machine.command(
+              'human-monitor-command',
+              command_line='info version')
+
+          third_res = self.get_vm(name='third_machine').command(
+              'human-monitor-command',
+              command_line='info version')
+
+          self.assertEquals(first_res, second_res, third_res)
+
+At test "tear down", ``avocado_qemu.Test`` handles all the QEMUMachines
+shutdown.
+
+QEMUMachine
+~~~~~~~~~~~
+
+The QEMUMachine API is already widely used in the Python iotests,
+device-crash-test and other Python scripts.  It's a wrapper around the
+execution of a QEMU binary, giving its users:
+
+ * the ability to set command line arguments to be given to the QEMU
+   binary
+
+ * a ready to use QMP connection and interface, which can be used to
+   send commands and inspect its results, as well as asynchronous
+   events
+
+ * convenience methods to set commonly used command line arguments in
+   a more succinct and intuitive way
+
+QEMU binary selection
+~~~~~~~~~~~~~~~~~~~~~
+
+The QEMU binary used for the ``self.vm`` QEMUMachine instance will
+primarily depend on the value of the ``qemu_bin`` parameter.  If it's
+not explicitly set, its default value will be the result of a dynamic
+probe in the same source tree.  A suitable binary will be one that
+targets the architecture matching host machine.
+
+Based on this description, test writers will usually rely on one of
+the following approaches:
+
+1) Set ``qemu_bin``, and use the given binary
+
+2) Do not set ``qemu_bin``, and use a QEMU binary named like
+   "${arch}-softmmu/qemu-system-${arch}", either in the current
+   working directory, or in the current source tree.
+
+The resulting ``qemu_bin`` value will be preserved in the
+``avocado_qemu.Test`` as an attribute with the same name.
+
+Attribute reference
+-------------------
+
+Besides the attributes and methods that are part of the base
+``avocado.Test`` class, the following attributes are available on any
+``avocado_qemu.Test`` instance.
+
+vm
+~~
+
+A QEMUMachine instance, initially configured according to the given
+``qemu_bin`` parameter.
+
+qemu_bin
+~~~~~~~~
+
+The preserved value of the ``qemu_bin`` parameter or the result of the
+dynamic probe for a QEMU binary in the current working directory or
+source tree.
+
+Parameter reference
+-------------------
+
+To understand how Avocado parameters are accessed by tests, and how
+they can be passed to tests, please refer to::
+
+  http://avocado-framework.readthedocs.io/en/latest/WritingTests.html#accessing-test-parameters
+
+Parameter values can be easily seen in the log files, and will look
+like the following:
+
+.. code::
+
+  PARAMS (key=qemu_bin, path=*, default=x86_64-softmmu/qemu-system-x86_64) => 'x86_64-softmmu/qemu-system-x86_64
+
+qemu_bin
+~~~~~~~~
+
+The exact QEMU binary to be used on QEMUMachine.
+
+Uninstalling Avocado
+--------------------
+
+If you've followed the manual installation instructions above, you can
+easily uninstall Avocado.  Start by listing the packages you have
+installed::
+
+  pip list --user
+
+And remove any package you want with::
+
+  pip uninstall <package_name>
+
+If you've used ``make check-acceptance``, the Python virtual environment where
+Avocado is installed will be cleaned up as part of ``make check-clean``.

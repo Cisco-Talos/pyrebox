@@ -57,7 +57,7 @@ static void test_properties(const char *path, bool recurse)
     g_assert(response);
 
     if (!recurse) {
-        QDECREF(response);
+        qobject_unref(response);
         return;
     }
 
@@ -82,10 +82,10 @@ static void test_properties(const char *path, bool recurse)
                       path, prop);
             /* qom-get may fail but should not, e.g., segfault. */
             g_assert(tmp);
-            QDECREF(tmp);
+            qobject_unref(tmp);
         }
     }
-    QDECREF(response);
+    qobject_unref(response);
 }
 
 static void test_machine(gconstpointer data)
@@ -101,7 +101,7 @@ static void test_machine(gconstpointer data)
 
     response = qmp("{ 'execute': 'quit' }");
     g_assert(qdict_haskey(response, "return"));
-    QDECREF(response);
+    qobject_unref(response);
 
     qtest_end();
     g_free(args);
@@ -123,7 +123,7 @@ int main(int argc, char **argv)
 {
     g_test_init(&argc, &argv, NULL);
 
-    qtest_cb_for_every_machine(add_machine_test_case);
+    qtest_cb_for_every_machine(add_machine_test_case, g_test_quick());
 
     return g_test_run();
 }

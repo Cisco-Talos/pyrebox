@@ -16,8 +16,8 @@
 #include "hw/ide.h"
 #include "hw/timer/i8254.h"
 #include "hw/char/serial.h"
-#include "hw/hppa/hppa_sys.h"
-#include "qemu/cutils.h"
+#include "hppa_sys.h"
+#include "qemu/units.h"
 #include "qapi/error.h"
 #include "qemu/log.h"
 
@@ -59,6 +59,7 @@ static void machine_hppa_init(MachineState *machine)
     const char *kernel_filename = machine->kernel_filename;
     const char *kernel_cmdline = machine->kernel_cmdline;
     const char *initrd_filename = machine->initrd_filename;
+    DeviceState *dev;
     PCIBus *pci_bus;
     ISABus *isa_bus;
     qemu_irq rtc_irq, serial_irq;
@@ -108,14 +109,15 @@ static void machine_hppa_init(MachineState *machine)
     mc146818_rtc_init(isa_bus, 2000, rtc_irq);
 
     /* Serial code setup.  */
-    if (serial_hds[0]) {
+    if (serial_hd(0)) {
         uint32_t addr = DINO_UART_HPA + 0x800;
         serial_mm_init(addr_space, addr, 0, serial_irq,
-                       115200, serial_hds[0], DEVICE_BIG_ENDIAN);
+                       115200, serial_hd(0), DEVICE_BIG_ENDIAN);
     }
 
     /* SCSI disk setup. */
-    lsi53c895a_create(pci_bus);
+    dev = DEVICE(pci_create_simple(pci_bus, -1, "lsi53c895a"));
+    lsi53c8xx_handle_legacy_cmdline(dev);
 
     /* Network setup.  e1000 is good enough, failing Tulip support.  */
     for (i = 0; i < nb_nics; i++) {
@@ -133,8 +135,8 @@ static void machine_hppa_init(MachineState *machine)
         exit(1);
     }
 
-    size = load_elf(firmware_filename, NULL,
-                    NULL, &firmware_entry, &firmware_low, &firmware_high,
+    size = load_elf(firmware_filename, NULL, NULL, NULL,
+                    &firmware_entry, &firmware_low, &firmware_high,
                     true, EM_PARISC, 0, 0);
 
     /* Unfortunately, load_elf sign-extends reading elf32.  */
@@ -163,7 +165,7 @@ static void machine_hppa_init(MachineState *machine)
 
     /* Load kernel */
     if (kernel_filename) {
-        size = load_elf(kernel_filename, &cpu_hppa_to_phys,
+        size = load_elf(kernel_filename, NULL, &cpu_hppa_to_phys,
                         NULL, &kernel_entry, &kernel_low, &kernel_high,
                         true, EM_PARISC, 0, 0);
 
@@ -178,8 +180,8 @@ static void machine_hppa_init(MachineState *machine)
         }
         qemu_log_mask(CPU_LOG_PAGE, "Kernel loaded at 0x%08" PRIx64
                       "-0x%08" PRIx64 ", entry at 0x%08" PRIx64
-                      ", size %ld kB.\n",
-                      kernel_low, kernel_high, kernel_entry, size / 1024);
+                      ", size %" PRIu64 " kB\n",
+                      kernel_low, kernel_high, kernel_entry, size / KiB);
 
         if (kernel_cmdline) {
             cpu[0]->env.gr[24] = 0x4000;
@@ -189,7 +191,7 @@ static void machine_hppa_init(MachineState *machine)
 
         if (initrd_filename) {
             ram_addr_t initrd_base;
-            long initrd_size;
+            int64_t initrd_size;
 
             initrd_size = get_image_size(initrd_filename);
             if (initrd_size < 0) {
@@ -203,8 +205,8 @@ static void machine_hppa_init(MachineState *machine)
                (1) Due to sign-extension problems and PDC,
                put the initrd no higher than 1G.
                (2) Reserve 64k for stack.  */
-            initrd_base = MIN(ram_size, 1024 * 1024 * 1024);
-            initrd_base = initrd_base - 64 * 1024;
+            initrd_base = MIN(ram_size, 1 * GiB);
+            initrd_base = initrd_base - 64 * KiB;
             initrd_base = (initrd_base - initrd_size) & TARGET_PAGE_MASK;
 
             if (initrd_base < kernel_high) {
@@ -275,7 +277,7 @@ static void machine_hppa_machine_init(MachineClass *mc)
     mc->max_cpus = HPPA_MAX_CPUS;
     mc->default_cpus = 1;
     mc->is_default = 1;
-    mc->default_ram_size = 512 * M_BYTE;
+    mc->default_ram_size = 512 * MiB;
     mc->default_boot_order = "cd";
 }
 

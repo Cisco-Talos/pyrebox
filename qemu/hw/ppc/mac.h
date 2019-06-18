@@ -26,16 +26,20 @@
 #ifndef PPC_MAC_H
 #define PPC_MAC_H
 
+#include "qemu/units.h"
 #include "exec/memory.h"
+#include "hw/boards.h"
 #include "hw/sysbus.h"
 #include "hw/ide/internal.h"
 #include "hw/input/adb.h"
 #include "hw/misc/mos6522.h"
+#include "hw/pci/pci_host.h"
+#include "hw/pci-host/uninorth.h"
 
 /* SMP is not enabled, for now */
 #define MAX_CPUS 1
 
-#define BIOS_SIZE     (1024 * 1024)
+#define BIOS_SIZE        (1 * MiB)
 #define NVRAM_SIZE        0x2000
 #define PROM_FILENAME    "openbios-ppc"
 #define PROM_ADDR         0xfff00000
@@ -45,53 +49,45 @@
 
 #define ESCC_CLOCK 3686400
 
+/* Old World IRQs */
+#define OLDWORLD_CUDA_IRQ      0x12
+#define OLDWORLD_ESCCB_IRQ     0x10
+#define OLDWORLD_ESCCA_IRQ     0xf
+#define OLDWORLD_IDE0_IRQ      0xd
+#define OLDWORLD_IDE0_DMA_IRQ  0x2
+#define OLDWORLD_IDE1_IRQ      0xe
+#define OLDWORLD_IDE1_DMA_IRQ  0x3
 
-/* MacIO */
-#define TYPE_MACIO_IDE "macio-ide"
-#define MACIO_IDE(obj) OBJECT_CHECK(MACIOIDEState, (obj), TYPE_MACIO_IDE)
+/* New World IRQs */
+#define NEWWORLD_CUDA_IRQ      0x19
+#define NEWWORLD_PMU_IRQ       0x19
+#define NEWWORLD_ESCCB_IRQ     0x24
+#define NEWWORLD_ESCCA_IRQ     0x25
+#define NEWWORLD_IDE0_IRQ      0xd
+#define NEWWORLD_IDE0_DMA_IRQ  0x2
+#define NEWWORLD_IDE1_IRQ      0xe
+#define NEWWORLD_IDE1_DMA_IRQ  0x3
+#define NEWWORLD_EXTING_GPIO1  0x2f
+#define NEWWORLD_EXTING_GPIO9  0x37
 
-typedef struct MACIOIDEState {
+/* Core99 machine */
+#define TYPE_CORE99_MACHINE MACHINE_TYPE_NAME("mac99")
+#define CORE99_MACHINE(obj) OBJECT_CHECK(Core99MachineState, (obj), \
+                                         TYPE_CORE99_MACHINE)
+
+#define CORE99_VIA_CONFIG_CUDA     0x0
+#define CORE99_VIA_CONFIG_PMU      0x1
+#define CORE99_VIA_CONFIG_PMU_ADB  0x2
+
+typedef struct Core99MachineState {
     /*< private >*/
-    SysBusDevice parent_obj;
-    /*< public >*/
-    uint32_t channel;
-    qemu_irq real_ide_irq;
-    qemu_irq real_dma_irq;
-    qemu_irq ide_irq;
-    qemu_irq dma_irq;
+    MachineState parent;
 
-    MemoryRegion mem;
-    IDEBus bus;
-    IDEDMA dma;
-    void *dbdma;
-    bool dma_active;
-    uint32_t timing_reg;
-    uint32_t irq_reg;
-} MACIOIDEState;
-
-void macio_ide_init_drives(MACIOIDEState *ide, DriveInfo **hd_table);
-void macio_ide_register_dma(MACIOIDEState *ide);
-
-void macio_init(PCIDevice *dev,
-                MemoryRegion *pic_mem);
-
-/* Heathrow PIC */
-DeviceState *heathrow_pic_init(int nb_cpus, qemu_irq **irqs,
-                               qemu_irq **pic_irqs);
+    uint8_t via_config;
+} Core99MachineState;
 
 /* Grackle PCI */
 #define TYPE_GRACKLE_PCI_HOST_BRIDGE "grackle-pcihost"
-PCIBus *pci_grackle_init(uint32_t base, qemu_irq *pic,
-                         MemoryRegion *address_space_mem,
-                         MemoryRegion *address_space_io);
-
-/* UniNorth PCI */
-PCIBus *pci_pmac_init(qemu_irq *pic,
-                      MemoryRegion *address_space_mem,
-                      MemoryRegion *address_space_io);
-PCIBus *pci_pmac_u3_init(qemu_irq *pic,
-                         MemoryRegion *address_space_mem,
-                         MemoryRegion *address_space_io);
 
 /* Mac NVRAM */
 #define TYPE_MACIO_NVRAM "macio-nvram"

@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #
 # Tests oVirt-like storage migration:
 #  - Create snapshot
@@ -32,7 +32,6 @@ owner=mreitz@redhat.com
 seq="$(basename $0)"
 echo "QA output created by $seq"
 
-here="$PWD"
 status=1	# failure is the default!
 
 _cleanup()
@@ -119,7 +118,7 @@ _send_qemu_cmd $QEMU_HANDLE \
 
 _send_qemu_cmd $QEMU_HANDLE \
     '' \
-    'BLOCK_JOB_COMPLETED'
+    '"status": "null"'
 
 # Remove the source images
 rm -f "$TEST_IMG{,.backing,.overlay}"

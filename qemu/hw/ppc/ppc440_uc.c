@@ -2,17 +2,18 @@
  * QEMU PowerPC 440 embedded processors emulation
  *
  * Copyright (c) 2012 François Revol
- * Copyright (c) 2016-2018 BALATON Zoltan
+ * Copyright (c) 2016-2019 BALATON Zoltan
  *
  * This work is licensed under the GNU GPL license version 2 or later.
  *
  */
 
 #include "qemu/osdep.h"
+#include "qemu/units.h"
 #include "qemu-common.h"
-#include "qemu/cutils.h"
 #include "qemu/error-report.h"
 #include "qapi/error.h"
+#include "qemu/log.h"
 #include "cpu.h"
 #include "hw/hw.h"
 #include "exec/address-spaces.h"
@@ -20,7 +21,7 @@
 #include "hw/ppc/ppc.h"
 #include "hw/pci/pci.h"
 #include "sysemu/block-backend.h"
-#include "hw/ppc/ppc440.h"
+#include "ppc440.h"
 
 /*****************************************************************************/
 /* L2 Cache as SRAM */
@@ -215,13 +216,13 @@ void ppc4xx_l2sram_init(CPUPPCState *env)
     l2sram = g_malloc0(sizeof(*l2sram));
     /* XXX: Size is 4*64kB for 460ex, cf. U-Boot, ppc4xx-isram.h */
     memory_region_init_ram(&l2sram->bank[0], NULL, "ppc4xx.l2sram_bank0",
-                           64 * K_BYTE, &error_abort);
+                           64 * KiB, &error_abort);
     memory_region_init_ram(&l2sram->bank[1], NULL, "ppc4xx.l2sram_bank1",
-                           64 * K_BYTE, &error_abort);
+                           64 * KiB, &error_abort);
     memory_region_init_ram(&l2sram->bank[2], NULL, "ppc4xx.l2sram_bank2",
-                           64 * K_BYTE, &error_abort);
+                           64 * KiB, &error_abort);
     memory_region_init_ram(&l2sram->bank[3], NULL, "ppc4xx.l2sram_bank3",
-                           64 * K_BYTE, &error_abort);
+                           64 * KiB, &error_abort);
     qemu_register_reset(&l2sram_reset, l2sram);
     ppc_dcr_register(env, DCR_L2CACHE_CFG,
                      l2sram, &dcr_read_l2sram, &dcr_write_l2sram);
@@ -480,7 +481,7 @@ void ppc4xx_sdr_init(CPUPPCState *env)
 
 /*****************************************************************************/
 /* SDRAM controller */
-typedef struct ppc4xx_sdram_t {
+typedef struct ppc440_sdram_t {
     uint32_t addr;
     int nbanks;
     MemoryRegion containers[4]; /* used for clipping */
@@ -488,7 +489,7 @@ typedef struct ppc4xx_sdram_t {
     hwaddr ram_bases[4];
     hwaddr ram_sizes[4];
     uint32_t bcr[4];
-} ppc4xx_sdram_t;
+} ppc440_sdram_t;
 
 enum {
     SDRAM0_CFGADDR = 0x10,
@@ -504,44 +505,46 @@ enum {
     SDRAM_PLBADDUHB = 0x50,
 };
 
-/* XXX: TOFIX: some patches have made this code become inconsistent:
- *      there are type inconsistencies, mixing hwaddr, target_ulong
- *      and uint32_t
- */
 static uint32_t sdram_bcr(hwaddr ram_base, hwaddr ram_size)
 {
     uint32_t bcr;
 
     switch (ram_size) {
-    case (8 * M_BYTE):
+    case (8 * MiB):
         bcr = 0xffc0;
         break;
-    case (16 * M_BYTE):
+    case (16 * MiB):
         bcr = 0xff80;
         break;
-    case (32 * M_BYTE):
+    case (32 * MiB):
         bcr = 0xff00;
         break;
-    case (64 * M_BYTE):
+    case (64 * MiB):
         bcr = 0xfe00;
         break;
-    case (128 * M_BYTE):
+    case (128 * MiB):
         bcr = 0xfc00;
         break;
-    case (256 * M_BYTE):
+    case (256 * MiB):
         bcr = 0xf800;
         break;
-    case (512 * M_BYTE):
+    case (512 * MiB):
         bcr = 0xf000;
         break;
-    case (1 * G_BYTE):
+    case (1 * GiB):
         bcr = 0xe000;
+        break;
+    case (2 * GiB):
+        bcr = 0xc000;
+        break;
+    case (4 * GiB):
+        bcr = 0x8000;
         break;
     default:
         error_report("invalid RAM size " TARGET_FMT_plx, ram_size);
         return 0;
     }
-    bcr |= ram_base & 0xFF800000;
+    bcr |= ram_base >> 2 & 0xffe00000;
     bcr |= 1;
 
     return bcr;
@@ -549,68 +552,60 @@ static uint32_t sdram_bcr(hwaddr ram_base, hwaddr ram_size)
 
 static inline hwaddr sdram_base(uint32_t bcr)
 {
-    return bcr & 0xFF800000;
+    return (bcr & 0xffe00000) << 2;
 }
 
-static target_ulong sdram_size(uint32_t bcr)
+static uint64_t sdram_size(uint32_t bcr)
 {
-    target_ulong size;
+    uint64_t size;
     int sh;
 
     sh = 1024 - ((bcr >> 6) & 0x3ff);
-    if (sh == 0) {
-        size = -1;
-    } else {
-        size = 8 * M_BYTE * sh;
-    }
+    size = 8 * MiB * sh;
 
     return size;
 }
 
-static void sdram_set_bcr(ppc4xx_sdram_t *sdram,
-                          uint32_t *bcrp, uint32_t bcr, int enabled)
+static void sdram_set_bcr(ppc440_sdram_t *sdram, int i,
+                          uint32_t bcr, int enabled)
 {
-    unsigned n = bcrp - sdram->bcr;
-
-    if (*bcrp & 1) {
-        /* Unmap RAM */
+    if (sdram->bcr[i] & 1) {
+        /* First unmap RAM if enabled */
         memory_region_del_subregion(get_system_memory(),
-                                    &sdram->containers[n]);
-        memory_region_del_subregion(&sdram->containers[n],
-                                    &sdram->ram_memories[n]);
-        object_unparent(OBJECT(&sdram->containers[n]));
+                                    &sdram->containers[i]);
+        memory_region_del_subregion(&sdram->containers[i],
+                                    &sdram->ram_memories[i]);
+        object_unparent(OBJECT(&sdram->containers[i]));
     }
-    *bcrp = bcr & 0xFFDEE001;
+    sdram->bcr[i] = bcr & 0xffe0ffc1;
     if (enabled && (bcr & 1)) {
-        memory_region_init(&sdram->containers[n], NULL, "sdram-containers",
+        memory_region_init(&sdram->containers[i], NULL, "sdram-containers",
                            sdram_size(bcr));
-        memory_region_add_subregion(&sdram->containers[n], 0,
-                                    &sdram->ram_memories[n]);
+        memory_region_add_subregion(&sdram->containers[i], 0,
+                                    &sdram->ram_memories[i]);
         memory_region_add_subregion(get_system_memory(),
                                     sdram_base(bcr),
-                                    &sdram->containers[n]);
+                                    &sdram->containers[i]);
     }
 }
 
-static void sdram_map_bcr(ppc4xx_sdram_t *sdram)
+static void sdram_map_bcr(ppc440_sdram_t *sdram)
 {
     int i;
 
     for (i = 0; i < sdram->nbanks; i++) {
         if (sdram->ram_sizes[i] != 0) {
-            sdram_set_bcr(sdram,
-                          &sdram->bcr[i],
-                          sdram_bcr(sdram->ram_bases[i], sdram->ram_sizes[i]),
-                          1);
+            sdram_set_bcr(sdram, i, sdram_bcr(sdram->ram_bases[i],
+                                              sdram->ram_sizes[i]), 1);
         } else {
-            sdram_set_bcr(sdram, &sdram->bcr[i], 0, 0);
+            sdram_set_bcr(sdram, i, 0, 0);
         }
     }
 }
 
 static uint32_t dcr_read_sdram(void *opaque, int dcrn)
 {
-    ppc4xx_sdram_t *sdram = opaque;
+    ppc440_sdram_t *sdram = opaque;
     uint32_t ret = 0;
 
     switch (dcrn) {
@@ -618,8 +613,10 @@ static uint32_t dcr_read_sdram(void *opaque, int dcrn)
     case SDRAM_R1BAS:
     case SDRAM_R2BAS:
     case SDRAM_R3BAS:
-        ret = sdram_bcr(sdram->ram_bases[dcrn - SDRAM_R0BAS],
-                        sdram->ram_sizes[dcrn - SDRAM_R0BAS]);
+        if (sdram->ram_sizes[dcrn - SDRAM_R0BAS]) {
+            ret = sdram_bcr(sdram->ram_bases[dcrn - SDRAM_R0BAS],
+                            sdram->ram_sizes[dcrn - SDRAM_R0BAS]);
+        }
         break;
     case SDRAM_CONF1HB:
     case SDRAM_CONF1LL:
@@ -661,7 +658,7 @@ static uint32_t dcr_read_sdram(void *opaque, int dcrn)
 
 static void dcr_write_sdram(void *opaque, int dcrn, uint32_t val)
 {
-    ppc4xx_sdram_t *sdram = opaque;
+    ppc440_sdram_t *sdram = opaque;
 
     switch (dcrn) {
     case SDRAM_R0BAS:
@@ -692,7 +689,7 @@ static void dcr_write_sdram(void *opaque, int dcrn, uint32_t val)
 
 static void sdram_reset(void *opaque)
 {
-    ppc4xx_sdram_t *sdram = opaque;
+    ppc440_sdram_t *sdram = opaque;
 
     sdram->addr = 0;
 }
@@ -702,7 +699,7 @@ void ppc440_sdram_init(CPUPPCState *env, int nbanks,
                        hwaddr *ram_bases, hwaddr *ram_sizes,
                        int do_init)
 {
-    ppc4xx_sdram_t *sdram;
+    ppc440_sdram_t *sdram;
 
     sdram = g_malloc0(sizeof(*sdram));
     sdram->nbanks = nbanks;
@@ -800,6 +797,227 @@ void ppc4xx_ahb_init(CPUPPCState *env)
     ppc_dcr_register(env, AHB_TOP, ahb, &dcr_read_ahb, &dcr_write_ahb);
     ppc_dcr_register(env, AHB_BOT, ahb, &dcr_read_ahb, &dcr_write_ahb);
     qemu_register_reset(ppc4xx_ahb_reset, ahb);
+}
+
+/*****************************************************************************/
+/* DMA controller */
+
+#define DMA0_CR_CE  (1 << 31)
+#define DMA0_CR_PW  (1 << 26 | 1 << 25)
+#define DMA0_CR_DAI (1 << 24)
+#define DMA0_CR_SAI (1 << 23)
+#define DMA0_CR_DEC (1 << 2)
+
+enum {
+    DMA0_CR  = 0x00,
+    DMA0_CT,
+    DMA0_SAH,
+    DMA0_SAL,
+    DMA0_DAH,
+    DMA0_DAL,
+    DMA0_SGH,
+    DMA0_SGL,
+
+    DMA0_SR  = 0x20,
+    DMA0_SGC = 0x23,
+    DMA0_SLP = 0x25,
+    DMA0_POL = 0x26,
+};
+
+typedef struct {
+    uint32_t cr;
+    uint32_t ct;
+    uint64_t sa;
+    uint64_t da;
+    uint64_t sg;
+} PPC4xxDmaChnl;
+
+typedef struct {
+    int base;
+    PPC4xxDmaChnl ch[4];
+    uint32_t sr;
+} PPC4xxDmaState;
+
+static uint32_t dcr_read_dma(void *opaque, int dcrn)
+{
+    PPC4xxDmaState *dma = opaque;
+    uint32_t val = 0;
+    int addr = dcrn - dma->base;
+    int chnl = addr / 8;
+
+    switch (addr) {
+    case 0x00 ... 0x1f:
+        switch (addr % 8) {
+        case DMA0_CR:
+            val = dma->ch[chnl].cr;
+            break;
+        case DMA0_CT:
+            val = dma->ch[chnl].ct;
+            break;
+        case DMA0_SAH:
+            val = dma->ch[chnl].sa >> 32;
+            break;
+        case DMA0_SAL:
+            val = dma->ch[chnl].sa;
+            break;
+        case DMA0_DAH:
+            val = dma->ch[chnl].da >> 32;
+            break;
+        case DMA0_DAL:
+            val = dma->ch[chnl].da;
+            break;
+        case DMA0_SGH:
+            val = dma->ch[chnl].sg >> 32;
+            break;
+        case DMA0_SGL:
+            val = dma->ch[chnl].sg;
+            break;
+        }
+        break;
+    case DMA0_SR:
+        val = dma->sr;
+        break;
+    default:
+        qemu_log_mask(LOG_UNIMP, "%s: unimplemented register %x (%d, %x)\n",
+                      __func__, dcrn, chnl, addr);
+    }
+
+    return val;
+}
+
+static void dcr_write_dma(void *opaque, int dcrn, uint32_t val)
+{
+    PPC4xxDmaState *dma = opaque;
+    int addr = dcrn - dma->base;
+    int chnl = addr / 8;
+
+    switch (addr) {
+    case 0x00 ... 0x1f:
+        switch (addr % 8) {
+        case DMA0_CR:
+            dma->ch[chnl].cr = val;
+            if (val & DMA0_CR_CE) {
+                int count = dma->ch[chnl].ct & 0xffff;
+
+                if (count) {
+                    int width, i, sidx, didx;
+                    uint8_t *rptr, *wptr;
+                    hwaddr rlen, wlen;
+
+                    sidx = didx = 0;
+                    width = 1 << ((val & DMA0_CR_PW) >> 25);
+                    rptr = cpu_physical_memory_map(dma->ch[chnl].sa, &rlen, 0);
+                    wptr = cpu_physical_memory_map(dma->ch[chnl].da, &wlen, 1);
+                    if (rptr && wptr) {
+                        if (!(val & DMA0_CR_DEC) &&
+                            val & DMA0_CR_SAI && val & DMA0_CR_DAI) {
+                            /* optimise common case */
+                            memmove(wptr, rptr, count * width);
+                            sidx = didx = count * width;
+                        } else {
+                            /* do it the slow way */
+                            for (sidx = didx = i = 0; i < count; i++) {
+                                uint64_t v = ldn_le_p(rptr + sidx, width);
+                                stn_le_p(wptr + didx, width, v);
+                                if (val & DMA0_CR_SAI) {
+                                    sidx += width;
+                                }
+                                if (val & DMA0_CR_DAI) {
+                                    didx += width;
+                                }
+                            }
+                        }
+                    }
+                    if (wptr) {
+                        cpu_physical_memory_unmap(wptr, wlen, 1, didx);
+                    }
+                    if (rptr) {
+                        cpu_physical_memory_unmap(rptr, rlen, 0, sidx);
+                    }
+                }
+            }
+            break;
+        case DMA0_CT:
+            dma->ch[chnl].ct = val;
+            break;
+        case DMA0_SAH:
+            dma->ch[chnl].sa &= 0xffffffffULL;
+            dma->ch[chnl].sa |= (uint64_t)val << 32;
+            break;
+        case DMA0_SAL:
+            dma->ch[chnl].sa &= 0xffffffff00000000ULL;
+            dma->ch[chnl].sa |= val;
+            break;
+        case DMA0_DAH:
+            dma->ch[chnl].da &= 0xffffffffULL;
+            dma->ch[chnl].da |= (uint64_t)val << 32;
+            break;
+        case DMA0_DAL:
+            dma->ch[chnl].da &= 0xffffffff00000000ULL;
+            dma->ch[chnl].da |= val;
+            break;
+        case DMA0_SGH:
+            dma->ch[chnl].sg &= 0xffffffffULL;
+            dma->ch[chnl].sg |= (uint64_t)val << 32;
+            break;
+        case DMA0_SGL:
+            dma->ch[chnl].sg &= 0xffffffff00000000ULL;
+            dma->ch[chnl].sg |= val;
+            break;
+        }
+        break;
+    case DMA0_SR:
+        dma->sr &= ~val;
+        break;
+    default:
+        qemu_log_mask(LOG_UNIMP, "%s: unimplemented register %x (%d, %x)\n",
+                      __func__, dcrn, chnl, addr);
+    }
+}
+
+static void ppc4xx_dma_reset(void *opaque)
+{
+    PPC4xxDmaState *dma = opaque;
+    int dma_base = dma->base;
+
+    memset(dma, 0, sizeof(*dma));
+    dma->base = dma_base;
+}
+
+void ppc4xx_dma_init(CPUPPCState *env, int dcr_base)
+{
+    PPC4xxDmaState *dma;
+    int i;
+
+    dma = g_malloc0(sizeof(*dma));
+    dma->base = dcr_base;
+    qemu_register_reset(&ppc4xx_dma_reset, dma);
+    for (i = 0; i < 4; i++) {
+        ppc_dcr_register(env, dcr_base + i * 8 + DMA0_CR,
+                         dma, &dcr_read_dma, &dcr_write_dma);
+        ppc_dcr_register(env, dcr_base + i * 8 + DMA0_CT,
+                         dma, &dcr_read_dma, &dcr_write_dma);
+        ppc_dcr_register(env, dcr_base + i * 8 + DMA0_SAH,
+                         dma, &dcr_read_dma, &dcr_write_dma);
+        ppc_dcr_register(env, dcr_base + i * 8 + DMA0_SAL,
+                         dma, &dcr_read_dma, &dcr_write_dma);
+        ppc_dcr_register(env, dcr_base + i * 8 + DMA0_DAH,
+                         dma, &dcr_read_dma, &dcr_write_dma);
+        ppc_dcr_register(env, dcr_base + i * 8 + DMA0_DAL,
+                         dma, &dcr_read_dma, &dcr_write_dma);
+        ppc_dcr_register(env, dcr_base + i * 8 + DMA0_SGH,
+                         dma, &dcr_read_dma, &dcr_write_dma);
+        ppc_dcr_register(env, dcr_base + i * 8 + DMA0_SGL,
+                         dma, &dcr_read_dma, &dcr_write_dma);
+    }
+    ppc_dcr_register(env, dcr_base + DMA0_SR,
+                     dma, &dcr_read_dma, &dcr_write_dma);
+    ppc_dcr_register(env, dcr_base + DMA0_SGC,
+                     dma, &dcr_read_dma, &dcr_write_dma);
+    ppc_dcr_register(env, dcr_base + DMA0_SLP,
+                     dma, &dcr_read_dma, &dcr_write_dma);
+    ppc_dcr_register(env, dcr_base + DMA0_POL,
+                     dma, &dcr_read_dma, &dcr_write_dma);
 }
 
 /*****************************************************************************/
