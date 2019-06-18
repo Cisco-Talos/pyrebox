@@ -6763,7 +6763,7 @@ static target_ulong disas_insn(DisasContext *s, CPUState *cpu)
             /* add stack offset */
             gen_stack_update(s, val + (2 << dflag));
 
-            gen_eob(s, cpu_T0);
+            gen_eob(s, s->T0);
         }
         break;
     case 0xcb: /* lret */
@@ -7839,7 +7839,10 @@ static target_ulong disas_insn(DisasContext *s, CPUState *cpu)
             gen_update_cc_op(s);
             gen_helper_stgi(cpu_env);
             gen_jmp_im(s, s->pc - s->cs_base);
-            gen_eob(s);
+            tcg_dest = tcg_temp_new();
+            tcg_gen_movi_tl(tcg_dest, s->pc - s->cs_base);
+            gen_eob(s, tcg_dest);
+            tcg_temp_free(tcg_dest);
             break;
 
         case 0xdd: /* CLGI */
@@ -8416,7 +8419,7 @@ static target_ulong disas_insn(DisasContext *s, CPUState *cpu)
             }
             if (b & 2) {
                 gen_svm_check_intercept(s, pc_start, SVM_EXIT_WRITE_DR0 + reg);
-                gen_op_mov_v_reg(ot, s->T0, rm);
+                gen_op_mov_v_reg(s, ot, s->T0, rm);
                 tcg_gen_movi_i32(s->tmp2_i32, reg);
                 gen_helper_set_dr(cpu_env, s->tmp2_i32, s->T0);
                 gen_jmp_im(s, s->pc - s->cs_base);
@@ -8728,7 +8731,7 @@ static target_ulong disas_insn(DisasContext *s, CPUState *cpu)
         //insn end and opcode range callback, so that the cpu context
         //when these callbacks are trigger corresponds to the next
         //instruction, just like for the previous cases.
-        gen_jmp_im(s->pc - s->cs_base);
+        gen_jmp_im(s, s->pc - s->cs_base);
         //Pyrebox: insn end 
         //helper_qemu_insn_end_callback(CPUState* cpu)
         //At this point, we take the pgd from the DisasContext, 
