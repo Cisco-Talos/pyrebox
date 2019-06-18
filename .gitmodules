@@ -46,3 +46,13 @@
 [submodule "qemu/roms/u-boot-sam460ex"]
     path = qemu/roms/u-boot-sam460ex
     url = git://git.qemu.org/u-boot-sam460ex.git
+[submodule "qemu/tests/fp/berkeley-testfloat-3"]
+    path = qemu/tests/fp/berkeley-testfloat-3
+    url = https://github.com/cota/berkeley-testfloat-3
+[submodule "qemu/tests/fp/berkeley-softfloat-3"]
+    path = qemu/tests/fp/berkeley-softfloat-3
+    url = https://github.com/cota/berkeley-softfloat-3
+[submodule "qemu/roms/edk2"]
+    path = qemu/roms/edk2
+    url = https://github.com/tianocore/edk2.git
+
