@@ -84,7 +84,8 @@ void notify_cpu_executing(CPUState* cpu){
     }
 }
 
-void helper_qemu_block_begin_callback(CPUState* cpu,TranslationBlock* tb){
+void helper_qemu_block_begin_callback(TranslationBlock* tb){
+    CPUState* cpu = current_cpu;
     callback_params_t params;
 #if defined(TARGET_I386) || defined(TARGET_X86_64)
     CPUX86State* env = &(X86_CPU((CPUState*)cpu)->env);
@@ -98,7 +99,8 @@ void helper_qemu_block_begin_callback(CPUState* cpu,TranslationBlock* tb){
     params.block_begin_params.cpu = (qemu_cpu_opaque_t) cpu;
     block_begin_callback(params);
 }
-void helper_qemu_block_end_callback(CPUState* cpu,TranslationBlock* tb, target_ulong from, target_ulong to){
+void helper_qemu_block_end_callback(TranslationBlock* tb, target_ulong from, target_ulong to){
+    CPUState* cpu = current_cpu;
     callback_params_t params;
 #if defined(TARGET_I386) || defined(TARGET_X86_64)
     CPUX86State* env = &(X86_CPU((CPUState*)cpu)->env);
@@ -115,7 +117,8 @@ void helper_qemu_block_end_callback(CPUState* cpu,TranslationBlock* tb, target_u
     block_end_callback(params);
 }
 
-void helper_qemu_insn_begin_callback(CPUState* cpu){
+void helper_qemu_insn_begin_callback(void){
+    CPUState* cpu = current_cpu;
     callback_params_t params;
 #if defined(TARGET_I386) || defined(TARGET_X86_64)
     CPUX86State* env = &(X86_CPU((CPUState*)cpu)->env);
@@ -129,7 +132,8 @@ void helper_qemu_insn_begin_callback(CPUState* cpu){
     insn_begin_callback(params);
 }
 
-void helper_qemu_insn_end_callback(CPUState* cpu){
+void helper_qemu_insn_end_callback(void){
+    CPUState* cpu = current_cpu;
     callback_params_t params;
 #if defined(TARGET_I386) || defined(TARGET_X86_64)
     CPUX86State* env = &(X86_CPU((CPUState*)cpu)->env);
@@ -143,7 +147,8 @@ void helper_qemu_insn_end_callback(CPUState* cpu){
     insn_end_callback(params);
 }
 
-void helper_qemu_opcode_range_callback(CPUState* cpu, target_ulong from, target_ulong to, uint32_t opcode, target_ulong insn_size){
+void helper_qemu_opcode_range_callback(target_ulong from, target_ulong to, uint32_t opcode, target_ulong insn_size){
+    CPUState* cpu = current_cpu;
     callback_params_t params;
 #if defined(TARGET_I386) || defined(TARGET_X86_64)
     CPUX86State* env = &(X86_CPU((CPUState*)cpu)->env);
@@ -162,7 +167,8 @@ void helper_qemu_opcode_range_callback(CPUState* cpu, target_ulong from, target_
     opcode_range_callback(params);
 }
 
-void helper_qemu_mem_read_callback(CPUState* cpu, target_ulong vaddr, uintptr_t haddr, target_ulong size){
+void helper_qemu_mem_read_callback(target_ulong vaddr, uintptr_t haddr, target_ulong size){
+    CPUState* cpu = current_cpu;
     callback_params_t params;
 #if defined(TARGET_I386) || defined(TARGET_X86_64)
     CPUX86State* env = &(X86_CPU((CPUState*)cpu)->env);
@@ -179,7 +185,8 @@ void helper_qemu_mem_read_callback(CPUState* cpu, target_ulong vaddr, uintptr_t 
     mem_read_callback(params);
 }
 
-void helper_qemu_mem_write_callback(CPUState* cpu, target_ulong vaddr, uintptr_t haddr, target_ulong data, target_ulong size){
+void helper_qemu_mem_write_callback(target_ulong vaddr, uintptr_t haddr, target_ulong data, target_ulong size){
+    CPUState* cpu = current_cpu;
     callback_params_t params;
 #if defined(TARGET_I386) || defined(TARGET_X86_64)
     CPUX86State* env = &(X86_CPU((CPUState*)cpu)->env);
@@ -222,7 +229,8 @@ void qemu_nic_send_callback(unsigned char* buf, uint64_t size, uint64_t address)
     nic_send_callback(params);
 }
 
-void helper_qemu_trigger_cpu_loop_exit_if_needed(CPUState* cpu){
+void helper_qemu_trigger_cpu_loop_exit_if_needed(void){
+    CPUState* cpu = current_cpu;
     if (is_cpu_loop_exit_needed()) {
         cpu->exception_index = EXCP_INTERRUPT;
         cpu_loop_exit(cpu);
@@ -230,31 +238,31 @@ void helper_qemu_trigger_cpu_loop_exit_if_needed(CPUState* cpu){
 }
 
 
-int is_opcode_range_callback_needed(target_ulong start_opcode, target_ulong pgd){
-    return is_callback_needed(OPCODE_RANGE_CB, start_opcode, pgd);
+int is_opcode_range_callback_needed(target_ulong start_opcode){
+    return is_callback_needed(OPCODE_RANGE_CB, start_opcode);
 }
 
-int is_block_begin_callback_needed(target_ulong address,target_ulong pgd){
-    return is_callback_needed(BLOCK_BEGIN_CB, address ,pgd);
+int is_block_begin_callback_needed(target_ulong address){
+    return is_callback_needed(BLOCK_BEGIN_CB, address);
 }
-int is_insn_begin_callback_needed(target_ulong address,target_ulong pgd){
-    return is_callback_needed(INSN_BEGIN_CB, address ,pgd);
-}
-
-int is_block_end_callback_needed(target_ulong pgd){
-    return is_callback_needed(BLOCK_END_CB, (pyrebox_target_ulong) INV_ADDR,pgd);
+int is_insn_begin_callback_needed(target_ulong address){
+    return is_callback_needed(INSN_BEGIN_CB, address);
 }
 
-int is_insn_end_callback_needed(target_ulong pgd){
-    return is_callback_needed(INSN_END_CB, (pyrebox_target_ulong) INV_ADDR,pgd);
+int is_block_end_callback_needed(void){
+    return is_callback_needed(BLOCK_END_CB, (pyrebox_target_ulong) INV_ADDR);
 }
 
-int is_mem_read_callback_needed(target_ulong pgd){
-    return is_callback_needed(MEM_READ_CB, (pyrebox_target_ulong) INV_ADDR,pgd);
+int is_insn_end_callback_needed(void){
+    return is_callback_needed(INSN_END_CB, (pyrebox_target_ulong) INV_ADDR);
 }
 
-int is_mem_write_callback_needed(target_ulong pgd){
-    return is_callback_needed(MEM_WRITE_CB, (pyrebox_target_ulong) INV_ADDR,pgd);
+int is_mem_read_callback_needed(void){
+    return is_callback_needed(MEM_READ_CB, (pyrebox_target_ulong) INV_ADDR);
+}
+
+int is_mem_write_callback_needed(void){
+    return is_callback_needed(MEM_WRITE_CB, (pyrebox_target_ulong) INV_ADDR);
 }
 
 int keystroke_callback_disabled = 0;
@@ -269,18 +277,18 @@ void enable_keystroke_callbacks(void){
 
 int is_keystroke_callback_needed(void){
     if (!keystroke_callback_disabled){
-        return is_callback_needed(KEYSTROKE_CB, (pyrebox_target_ulong) INV_ADDR, (pyrebox_target_ulong) INV_PGD);
+        return is_callback_needed(KEYSTROKE_CB, (pyrebox_target_ulong) INV_ADDR);
     } else {
         return 0;
     }
 }
 
 int is_nic_rec_callback_needed(void){
-    return is_callback_needed(NIC_REC_CB, (pyrebox_target_ulong) INV_ADDR, (pyrebox_target_ulong) INV_PGD);
+    return is_callback_needed(NIC_REC_CB, (pyrebox_target_ulong) INV_ADDR);
 }
 
 int is_nic_send_callback_needed(void){
-    return is_callback_needed(NIC_SEND_CB, (pyrebox_target_ulong) INV_ADDR, (pyrebox_target_ulong) INV_PGD);
+    return is_callback_needed(NIC_SEND_CB, (pyrebox_target_ulong) INV_ADDR);
 }
 
 int is_tb_flush_needed(void){

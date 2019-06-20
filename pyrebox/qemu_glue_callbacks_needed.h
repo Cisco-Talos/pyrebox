@@ -26,12 +26,12 @@
 
 //Separated in order to allow including it in translate.c
 
-int is_opcode_range_callback_needed(target_ulong start_opcode, target_ulong pgd);
-int is_block_begin_callback_needed(target_ulong address,target_ulong pgd);
-int is_insn_begin_callback_needed(target_ulong address,target_ulong pgd);
-int is_block_end_callback_needed(target_ulong pgd);
-int is_insn_end_callback_needed(target_ulong pgd);
-int is_mem_read_callback_needed(target_ulong pgd);
-int is_mem_write_callback_needed(target_ulong pgd);
+int is_opcode_range_callback_needed(target_ulong start_opcode);
+int is_block_begin_callback_needed(target_ulong address);
+int is_insn_begin_callback_needed(target_ulong address);
+int is_block_end_callback_needed(void);
+int is_insn_end_callback_needed(void);
+int is_mem_read_callback_needed(void);
+int is_mem_write_callback_needed(void);
 
 #endif

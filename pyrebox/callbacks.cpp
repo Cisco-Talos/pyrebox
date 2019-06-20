@@ -287,8 +287,8 @@ void context_change_callback(callback_params_t params)
 
 
 //Determine if a callback is needed for a given callback type and position
-int is_callback_needed(callback_type_t callback_type, pyrebox_target_ulong address, pyrebox_target_ulong pgd){
-    return (cb_manager->is_callback_needed(callback_type,address,pgd));
+int is_callback_needed(callback_type_t callback_type, pyrebox_target_ulong address){
+    return (cb_manager->is_callback_needed(callback_type,address));
 }
 
 }; // extern "C" 
@@ -1098,7 +1098,7 @@ void CallbackManager::remove_module_callbacks(module_handle_t handle){
     pyrebox_flush_tb();
 }
 
-int CallbackManager::is_callback_needed(callback_type_t callback_type, pyrebox_target_ulong address, pyrebox_target_ulong pgd){
+int CallbackManager::is_callback_needed(callback_type_t callback_type, pyrebox_target_ulong address){
     std::multiset<Callback*,CompareCallbackP>::iterator it;
     Callback* cb;
     switch(callback_type){

@@ -38,17 +38,17 @@ void disable_keystroke_callbacks(void);
 void enable_keystroke_callbacks(void);
 
 //At translation time
-void helper_qemu_block_begin_callback(CPUState* cpu,TranslationBlock* tb);
+void helper_qemu_block_begin_callback(TranslationBlock* tb);
 
-void helper_qemu_block_end_callback(CPUState* cpu,TranslationBlock* next_tb, target_ulong from, target_ulong to);
+void helper_qemu_block_end_callback(TranslationBlock* next_tb, target_ulong from, target_ulong to);
 
-void helper_qemu_insn_begin_callback(CPUState* cpu);
+void helper_qemu_insn_begin_callback(void);
 
-void helper_qemu_insn_end_callback(CPUState* cpu);
+void helper_qemu_insn_end_callback(void);
 
-void helper_qemu_opcode_range_callback(CPUState* cpu, target_ulong from, target_ulong to, uint32_t opcode, target_ulong insn_size);
+void helper_qemu_opcode_range_callback(target_ulong from, target_ulong to, uint32_t opcode, target_ulong insn_size);
 
-void helper_qemu_trigger_cpu_loop_exit_if_needed(CPUState* cpu);
+void helper_qemu_trigger_cpu_loop_exit_if_needed(void);
 
 //Emulation time
 //Always needed

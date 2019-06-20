@@ -172,15 +172,13 @@ WORD_TYPE helper_le_ld_name(CPUArchState *env, target_ulong addr,
     haddr = addr + entry->addend;
 #if DATA_SIZE == 1
     res = glue(glue(ld, LSUFFIX), _p)((uint8_t *)haddr);
-    CPUX86State* env2 = &(X86_CPU((CPUState*)ENV_GET_CPU(env))->env);
-    if (is_mem_read_callback_needed(env2->cr[3])){
-        helper_qemu_mem_read_callback(ENV_GET_CPU(env), addr, (uintptr_t)qemu_ram_addr_from_host((void*) haddr), DATA_SIZE);
+    if (is_mem_read_callback_needed()){
+        helper_qemu_mem_read_callback(addr, (uintptr_t)qemu_ram_addr_from_host((void*) haddr), DATA_SIZE);
     }
 #else
     res = glue(glue(ld, LSUFFIX), _le_p)((uint8_t *)haddr);
-    CPUX86State* env2 = &(X86_CPU((CPUState*)ENV_GET_CPU(env))->env);
-    if (is_mem_read_callback_needed(env2->cr[3])){
-        helper_qemu_mem_read_callback(ENV_GET_CPU(env), addr, (uintptr_t)qemu_ram_addr_from_host((void*) haddr), DATA_SIZE);
+    if (is_mem_read_callback_needed()){
+        helper_qemu_mem_read_callback(addr, (uintptr_t)qemu_ram_addr_from_host((void*) haddr), DATA_SIZE);
     }
 
 #endif
@@ -251,9 +249,8 @@ WORD_TYPE helper_be_ld_name(CPUArchState *env, target_ulong addr,
 
     haddr = addr + entry->addend;
     res = glue(glue(ld, LSUFFIX), _be_p)((uint8_t *)haddr);
-    CPUX86State* env2 = &(X86_CPU((CPUState*)ENV_GET_CPU(env))->env);
-    if (is_mem_read_callback_needed(env2->cr[3])){
-        helper_qemu_mem_read_callback(ENV_GET_CPU(env), addr, (uintptr_t)qemu_ram_addr_from_host((void*) haddr), DATA_SIZE);
+    if (is_mem_read_callback_needed()){
+        helper_qemu_mem_read_callback(addr, (uintptr_t)qemu_ram_addr_from_host((void*) haddr), DATA_SIZE);
     }
 
     return res;
@@ -366,16 +363,14 @@ void helper_le_st_name(CPUArchState *env, target_ulong addr, DATA_TYPE val,
     haddr = addr + entry->addend;
 #if DATA_SIZE == 1
     glue(glue(st, SUFFIX), _p)((uint8_t *)haddr, val);
-    CPUX86State* env2 = &(X86_CPU((CPUState*)ENV_GET_CPU(env))->env);
-    if (is_mem_write_callback_needed(env2->cr[3])){
-        helper_qemu_mem_write_callback(ENV_GET_CPU(env), addr, (uintptr_t)qemu_ram_addr_from_host((void*) haddr), val, DATA_SIZE);
+    if (is_mem_write_callback_needed()){
+        helper_qemu_mem_write_callback(addr, (uintptr_t)qemu_ram_addr_from_host((void*) haddr), val, DATA_SIZE);
     }
 
 #else
     glue(glue(st, SUFFIX), _le_p)((uint8_t *)haddr, val);
-    CPUX86State* env2 = &(X86_CPU((CPUState*)ENV_GET_CPU(env))->env);
-    if (is_mem_write_callback_needed(env2->cr[3])){
-        helper_qemu_mem_write_callback(ENV_GET_CPU(env), addr, (uintptr_t)qemu_ram_addr_from_host((void*) haddr), val, DATA_SIZE);
+    if (is_mem_write_callback_needed()){
+        helper_qemu_mem_write_callback(addr, (uintptr_t)qemu_ram_addr_from_host((void*) haddr), val, DATA_SIZE);
     }
 
 #endif
@@ -455,9 +450,8 @@ void helper_be_st_name(CPUArchState *env, target_ulong addr, DATA_TYPE val,
 
     haddr = addr + entry->addend;
     glue(glue(st, SUFFIX), _be_p)((uint8_t *)haddr, val);
-    CPUX86State* env2 = &(X86_CPU((CPUState*)ENV_GET_CPU(env))->env);
-    if (is_mem_write_callback_needed(env2->cr[3])){
-        helper_qemu_mem_write_callback(ENV_GET_CPU(env), addr, (uintptr_t)qemu_ram_addr_from_host((void*) haddr), val, DATA_SIZE);
+    if (is_mem_write_callback_needed()){
+        helper_qemu_mem_write_callback(addr, (uintptr_t)qemu_ram_addr_from_host((void*) haddr), val, DATA_SIZE);
     }
 
 }

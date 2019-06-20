@@ -1,21 +1,17 @@
 DEF_HELPER_FLAGS_4(cc_compute_all, TCG_CALL_NO_RWG_SE, tl, tl, tl, tl, int)
 DEF_HELPER_FLAGS_4(cc_compute_c, TCG_CALL_NO_RWG_SE, tl, tl, tl, tl, int)
 
-//void qemu_block_begin_callback(CPUState* cpu,TranslationBlock* tb);
-DEF_HELPER_2(qemu_block_begin_callback, void, ptr, ptr)
-//void qemu_op_block_begin_callback(CPUState* cpu,TranslationBlock* tb);
-//DEF_HELPER_2(qemu_op_block_begin_callback, void, ptr, ptr)
-//void qemu_op_insn_begin_callback(CPUState* cpu);
-//DEF_HELPER_1(qemu_op_insn_begin_callback, void, ptr)
-//void qemu_block_end_callback(CPUState* cpu,TranslationBlock* next_tb, target_ulong from);
-DEF_HELPER_4(qemu_block_end_callback, void, ptr,ptr,tl,tl)
-//void qemu_insn_begin_callback(CPUState* cpu);
-DEF_HELPER_1(qemu_insn_begin_callback, void, ptr)
-//void qemu_insn_end_callback(CPUState* cpu);
-DEF_HELPER_1(qemu_insn_end_callback, void, ptr)
-//void qemu_opcode_range_callback(CPUState* cpu, target_ulong from, target_ulong to, uint32_t opcode);
-DEF_HELPER_5(qemu_opcode_range_callback, void, ptr,tl,tl,i32,tl)
-DEF_HELPER_1(qemu_trigger_cpu_loop_exit_if_needed, void, ptr)
+//void qemu_block_begin_callback(TranslationBlock* tb);
+DEF_HELPER_1(qemu_block_begin_callback, void, ptr)
+//void qemu_block_end_callback(TranslationBlock* next_tb, target_ulong from);
+DEF_HELPER_3(qemu_block_end_callback, void, ptr, tl, tl)
+//void qemu_insn_begin_callback();
+DEF_HELPER_0(qemu_insn_begin_callback, void)
+//void qemu_insn_end_callback();
+DEF_HELPER_0(qemu_insn_end_callback, void)
+//void qemu_opcode_range_callback(target_ulong from, target_ulong to, uint32_t opcode);
+DEF_HELPER_4(qemu_opcode_range_callback, void, tl, tl, i32, tl)
+DEF_HELPER_0(qemu_trigger_cpu_loop_exit_if_needed, void)
 
 DEF_HELPER_3(write_eflags, void, env, tl, i32)
 DEF_HELPER_1(read_eflags, tl, env)

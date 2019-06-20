@@ -171,19 +171,19 @@ static tcg_insn_unit *tb_ret_addr;
 
 #if TCG_TARGET_REG_BITS == 64 
 static void load_operation(target_ulong vaddr, void* haddr, target_ulong size, CPUState* cpu) {
-    helper_qemu_mem_read_callback(cpu, vaddr, (uintptr_t) qemu_ram_addr_from_host((void*)haddr), size);
+    helper_qemu_mem_read_callback(vaddr, (uintptr_t) qemu_ram_addr_from_host((void*)haddr), size);
 }
 static void store_operation_1(target_ulong vaddr, void* haddr, target_ulong data, CPUState* cpu) {
-    helper_qemu_mem_write_callback(cpu, vaddr, (uintptr_t) qemu_ram_addr_from_host((void*)haddr), data, 1);
+    helper_qemu_mem_write_callback(vaddr, (uintptr_t) qemu_ram_addr_from_host((void*)haddr), data, 1);
 }
 static void store_operation_2(target_ulong vaddr, void* haddr, target_ulong data, CPUState* cpu) {
-    helper_qemu_mem_write_callback(cpu, vaddr, (uintptr_t) qemu_ram_addr_from_host((void*)haddr), data, 2);
+    helper_qemu_mem_write_callback(vaddr, (uintptr_t) qemu_ram_addr_from_host((void*)haddr), data, 2);
 }
 static void store_operation_4(target_ulong vaddr, void* haddr, target_ulong data, CPUState* cpu) {
-    helper_qemu_mem_write_callback(cpu, vaddr, (uintptr_t) qemu_ram_addr_from_host((void*)haddr), data, 4);
+    helper_qemu_mem_write_callback(vaddr, (uintptr_t) qemu_ram_addr_from_host((void*)haddr), data, 4);
 }
 static void store_operation_8(target_ulong vaddr, void* haddr, target_ulong data, CPUState* cpu) {
-    helper_qemu_mem_write_callback(cpu, vaddr, (uintptr_t) qemu_ram_addr_from_host((void*)haddr), data, 8);
+    helper_qemu_mem_write_callback(vaddr, (uintptr_t) qemu_ram_addr_from_host((void*)haddr), data, 8);
 }
 
 #endif
@@ -2083,8 +2083,7 @@ static void tcg_out_qemu_ld(TCGContext *s, const TCGArg *args, bool is64)
 
 #if TCG_TARGET_REG_BITS == 64 
 
-    CPUX86State* env = &(X86_CPU((CPUState*)s->cpu)->env);
-    if (is_mem_read_callback_needed(env->cr[3])){
+    if (is_mem_read_callback_needed()){
         //For simplicity, only insert Pyrebox callbacks when the target platform (host system)
         //is a 64 bit platform
         //--------------------------------- Pyrebox added ----------------------------------
@@ -2282,8 +2281,7 @@ static void tcg_out_qemu_st(TCGContext *s, const TCGArg *args, bool is64)
 
 #if TCG_TARGET_REG_BITS == 64 
 
-    CPUX86State* env = &(X86_CPU((CPUState*)s->cpu)->env);
-    if (is_mem_write_callback_needed(env->cr[3])){
+    if (is_mem_write_callback_needed()){
 
         //For simplicity, only insert Pyrebox callbacks when the target platform (host system)
         //is a 64 bit platform

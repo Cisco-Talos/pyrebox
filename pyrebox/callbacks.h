@@ -215,7 +215,7 @@ extern callback_handle_t callback_handle_counter;
 //C interface of the callback manager
 callback_handle_t add_callback_at(callback_type_t type, module_handle_t module_handle, PyObject* callback_function, pyrebox_target_ulong address, pyrebox_target_ulong pgd);
 callback_handle_t add_callback(callback_type_t type, module_handle_t module_handle, PyObject* callback_function);
-int is_callback_needed(callback_type_t callback_type, pyrebox_target_ulong address, pyrebox_target_ulong pgd);
+int is_callback_needed(callback_type_t callback_type, pyrebox_target_ulong address);
 void remove_callback(callback_handle_t handle);
 void remove_callback_deferred(callback_handle_t handle);
 void commit_deferred_callback_removes(void);
@@ -376,7 +376,7 @@ class CallbackManager
             void set_trigger_var(callback_handle_t callback_handle,const char* var,void* val);
             void* get_trigger_var(callback_handle_t callback_handle,const char* var);
             void* call_trigger_function(callback_handle_t callback_handle, const char* function_name);
-            int is_callback_needed(callback_type_t callback_type, pyrebox_target_ulong address, pyrebox_target_ulong pgd);
+            int is_callback_needed(callback_type_t callback_type, pyrebox_target_ulong address);
         protected:
         private:
             //Array of lists, used to hold the pyrebox callbacks
