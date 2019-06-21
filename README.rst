@@ -45,8 +45,7 @@ active development and new cool features are yet to come! The master branch shou
 version, while the dev branches contain the latest, work-in progress features. The following announcement
 list refers to the master branch, and the date when the development changes were merged into master.
 
-- [Jun 21, 2019] **Upgraded QEMU to version 4.0.0, with MTTCG (multi-threaded TCG) support.** Special thanks to
-@richsurgenor for his valuable contributions to this upgrade.
+- [Jun 21, 2019] **Upgraded QEMU to version 4.0.0, with MTTCG (multi-threaded TCG) support.** Special thanks to @richsurgenor for his valuable contributions to this upgrade.
 - [Jun 17, 2019] Merge of dev branch (Malware monitor 2).
 - [Jun 17, 2019] Mouse movement automation.
 - [Jun 17, 2019] Upgraded volatility.
