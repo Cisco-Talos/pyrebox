@@ -78,6 +78,11 @@ unsigned int eprocess_offsets[LimitWindows][LastOffset] = { {0xe8,0xe0,0x1f0,0x2
 pyrebox_target_ulong scan_kdbg(pyrebox_target_ulong pgd){
    //Good reference: http://www.geoffchappell.com/studies/windows/km/ntoskrnl/structs/kpcr.htm
    //Good reference: Volatility overlays
+   //
+   //Lock the python mutex
+   pthread_mutex_lock(&pyrebox_mutex);
+   fflush(stdout);
+   fflush(stderr);
 
    PyObject* py_module_name = PyString_FromString("windows_vmi");
    PyObject* py_vmi_module = PyImport_Import(py_module_name);
@@ -113,11 +118,20 @@ pyrebox_target_ulong scan_kdbg(pyrebox_target_ulong pgd){
        Py_DECREF(py_vmi_module);
    }
 
+   //Unlock the python mutex
+   fflush(stdout);
+   fflush(stderr);
+   pthread_mutex_unlock(&pyrebox_mutex);
 
    return canonical_address(kdbg); 
 }
 
 void windows_vmi_init(os_index_t os_index){
+   //Lock the python mutex
+   pthread_mutex_lock(&pyrebox_mutex);
+   fflush(stdout);
+   fflush(stderr);
+
    utils_print_debug("[*] Searching for KDBG...\n");
 
    //Update the OS family in the Python VMI module
@@ -140,6 +154,11 @@ void windows_vmi_init(os_index_t os_index){
        }
        Py_DECREF(py_vmi_module);
    }
+
+   //Unlock the python mutex
+   fflush(stdout);
+   fflush(stderr);
+   pthread_mutex_unlock(&pyrebox_mutex);
 }
 
 void windows_vmi_context_change_callback(pyrebox_target_ulong old_pgd,pyrebox_target_ulong new_pgd, os_index_t os_index){

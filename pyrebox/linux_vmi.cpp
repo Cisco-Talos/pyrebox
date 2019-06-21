@@ -78,6 +78,12 @@ typedef struct list_head {
 } list_head;
 
 void linux_init_address_space(){
+
+   //Lock the python mutex
+   pthread_mutex_lock(&pyrebox_mutex);
+   fflush(stdout);
+   fflush(stderr);
+
    utils_print_debug("[*] Initializing volatility address space...\n");
    if (init_task_offset != 0){
        PyObject* py_module_name = PyString_FromString("linux_vmi");
@@ -105,9 +111,21 @@ void linux_init_address_space(){
            Py_DECREF(py_vmi_module);
        }
    }
+
+   //Unlock the python mutex
+   fflush(stdout);
+   fflush(stderr);
+   pthread_mutex_unlock(&pyrebox_mutex);
+
 }
 
 void linux_vmi_init(os_index_t os_index){
+
+   //Lock the python mutex
+   pthread_mutex_lock(&pyrebox_mutex);
+   fflush(stdout);
+   fflush(stderr);
+
    utils_print_debug("[*] Setting up Linux Profile...\n");
 
    //Update the OS family in the Python VMI module
@@ -209,6 +227,12 @@ void linux_vmi_init(os_index_t os_index){
            Py_DECREF(py_vmi_module);
        }
    }
+
+   //Unlock the python mutex
+   fflush(stdout);
+   fflush(stderr);
+   pthread_mutex_unlock(&pyrebox_mutex);
+
 }
 
 int is_init_task_valid(pyrebox_target_ulong init_task_addr){

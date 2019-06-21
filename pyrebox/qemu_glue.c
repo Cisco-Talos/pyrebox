@@ -149,6 +149,10 @@ register_type_t register_type[RN_LAST] =
 /**************************************************** PYTHON FUNCTIONS ************************************************/
 
 PyObject* get_cpu_state(qemu_cpu_opaque_t cpu_opaque){
+
+    // We must not lock the pyrebox_mutex (python mutex) because this function
+    // is always called in a point where the mutex has already been acquired.
+
     //N denotes object type. It passes an object untouched, and it doesnt increment its reference count like O, 
     //so that the call to XDECREF of the whole tuple will already trigger the deallocation of all the values.
     PyObject* result = 0;
