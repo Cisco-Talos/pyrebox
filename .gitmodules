@@ -52,6 +52,6 @@
 [submodule "qemu/roms/edk2"]
 	path = qemu/roms/edk2
     url = https://git.qemu.org/git/edk2.git
-[submodule "slirp"]
-	path = slirp
+[submodule "qemu/slirp"]
+	path = qemu/slirp
 	url = https://git.qemu.org/git/libslirp.git
