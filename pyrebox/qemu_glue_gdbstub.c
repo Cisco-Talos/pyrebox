@@ -289,7 +289,7 @@ static int gdb_read_thread_register(GDBState* s, unsigned long long thread, int 
             Py_DECREF(py_args);
             if (ret) {
                 // Create a string from the 
-                char tmp_str[1024];
+                char* tmp_str;
                 Py_ssize_t length = 0;
                 PyString_AsStringAndSize(ret, (char**) &tmp_str, &length);
                 PyErr_Print();
