@@ -53,6 +53,10 @@ class ConfigurationManager:
     volatility_path = None
     # Platform (e.g.: i386-softmmu, x86_64-softmmu)
     platform = None
+    # Endianess of the platform
+    endianess = None
+    # Bitness of the platform
+    bitness = None
     # String containing the volatility profile name as
     # declared in pyrebox.conf
     vol_profile = None
@@ -68,6 +72,8 @@ class ConfigurationManager:
         ConfigurationManager.volatility_path = None
         ConfigurationManager.vol_profile = None
         ConfigurationManager.platform = None
+        ConfigurationManager.endianess = None
+        ConfigurationMananger.bitness = None
         ConfigurationManager.vol_conf = None
         ConfigurationManager.addr_space = None
         ConfigurationManager.agent_filename = None

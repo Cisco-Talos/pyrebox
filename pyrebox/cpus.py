@@ -21,6 +21,51 @@
 #
 # -------------------------------------------------------------------------
 
+RT_REGULAR = 0
+RT_SEGMENT = 1
+
+gdb_map_i386_softmmu = {0: ("EAX", "Eax", 4, RT_REGULAR),
+                        1: ("ECX", "Ecx", 4, RT_REGULAR),
+                        2: ("EDX", "Edx", 4, RT_REGULAR),
+                        3: ("EBX", "Ebx", 4, RT_REGULAR),
+                        4: ("ESP", "HardwareEsp", 4, RT_REGULAR),
+                        5: ("EBP", "Ebp", 4, RT_REGULAR),
+                        6: ("ESI", "Esi", 4, RT_REGULAR),
+                        7: ("EDI", "Edi", 4, RT_REGULAR),
+                        8: ("EIP", "Eip", 4, RT_REGULAR),
+                        9: ("EFLAGS", "EFlags", 4, RT_REGULAR),
+                        10: ("ES", "SegEs", 4, RT_SEGMENT),
+                        11: ("CS", "SegCs", 4, RT_SEGMENT),
+                        12: ("SS", "HardwareSegSs", 4, RT_SEGMENT),
+                        13: ("DS", "SegDs", 4, RT_SEGMENT),
+                        14: ("FS", "SegFs", 4, RT_SEGMENT),
+                        15: ("GS", "SegGs", 4, RT_SEGMENT)}
+
+gdb_map_x86_64_softmmu = {0: ("RAX", "Rax", 8, RT_REGULAR),
+                        1: ("RBX", "Rbx", 8, RT_REGULAR),
+                        2: ("RCX", "Rcx", 8, RT_REGULAR),
+                        3: ("RDX", "Rdx", 8, RT_REGULAR),
+                        4: ("RSI", "Rsi", 8, RT_REGULAR),
+                        5: ("RDI", "Rdi", 8, RT_REGULAR),
+                        6: ("RBP", "Rbp", 8, RT_REGULAR),
+                        7: ("RSP", "Rsp", 8, RT_REGULAR),
+                        8: ("R8", "R8", 8, RT_REGULAR),
+                        9: ("R9", "R9", 8, RT_REGULAR),
+                        10: ("R10", "R10", 8, RT_REGULAR),
+                        11: ("R11", "R11", 8, RT_REGULAR),
+                        # These 4 register are not present in TRAP frame
+                        #12: ("R12", ""),
+                        #13: ("R13", ""),
+                        #14: ("R14", ""),
+                        #15: ("R15", ""),
+                        16: ("RIP", "Rip", 8, RT_REGULAR),
+                        17: ("RFLAGS", "EFlags", 4, RT_REGULAR),
+                        18: ("CS", "SegCs", 4, RT_SEGMENT),
+                        19: ("SS", "SegSs", 4, RT_SEGMENT),
+                        20: ("DS", "SegDs", 4, RT_SEGMENT),
+                        21: ("ES", "SegEs", 4, RT_SEGMENT),
+                        22: ("FS", "SegFs", 4, RT_SEGMENT),
+                        23: ("GS" "SegGs", 4, RT_SEGMENT)}
 
 class X86CPU:
     reg_nums = {"EAX": 0,

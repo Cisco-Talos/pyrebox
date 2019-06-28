@@ -92,16 +92,24 @@ static gboolean fd_chr_read(QIOChannel *chan, GIOCondition cond, void *opaque)
     // which determines the number of bytes to read, and causes this function
     // to be called.
 
-    int lock_result = pthread_mutex_trylock(&pyrebox_mutex);
-    if (lock_result == EBUSY){
-        return TRUE;
-    } else if (lock_result > 0){
-        printf("pthread_mutex_trylock(&pyrebox_mutex) returned %d, which should never happen!\n", lock_result);
-        assert(0);
-    }
-    
     Chardev *chr = CHARDEV(opaque);
     FDChardev *s = FD_CHARDEV(opaque);
+
+    int check_pyrebox_mutex = 0;
+    if (strcmp(chr->filename, "vc") == 0 || strcmp(chr->filename, "stdio") == 0){
+        check_pyrebox_mutex = 1;
+    }
+
+    if (check_pyrebox_mutex){
+        int lock_result = pthread_mutex_trylock(&pyrebox_mutex);
+        if (lock_result == EBUSY){
+            return TRUE;
+        } else if (lock_result > 0){
+            printf("pthread_mutex_trylock(&pyrebox_mutex) returned %d, which should never happen!\n", lock_result);
+            assert(0);
+        }
+    }
+
     int len;
     uint8_t buf[CHR_READ_BUF_LEN];
     ssize_t ret;
@@ -111,9 +119,10 @@ static gboolean fd_chr_read(QIOChannel *chan, GIOCondition cond, void *opaque)
         len = s->max_size;
     }
     if (len == 0) {
-        //Unlock the pyrebox mutex
-        pthread_mutex_unlock(&pyrebox_mutex);
-
+        if (check_pyrebox_mutex){
+            //Unlock the pyrebox mutex
+            pthread_mutex_unlock(&pyrebox_mutex);
+        }
         return TRUE;
     }
 
@@ -122,41 +131,52 @@ static gboolean fd_chr_read(QIOChannel *chan, GIOCondition cond, void *opaque)
     if (ret == 0) {
         remove_fd_in_watch(chr);
         qemu_chr_be_event(chr, CHR_EVENT_CLOSED);
-        //Unlock the pyrebox mutex
-        pthread_mutex_unlock(&pyrebox_mutex);
-
+        if (check_pyrebox_mutex){
+            //Unlock the pyrebox mutex
+            pthread_mutex_unlock(&pyrebox_mutex);
+        }
         return FALSE;
     }
     if (ret > 0) {
         qemu_chr_be_write(chr, buf, ret);
     }
 
-    //Unlock the pyrebox mutex
-    pthread_mutex_unlock(&pyrebox_mutex);
+    if (check_pyrebox_mutex){
+        //Unlock the pyrebox mutex
+        pthread_mutex_unlock(&pyrebox_mutex);
+    }
 
     return TRUE;
-
 }
 
 static int fd_chr_read_poll(void *opaque)
 {
-    // See comment on fd_chr_read for information
-    // about pyrebox_mutex
-    int lock_result = pthread_mutex_trylock(&pyrebox_mutex);
-    if (lock_result == EBUSY){
-        return 0;
-    } else if (lock_result > 0){
-        printf("pthread_mutex_trylock(&pyrebox_mutex) returned %d, which should never happen!\n", lock_result);
-        assert(0);
-    }
-
     Chardev *chr = CHARDEV(opaque);
     FDChardev *s = FD_CHARDEV(opaque);
 
+    int check_pyrebox_mutex = 0;
+    if (strcmp(chr->filename, "vc") == 0 || strcmp(chr->filename, "stdio") == 0){
+        check_pyrebox_mutex = 1;
+    }
+
+    // See comment on fd_chr_read for information
+    // about pyrebox_mutex
+    if (check_pyrebox_mutex){
+        int lock_result = pthread_mutex_trylock(&pyrebox_mutex);
+        if (lock_result == EBUSY){
+            return 0;
+        } else if (lock_result > 0){
+            printf("pthread_mutex_trylock(&pyrebox_mutex) returned %d, which should never happen!\n", lock_result);
+            assert(0);
+        }
+    }
+
     s->max_size = qemu_chr_be_can_write(chr);
 
-    //Unlock the pyrebox mutex
-    pthread_mutex_unlock(&pyrebox_mutex);
+    if (check_pyrebox_mutex){
+        //Unlock the pyrebox mutex
+        pthread_mutex_unlock(&pyrebox_mutex);
+    }
 
     return s->max_size;
 }

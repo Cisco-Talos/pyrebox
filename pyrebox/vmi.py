@@ -293,3 +293,92 @@ def does_thread_exist(thread_id, thread_list):
         if element['id'] == thread_id:
             return True
     return False
+
+def gdb_read_thread_register(thread_id, thread_list, gdb_register_index):
+    '''
+    Given a GDB register index, return an str with its value. Obtain
+    the value either from the running CPU or the saved KTRAP_FRAME.
+    NOTE: Not all registers are supported, if so, 0's are returned.
+    '''
+    from utils import ConfigurationManager as conf_m
+    from api import r_cpu
+    from cpus import RT_SEGMENT
+    from cpus import RT_REGULAR
+
+    def val_to_str(val, str_size):
+        import struct
+        if str_size == 1:
+            struct_letter = "B"
+        elif str_size == 2:
+            struct_letter = "H"
+        elif str_size == 4:
+            struct_letter = "I"
+        elif str_size == 8:
+            struct_letter = "Q"
+        else:
+            raise NotImplementedError("[val_to_str - gdb_read_thread_register] Not implemented")
+
+        if conf_m.endianess == "l":
+            struct_letter = "<" + struct_letter
+        else:
+            struct_letter = ">" + struct_letter
+
+        try:
+            ret_val = struct.pack(struct_letter, val)
+        except Exception as e:
+            raise e
+        return ret_val 
+
+    if conf_m.platform == "i386-softmmu":
+        from cpus import gdb_map_i386_softmmu as gdb_map
+    elif conf_m.platform == "x86_64-softmmu":
+        from cpus import gdb_map_x86_64_softmmu as gdb_map
+    else:
+        raise NotImplementedError("[x86_64-softmmu] Architecture not supported yet")
+
+    # If it is not mapped to a CPU register or KTRAP_FRAME value,
+    # we just return 0s.
+    if gdb_register_index not in gdb_map:
+        return "\0" * (conf_m.bitness / 8)
+    else:
+        str_size = gdb_map[gdb_register_index][2]
+
+    cpu_index = None
+    thread = None
+    # First, check if we can read the register from the CPU object
+    for element in thread_list:
+        if element['id'] == thread_id:
+            cpu_index = element['running']
+            thread = element
+            break
+
+    if thread is None:
+        return None
+
+    if cpu_index is not None:
+        cpu = r_cpu(cpu_index)
+        val = 0
+        try:
+            if gdb_map[gdb_register_index][3] == RT_SEGMENT:
+                val = getattr(cpu, gdb_map[gdb_register_index][0]).base
+            else:
+                val = getattr(cpu, gdb_map[gdb_register_index][0])
+        except:
+            val = 0
+        if val == -1:
+            val = 0
+        return val_to_str(val, str_size)
+    # If the thread is not running, read it from the KTRAP_FRAME
+    else:
+        if os_family == OS_FAMILY_WIN:
+            from windows_vmi import win_read_thread_register_from_ktrap_frame
+            val = 0
+            try:
+                val = win_read_thread_register_from_ktrap_frame(thread, gdb_map[gdb_register_index][1])
+            except Exception as e:
+                pp_debug("Exception after win_read_thread_register_from_ktrap_frame: " + str(e))
+            if val == -1:
+                val = 0
+            return val_to_str(val, str_size)
+        elif os_family == OS_FAMILY_LINUX:
+            raise NotImplementedError("get_threads not implemented yet on Linux guests")

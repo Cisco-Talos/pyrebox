@@ -243,6 +243,14 @@ def init(platform, root_path, volatility_path, conf_name):
         conf_m.vol_profile = vol_profile
         conf_m.platform = platform
         conf_m.pyre_root = root_path
+
+        if platform == "x86_64-softmmu":
+            conf_m.bitness = 64
+            conf_m.endianess = "l" 
+        elif platform == "i386-softmmu":
+            conf_m.bitness = 32
+            conf_m.endianess = "l" 
+
         sys.path.append(volatility_path)
         sys.path.append(root_path)
         sys.path.append(os.getcwd())

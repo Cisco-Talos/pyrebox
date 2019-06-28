@@ -55,7 +55,7 @@
 
 #define GDB_ATTACHED "1"
 
-#define GDB_DEBUG_MODE 
+//#define GDB_DEBUG_MODE 
 
 #define TYPE_PYREBOX_CHARDEV_GDB "chardev-pyrebox-gdb"
 
@@ -121,6 +121,10 @@ static GDBState *pyrebox_gdbserver_state;
 
 static bool pyrebox_gdb_has_xml;
 
+static int gdb_num_regs = 0;
+
+static unsigned long long int currently_running_thread = 0;
+
 //===========================  PRIMITIVES AND PYREBOX GLUE  ==========================================
 
 static void pyrebox_update_threads(GDBState *s){
@@ -148,6 +152,7 @@ static void pyrebox_update_threads(GDBState *s){
             }
         }
     }
+    PyErr_Print();
     return;
 }
 
@@ -264,6 +269,45 @@ static int does_thread_exist(GDBState* s, unsigned long long thread){
     return 0;
 }
 
+// Check if a thread exists
+static int gdb_read_thread_register(GDBState* s, unsigned long long thread, int gdb_register_index, uint8_t* buf){
+    // Calls python function to check if a thread exists 
+    // and returns 0 if not, 1 if it exists
+    PyObject* py_module_name = PyString_FromString("vmi");
+    PyObject* py_vmi_module = PyImport_Import(py_module_name);
+    Py_DECREF(py_module_name);
+    PyObject* py_gdb_read_thread_register = PyObject_GetAttrString(py_vmi_module,"gdb_read_thread_register");
+    if (py_gdb_read_thread_register) {
+        if (PyCallable_Check(py_gdb_read_thread_register)) {
+            PyObject* py_args = PyTuple_New(3);
+            PyTuple_SetItem(py_args, 0, PyLong_FromUnsignedLongLong(thread)); // The reference to the object in the tuple is stolen
+            Py_INCREF(s->current_threads);
+            PyTuple_SetItem(py_args, 1, s->current_threads); // The reference to the object in the tuple is stolen
+            //Add the gdb_register index
+            PyTuple_SetItem(py_args, 2, PyLong_FromUnsignedLongLong(gdb_register_index)); // The reference to the object in the tuple is stolen
+            PyObject* ret = PyObject_CallObject(py_gdb_read_thread_register, py_args);
+            Py_DECREF(py_args);
+            if (ret) {
+                // Create a string from the 
+                char tmp_str[1024];
+                Py_ssize_t length = 0;
+                PyString_AsStringAndSize(ret, (char**) &tmp_str, &length);
+                PyErr_Print();
+                memcpy(buf, tmp_str, length);
+                Py_DECREF(ret);
+                return length;
+            }
+            PyErr_Print();
+            return 0;
+        }
+        PyErr_Print();
+        return 0;
+    }
+    PyErr_Print();
+    return 0;
+}
+
+
 static int get_number_of_threads(GDBState* s){
     return s->number_of_current_threads;
 }
@@ -272,7 +316,9 @@ static void pyrebox_vm_stop(GDBState* s){
     #ifdef GDB_DEBUG_MODE
     printf("Stopping VM...\n");
     #endif
-    vm_stop(RUN_STATE_PAUSED);
+    if (runstate_is_running()) {
+        vm_stop(RUN_STATE_PAUSED);
+    }
     s->vm_is_running = 0;
     pyrebox_update_threads(s);
 }
@@ -332,28 +378,9 @@ static void pyrebox_cpu_single_step(unsigned long long thread){
     //XXX Pyrebox primitive
 }
 
-static int pyrebox_gdb_read_register(unsigned long long thread_id, uint8_t *mem_buf, int reg)
+static int pyrebox_gdb_read_register(GDBState* s, unsigned long long thread_id, uint8_t *mem_buf, int reg)
 {
-    /*CPUClass *cc = CPU_GET_CLASS(cpu);
-    CPUArchState *env = cpu->env_ptr;
-    GDBRegisterState *r;
-
-    if (reg < cc->gdb_num_core_regs) {
-        return cc->gdb_read_register(cpu, mem_buf, reg);
-    }
-
-    for (r = cpu->gdb_regs; r; r = r->next) {
-        if (r->base_reg <= reg && reg < r->base_reg + r->num_regs) {
-            return r->get_reg(env, mem_buf, reg - r->base_reg);
-        }
-    }
-    return 0; */
-    //XXX Pyrebox primitive
-    mem_buf[0] = '\0';
-    mem_buf[1] = '\0';
-    mem_buf[2] = '\0';
-    mem_buf[3] = '\0';
-    return 4;
+    return gdb_read_thread_register(s, thread_id, reg, mem_buf);
 };
 
 static int pyrebox_gdb_write_register(unsigned long long thread_id, uint8_t *mem_buf, int reg)
@@ -611,6 +638,7 @@ static const char *pyrebox_get_feature_xml(const char *p, const char **newp,
 
 static void pyrebox_gdb_signal_trap(GDBState *s, unsigned long long thread){
     char buf[MAX_PACKET_LENGTH+ 1 /* trailing NUL */];
+    currently_running_thread = thread;
     snprintf(buf, sizeof(buf), "T%02xthread:%llx;", GDB_SIGNAL_TRAP, thread);
     pyrebox_put_packet(s, buf);
 }
@@ -658,7 +686,7 @@ static int pyrebox_gdb_handle_packet(GDBState *s, const char *line_buf)
     uint8_t mem_buf[MAX_PACKET_LENGTH];
     char buf[sizeof(mem_buf) + 1 /* trailing NUL */];
     //uint8_t *registers;
-    target_ulong addr, len;
+    int addr, len;
 
     p = line_buf;
     ch = *p++;
@@ -736,16 +764,25 @@ static int pyrebox_gdb_handle_packet(GDBState *s, const char *line_buf)
     // calls on the debugger. We just do not implement this.
     case 'g':
         // Read registers
-        //cpu_synchronize_state if necessary only with HW virtualization
-        //cpu_synchronize_state(s->g_cpu);
-        /* 
+        #ifdef GDB_DEBUG_MODE
+        printf("Reading registers for command g... for thread: %llx\n", s->g_thread_id);
+        #endif
         len = 0;
-        for (addr = 0; addr < s->g_cpu->gdb_num_g_regs; addr++) {
-            reg_size = pyrebox_gdb_read_register(s->g_thread_id, mem_buf + len, addr);
+        for (addr = 0; addr < gdb_num_regs; addr++) {
+            reg_size = pyrebox_gdb_read_register(s, s->g_thread_id, mem_buf + len, addr);
+            #ifdef GDB_DEBUG_MODE
+            printf("Reading register for command g...\n");
+            #endif
             len += reg_size;
-        } 
+        }
+        #ifdef GDB_DEBUG_MODE
+        printf("Finished reading register for command g...\n");
+        #endif
         pyrebox_memtohex(buf, mem_buf, len);
-        pyrebox_put_packet(s, buf);*/
+        #ifdef GDB_DEBUG_MODE
+        printf("Sending buffer (%d): %s\n", len, buf);
+        #endif
+        pyrebox_put_packet(s, buf);
         break;
     case 'G':
         // Write registers
@@ -812,7 +849,7 @@ static int pyrebox_gdb_handle_packet(GDBState *s, const char *line_buf)
         if (!pyrebox_gdb_has_xml)
             goto unknown_command;
         addr = strtoull(p, (char **)&p, 16);
-        reg_size = pyrebox_gdb_read_register(s->g_thread_id, mem_buf, addr);
+        reg_size = pyrebox_gdb_read_register(s, s->g_thread_id, mem_buf, addr);
         if (reg_size) {
             pyrebox_memtohex(buf, mem_buf, reg_size);
             pyrebox_put_packet(s, buf);
@@ -857,9 +894,10 @@ static int pyrebox_gdb_handle_packet(GDBState *s, const char *line_buf)
         /* Set thread for subsequent operations */
         type = *p++;
         thread = strtoull(p, (char **)&p, 16);
-        if (thread == -1 || thread == 0) {
-            pyrebox_put_packet(s, "OK");
-            break;
+        if (thread == -1){
+            thread = 0;  
+        } else if (thread == 0) {
+            thread = currently_running_thread; 
         }
         switch (type) {
         case 'c':
@@ -1168,6 +1206,15 @@ static int pyrebox_gdb_chr_can_receive(void *opaque)
 
 static void pyrebox_gdb_chr_receive(void *opaque, const uint8_t *buf, int size)
 {
+    //#ifdef GDB_DEBUG_MODE
+    //printf("\033[0;33m");
+    //printf("Receiving packet...\n\n");
+    //printf("%.*s\n", size, buf);
+    //printf("\n");
+    //printf("\033[0m");
+    //fflush(stdout);
+    //#endif
+
     int i;
     for (i = 0; i < size; i++) {
         pyrebox_gdb_read_byte(pyrebox_gdbserver_state, buf[i]);
@@ -1180,6 +1227,7 @@ static void pyrebox_gdb_chr_event(void *opaque, int event)
     switch (event) {
     case CHR_EVENT_OPENED:
         pyrebox_vm_stop(s);
+        currently_running_thread = pyrebox_get_running_thread_first_cpu(s);
         #ifdef GDB_DEBUG_MODE
         printf("(1) Stopping VM...\n");
         #endif
@@ -1197,7 +1245,7 @@ static void pyrebox_gdb_chr_event(void *opaque, int event)
 
 int pyrebox_gdbserver_start(unsigned int port)
 {
-    GDBState *s;
+    GDBState *s = 0;
     char gdbstub_device_name[128];
     Chardev *chr = NULL;
     Chardev *mon_chr;
@@ -1245,6 +1293,9 @@ int pyrebox_gdbserver_start(unsigned int port)
 
     s->c_thread_id = 0;
     s->g_thread_id = 0;
+
+    CPUClass *cc = CPU_GET_CLASS(first_cpu);
+    gdb_num_regs = cc->gdb_num_core_regs;
     
     if (chr) {
         qemu_chr_fe_init(&s->chr, chr, &error_abort);

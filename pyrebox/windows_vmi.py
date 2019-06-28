@@ -928,3 +928,23 @@ def set_running_threads(thread_list):
                             element['running'] = cpu_index
             else:
                 raise NotImplementedError("Windows get_running_threads: Architecture of type %s not implemented yet" % str(type(cpu)))
+
+def win_read_thread_register_from_ktrap_frame(thread, reg_name):
+    """ Get a register from a threads trap frame """
+    from utils import ConfigurationManager as conf_m
+
+    vol_thread = obj.Object("_ETHREAD", offset=thread['thread_object_base'], vm=conf_m.addr_space)
+    try:
+        trap = vol_thread.Tcb.TrapFrame.dereference_as("_KTRAP_FRAME")
+    except:
+        return 0
+    if isinstance(trap, obj.NoneObject):
+        return 0
+    # Silently fall back to 0
+    try:
+        value = getattr(trap, reg_name).v()
+    except:
+        value = 0
+    if value == -1:
+        value = 0
+    return value
