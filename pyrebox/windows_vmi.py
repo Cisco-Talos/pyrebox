@@ -906,7 +906,7 @@ def set_running_threads(thread_list):
                     if element['teb'] == teb_addr and element['pgd'] == cpu.CR3:
                         element['running'] = cpu_index
             else:
-                raise NotImplementedError("Windows get_running_threads: Architecture of type %s not implemented yet" % str(type(cpu)))
+                raise NotImplementedError("Windows set_running_threads: Architecture of type %s not implemented yet" % str(type(cpu)))
         else:
             from utils import ConfigurationManager as conf_m
             # Kernel mode: For each CPU, KPCR->PCRB->CurrentThread
@@ -927,7 +927,7 @@ def set_running_threads(thread_list):
                         if element["thread_object_base"] == kthread_addr:
                             element['running'] = cpu_index
             else:
-                raise NotImplementedError("Windows get_running_threads: Architecture of type %s not implemented yet" % str(type(cpu)))
+                raise NotImplementedError("Windows set_running_threads: Architecture of type %s not implemented yet" % str(type(cpu)))
 
 def win_read_thread_register_from_ktrap_frame(thread, reg_name):
     """ Get a register from a threads trap frame """
@@ -946,5 +946,28 @@ def win_read_thread_register_from_ktrap_frame(thread, reg_name):
     except:
         value = 0
     if value == -1:
+        value = 0
+    return value
+
+def win_write_thread_register_in_ktrap_frame(thread, reg_name, buf, size):
+    """ Get a register from a threads trap frame """
+    from utils import ConfigurationManager as conf_m
+
+    vol_thread = obj.Object("_ETHREAD", offset=thread['thread_object_base'], vm=conf_m.addr_space)
+    try:
+        trap = vol_thread.Tcb.TrapFrame.dereference_as("_KTRAP_FRAME")
+    except:
+        return 0
+    if isinstance(trap, obj.NoneObject):
+        return 0
+    # Silently fall back to 0
+    try:
+        offset = getattr(trap, reg_name).obj_offset
+        from api import w_va
+        w_va(thread['pgd'], offset, buf, size)
+        return size
+    except:
+        return 0 
+    if value < 0:
         value = 0
     return value

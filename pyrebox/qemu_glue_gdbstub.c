@@ -288,7 +288,7 @@ static int gdb_read_thread_register(GDBState* s, unsigned long long thread, int 
             PyObject* ret = PyObject_CallObject(py_gdb_read_thread_register, py_args);
             Py_DECREF(py_args);
             if (ret) {
-                // Create a string from the 
+                // Create a string from the returned value 
                 char* tmp_str;
                 Py_ssize_t length = 0;
                 PyString_AsStringAndSize(ret, (char**) &tmp_str, &length);
@@ -337,15 +337,59 @@ static void pyrebox_vm_start(GDBState* s){
     }
 }
 
-static inline int target_memory_rw_debug(unsigned long long thread, target_ulong addr,
+static inline int target_memory_rw_debug(GDBState* s, unsigned long long thread, target_ulong addr,
                                          uint8_t *buf, int len, bool is_write)
 {
-    /*CPUClass *cc = CPU_GET_CLASS(cpu);
+    // Calls python function to check if a thread exists 
+    // and returns 0 if not, 1 if it exists
+    PyObject* py_module_name = PyString_FromString("vmi");
+    PyObject* py_vmi_module = PyImport_Import(py_module_name);
+    Py_DECREF(py_module_name);
+    PyObject* py_gdb_memory_rw_debug = PyObject_GetAttrString(py_vmi_module, "gdb_memory_rw_debug");
+    if (py_gdb_memory_rw_debug) {
+        if (PyCallable_Check(py_gdb_memory_rw_debug)) {
+            PyObject* py_args = PyTuple_New(6);
+            PyTuple_SetItem(py_args, 0, PyLong_FromUnsignedLongLong(thread)); // The reference to the object in the tuple is stolen
+            Py_INCREF(s->current_threads);
+            PyTuple_SetItem(py_args, 1, s->current_threads); // The reference to the object in the tuple is stolen
+            //Add the address and length, and is_write 
+            #if TARGET_LONG_SIZE == 4
+            PyTuple_SetItem(py_args, 2, PyLong_FromUnsignedLong(addr)); // The reference to the object in the tuple is stolen
+            #elif TARGET_LONG_SIZE == 8
+            PyTuple_SetItem(py_args, 2, PyLong_FromUnsignedLongLong(addr)); // The reference to the object in the tuple is stolen
+            #else
+            #error TARGET_LONG_SIZE undefined
+            #endif
+            PyTuple_SetItem(py_args, 3, PyLong_FromLong(len)); // The reference to the object in the tuple is stolen
+            if (is_write){
+                PyTuple_SetItem(py_args, 4, PyString_FromStringAndSize((const char*)buf, (Py_ssize_t) len)); // The reference to the object in the tuple is stolen
+            } else {
+                Py_INCREF(Py_None);
+                PyTuple_SetItem(py_args, 4, Py_None); // The reference to the object in the tuple is stolen
+            }
+            PyTuple_SetItem(py_args, 5, PyBool_FromLong(is_write)); // The reference to the object in the tuple is stolen
 
-    if (cc->memory_rw_debug) {
-        return cc->memory_rw_debug(cpu, addr, buf, len, is_write);
+            PyObject* ret = PyObject_CallObject(py_gdb_memory_rw_debug, py_args);
+            Py_DECREF(py_args);
+            if (ret) {
+                // Create a string from the returned value 
+                char* tmp_str;
+                Py_ssize_t length = 0;
+                PyString_AsStringAndSize(ret, (char**) &tmp_str, &length);
+                PyErr_Print();
+                if (!is_write){
+                    memcpy(buf, tmp_str, len);
+                }
+                Py_DECREF(ret);
+                return length;
+            }
+            PyErr_Print();
+            return 0;
+        }
+        PyErr_Print();
+        return 0;
     }
-    return cpu_memory_rw_debug(cpu, addr, buf, len, is_write);*/
+    PyErr_Print();
     return 0;
 }
 
@@ -376,31 +420,6 @@ static void pyrebox_gdb_set_cpu_pc(GDBState *s, target_ulong pc)
 
 static void pyrebox_cpu_single_step(unsigned long long thread){
     //XXX Pyrebox primitive
-}
-
-static int pyrebox_gdb_read_register(GDBState* s, unsigned long long thread_id, uint8_t *mem_buf, int reg)
-{
-    return gdb_read_thread_register(s, thread_id, reg, mem_buf);
-};
-
-static int pyrebox_gdb_write_register(unsigned long long thread_id, uint8_t *mem_buf, int reg)
-{
-    /*CPUClass *cc = CPU_GET_CLASS(cpu);
-    CPUArchState *env = cpu->env_ptr;
-    GDBRegisterState *r;
-
-    if (reg < cc->gdb_num_core_regs) {
-        return cc->gdb_write_register(cpu, mem_buf, reg);
-    }
-
-    for (r = cpu->gdb_regs; r; r = r->next) {
-        if (r->base_reg <= reg && reg < r->base_reg + r->num_regs) {
-            return r->set_reg(env, mem_buf, reg - r->base_reg);
-        }
-    }
-    return 0;*/
-    //XXX Pyrebox primitive
-    return 0;
 }
 
 static int pyrebox_gdb_breakpoint_insert(target_ulong addr, target_ulong len, int type)
@@ -469,6 +488,81 @@ static int pyrebox_gdb_breakpoint_remove(target_ulong addr, target_ulong len, in
         return -ENOSYS;
     }
 }
+
+
+static int gdb_get_register_size(int gdb_register_index){
+    PyObject* py_module_name = PyString_FromString("vmi");
+    PyObject* py_vmi_module = PyImport_Import(py_module_name);
+    Py_DECREF(py_module_name);
+    PyObject* py_gdb_get_register_size = PyObject_GetAttrString(py_vmi_module,"gdb_get_register_size");
+    if (py_gdb_get_register_size) {
+        if (PyCallable_Check(py_gdb_get_register_size)) {
+            PyObject* py_args = PyTuple_New(1);
+            PyTuple_SetItem(py_args, 0, PyLong_FromUnsignedLongLong(gdb_register_index)); // The reference to the object in the tuple is stolen
+
+            PyObject* ret = PyObject_CallObject(py_gdb_get_register_size, py_args);
+            Py_DECREF(py_args);
+
+            // Returns size written
+            if (ret) {
+                int ret_val = PyLong_AsLong(ret);
+                Py_DECREF(ret);
+                return ret_val;
+            }
+            PyErr_Print();
+            return 0;
+        }
+        PyErr_Print();
+        return 0;
+    }
+    PyErr_Print();
+    return 0;
+
+    
+}
+
+static int gdb_write_thread_register(GDBState* s, unsigned long long thread, int gdb_register_index, uint8_t* buf)
+{
+    int len = gdb_get_register_size(gdb_register_index);
+    if (len <= 0){
+        return 0;
+    }
+    // Calls python function to check if a thread exists 
+    // and returns 0 if not, 1 if it exists
+    PyObject* py_module_name = PyString_FromString("vmi");
+    PyObject* py_vmi_module = PyImport_Import(py_module_name);
+    Py_DECREF(py_module_name);
+    PyObject* py_gdb_write_thread_register = PyObject_GetAttrString(py_vmi_module,"gdb_write_thread_register");
+    if (py_gdb_write_thread_register) {
+        if (PyCallable_Check(py_gdb_write_thread_register)) {
+            PyObject* py_args = PyTuple_New(4);
+            PyTuple_SetItem(py_args, 0, PyLong_FromUnsignedLongLong(thread)); // The reference to the object in the tuple is stolen
+            Py_INCREF(s->current_threads);
+            PyTuple_SetItem(py_args, 1, s->current_threads); // The reference to the object in the tuple is stolen
+            //Add the gdb_register index
+            PyTuple_SetItem(py_args, 2, PyLong_FromUnsignedLongLong(gdb_register_index)); // The reference to the object in the tuple is stolen
+            //Add the buffer
+            PyTuple_SetItem(py_args, 3, PyString_FromStringAndSize((const char*)buf, (Py_ssize_t) len)); // The reference to the object in the tuple is stolen
+
+            PyObject* ret = PyObject_CallObject(py_gdb_write_thread_register, py_args);
+            Py_DECREF(py_args);
+
+            // Returns size written
+            if (ret) {
+                int ret_val = PyLong_AsLong(ret);
+                Py_DECREF(ret);
+                return ret_val;
+            }
+            PyErr_Print();
+            return 0;
+        }
+        PyErr_Print();
+        return 0;
+    }
+    PyErr_Print();
+    return 0;
+}
+
 
 //===========================  HELPERS TO WRITE TO GDB SOCKET  ==========================================
 
@@ -685,7 +779,7 @@ static int pyrebox_gdb_handle_packet(GDBState *s, const char *line_buf)
     int ch, reg_size, type, res;
     uint8_t mem_buf[MAX_PACKET_LENGTH];
     char buf[sizeof(mem_buf) + 1 /* trailing NUL */];
-    //uint8_t *registers;
+    uint8_t *registers;
     int addr, len;
 
     p = line_buf;
@@ -769,7 +863,7 @@ static int pyrebox_gdb_handle_packet(GDBState *s, const char *line_buf)
         #endif
         len = 0;
         for (addr = 0; addr < gdb_num_regs; addr++) {
-            reg_size = pyrebox_gdb_read_register(s, s->g_thread_id, mem_buf + len, addr);
+            reg_size = gdb_read_thread_register(s, s->g_thread_id, addr, mem_buf + len);
             #ifdef GDB_DEBUG_MODE
             printf("Reading register for command g...\n");
             #endif
@@ -786,18 +880,24 @@ static int pyrebox_gdb_handle_packet(GDBState *s, const char *line_buf)
         break;
     case 'G':
         // Write registers
-        //cpu_synchronize_state if necessary only with HW virtualization
-        //cpu_synchronize_state(s->g_cpu);
-        /* 
+        #ifdef GDB_DEBUG_MODE
+        printf("Writing registers for command g... for thread: %llx\n", s->g_thread_id);
+        #endif
         registers = mem_buf;
         len = strlen(p) / 2;
         pyrebox_hextomem((uint8_t *)registers, p, len);
-        for (addr = 0; addr < s->g_cpu->gdb_num_g_regs && len > 0; addr++) {
-            reg_size = pyrebox_gdb_write_register(s->g_thread_id, registers, addr);
+        for (addr = 0; addr < gdb_num_regs && len > 0; addr++) {
+            reg_size = gdb_write_thread_register(s, s->g_thread_id, addr, registers);
+            #ifdef GDB_DEBUG_MODE
+            printf("Writing register for command g...\n");
+            #endif
             len -= reg_size;
             registers += reg_size;
-        } 
-        pyrebox_put_packet(s, "OK");*/
+        }
+        #ifdef GDB_DEBUG_MODE
+        printf("Finished writing register for command g...\n");
+        #endif
+        pyrebox_put_packet(s, "OK");
         break;
     case 'm':
         // Read memory
@@ -812,7 +912,7 @@ static int pyrebox_gdb_handle_packet(GDBState *s, const char *line_buf)
             break;
         }
 
-        if (target_memory_rw_debug(s->g_thread_id, addr, mem_buf, len, false) != 0) {
+        if (!target_memory_rw_debug(s, s->g_thread_id, addr, mem_buf, len, false) != 0) {
             pyrebox_put_packet (s, "E14");
         } else {
             pyrebox_memtohex(buf, mem_buf, len);
@@ -834,7 +934,7 @@ static int pyrebox_gdb_handle_packet(GDBState *s, const char *line_buf)
             break;
         }
         pyrebox_hextomem(mem_buf, p, len);
-        if (target_memory_rw_debug(s->g_thread_id, addr, mem_buf, len,
+        if (!target_memory_rw_debug(s, s->g_thread_id, addr, mem_buf, len,
                                    true) != 0) {
             pyrebox_put_packet(s, "E14");
         } else {
@@ -849,7 +949,7 @@ static int pyrebox_gdb_handle_packet(GDBState *s, const char *line_buf)
         if (!pyrebox_gdb_has_xml)
             goto unknown_command;
         addr = strtoull(p, (char **)&p, 16);
-        reg_size = pyrebox_gdb_read_register(s, s->g_thread_id, mem_buf, addr);
+        reg_size = gdb_read_thread_register(s, s->g_thread_id, addr, mem_buf);
         if (reg_size) {
             pyrebox_memtohex(buf, mem_buf, reg_size);
             pyrebox_put_packet(s, buf);
@@ -866,7 +966,7 @@ static int pyrebox_gdb_handle_packet(GDBState *s, const char *line_buf)
             p++;
         reg_size = strlen(p) / 2;
         pyrebox_hextomem(mem_buf, p, reg_size);
-        pyrebox_gdb_write_register(s->g_thread_id, mem_buf, addr);
+        gdb_write_thread_register(s, s->g_thread_id, addr, mem_buf);
         pyrebox_put_packet(s, "OK");
         break;
     case 'Z':
