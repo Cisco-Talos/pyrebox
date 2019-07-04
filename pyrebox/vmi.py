@@ -294,6 +294,58 @@ def does_thread_exist(thread_id, thread_list):
             return True
     return False
 
+def str_to_val(buf, str_size):
+    import struct
+    from utils import ConfigurationManager as conf_m
+
+    if str_size == 1:
+        struct_letter = "B"
+    elif str_size == 2:
+        struct_letter = "H"
+    elif str_size == 4:
+        struct_letter = "I"
+    elif str_size == 8:
+        struct_letter = "Q"
+    else:
+        raise NotImplementedError("[val_to_str - gdb_write_thread_register] Not implemented")
+
+    if conf_m.endianess == "l":
+        struct_letter = "<" + struct_letter
+    else:
+        struct_letter = ">" + struct_letter
+
+    try:
+        ret_val = struct.unpack(struct_letter, buf)[0]
+    except Exception as e:
+        raise e
+    return ret_val 
+
+def val_to_str(val, str_size):
+    import struct
+    from utils import ConfigurationManager as conf_m
+
+    if str_size == 1:
+        struct_letter = "B"
+    elif str_size == 2:
+        struct_letter = "H"
+    elif str_size == 4:
+        struct_letter = "I"
+    elif str_size == 8:
+        struct_letter = "Q"
+    else:
+        raise NotImplementedError("[val_to_str - gdb_read_thread_register] Not implemented")
+
+    if conf_m.endianess == "l":
+        struct_letter = "<" + struct_letter
+    else:
+        struct_letter = ">" + struct_letter
+
+    try:
+        ret_val = struct.pack(struct_letter, val)
+    except Exception as e:
+        raise e
+    return ret_val 
+
 def gdb_read_thread_register(thread_id, thread_list, gdb_register_index):
     '''
     Given a GDB register index, return an str with its value. Obtain
@@ -304,30 +356,6 @@ def gdb_read_thread_register(thread_id, thread_list, gdb_register_index):
     from api import r_cpu
     from cpus import RT_SEGMENT
     from cpus import RT_REGULAR
-
-    def val_to_str(val, str_size):
-        import struct
-        if str_size == 1:
-            struct_letter = "B"
-        elif str_size == 2:
-            struct_letter = "H"
-        elif str_size == 4:
-            struct_letter = "I"
-        elif str_size == 8:
-            struct_letter = "Q"
-        else:
-            raise NotImplementedError("[val_to_str - gdb_read_thread_register] Not implemented")
-
-        if conf_m.endianess == "l":
-            struct_letter = "<" + struct_letter
-        else:
-            struct_letter = ">" + struct_letter
-
-        try:
-            ret_val = struct.pack(struct_letter, val)
-        except Exception as e:
-            raise e
-        return ret_val 
 
     if conf_m.platform == "i386-softmmu":
         from cpus import gdb_map_i386_softmmu as gdb_map
@@ -394,29 +422,6 @@ def gdb_write_thread_register(thread_id, thread_list, gdb_register_index, buf):
     from cpus import RT_SEGMENT
     from cpus import RT_REGULAR
 
-    def str_to_val(buf, str_size):
-        import struct
-        if str_size == 1:
-            struct_letter = "B"
-        elif str_size == 2:
-            struct_letter = "H"
-        elif str_size == 4:
-            struct_letter = "I"
-        elif str_size == 8:
-            struct_letter = "Q"
-        else:
-            raise NotImplementedError("[val_to_str - gdb_write_thread_register] Not implemented")
-
-        if conf_m.endianess == "l":
-            struct_letter = "<" + struct_letter
-        else:
-            struct_letter = ">" + struct_letter
-
-        try:
-            ret_val = struct.unpack(struct_letter, buf)[0]
-        except Exception as e:
-            raise e
-        return ret_val 
 
     if conf_m.platform == "i386-softmmu":
         from cpus import gdb_map_i386_softmmu as gdb_map
@@ -461,6 +466,54 @@ def gdb_write_thread_register(thread_id, thread_list, gdb_register_index, buf):
             return bytes_written 
         elif os_family == OS_FAMILY_LINUX:
             raise NotImplementedError("gdb_write_thread_register not implemented yet on Linux guests")
+
+def gdb_set_cpu_pc(thread_id, thread_list, val):
+    ''' Set cpu PC '''
+    if conf_m.platform == "i386-softmmu":
+        from cpus import gdb_map_i386_softmmu as gdb_map
+        gdb_register_index = 8 
+    elif conf_m.platform == "x86_64-softmmu":
+        from cpus import gdb_map_x86_64_softmmu as gdb_map
+        gdb_register_index = 16
+    else:
+        raise NotImplementedError("[gdb_write_thread_register] Architecture not supported yet")
+
+    # If it is not mapped to a CPU register or KTRAP_FRAME value,
+    # we just return 0s.
+    if gdb_register_index not in gdb_map:
+        return 0 
+    else:
+        str_size = gdb_map[gdb_register_index][2]
+
+    cpu_index = None
+    thread = None
+    # First, check if we can read the register from the CPU object
+    for element in thread_list:
+        if element['id'] == thread_id:
+            cpu_index = element['running']
+            thread = element
+            break
+
+    if thread is None:
+        return None
+
+    if cpu_index is not None:
+        w_r(cpu_index, gdb_map[gdb_register_index][0], val)
+        return str_size
+    # If the thread is not running, read it from the KTRAP_FRAME
+    else:
+        if os_family == OS_FAMILY_WIN:
+            from windows_vmi import win_read_thread_register_from_ktrap_frame
+            try:
+                bytes_written = win_write_thread_register_in_ktrap_frame(thread, gdb_map[gdb_register_index][1], val_to_str(val, str_size), str_size)
+            except Exception as e:
+                pp_debug("Exception after win_write_thread_register_in_ktrap_frame: " + str(e))
+            if bytes_written < 0:
+                bytes_written = 0
+            return bytes_written 
+        elif os_family == OS_FAMILY_LINUX:
+            raise NotImplementedError("gdb_set_cpu_pc not implemented yet on Linux guests")
+
 
 def gdb_get_register_size(gdb_register_index):
     ''' Given a register index, returns its register size'''

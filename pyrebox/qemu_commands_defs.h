@@ -63,3 +63,10 @@
 	.params		= "[port]",
 	.help		= "Start a PyREBox gdbserver on a given port"
 },
+{
+	.name		= "signal_breakpoint",
+	.args_type	= "thread:i?",
+	.cmd	= signal_breakpoint,
+	.params		= "[thread]",
+	.help		= "Signal a GDB breakpoint on a thread"
+},

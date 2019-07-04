@@ -142,3 +142,11 @@ void pyrebox_gdbserver(Monitor* mon, const QDict* qdict){
         pyrebox_gdbserver_start(qdict_get_int(qdict, "port"));
     }
 }
+
+void signal_breakpoint(Monitor* mon, const QDict* qdict){
+    if ((qdict != NULL) && (qdict_haskey(qdict, "thread")))
+    {
+        gdb_signal_breakpoint(qdict_get_int(qdict, "thread"));
+    }
+
+}

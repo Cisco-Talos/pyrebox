@@ -53,11 +53,14 @@
 #include "exec/semihost.h"
 #include "exec/exec-all.h"
 
+#include "pyrebox.h"
+
 #define GDB_ATTACHED "1"
 
-//#define GDB_DEBUG_MODE 
+#define GDB_DEBUG_MODE 
 
 #define TYPE_PYREBOX_CHARDEV_GDB "chardev-pyrebox-gdb"
+
 
 static int sstep_flags = SSTEP_ENABLE|SSTEP_NOIRQ|SSTEP_NOTIMER;
 
@@ -124,6 +127,10 @@ static bool pyrebox_gdb_has_xml;
 static int gdb_num_regs = 0;
 
 static unsigned long long int currently_running_thread = 0;
+
+int pyrebox_put_packet_binary(GDBState *s, const char *buf, int len, bool dump);
+int pyrebox_put_packet(GDBState *s, const char *buf);
+
 
 //===========================  PRIMITIVES AND PYREBOX GLUE  ==========================================
 
@@ -292,7 +299,6 @@ static int gdb_read_thread_register(GDBState* s, unsigned long long thread, int 
                 char* tmp_str;
                 Py_ssize_t length = 0;
                 PyString_AsStringAndSize(ret, (char**) &tmp_str, &length);
-                PyErr_Print();
                 memcpy(buf, tmp_str, length);
                 Py_DECREF(ret);
                 return length;
@@ -378,7 +384,7 @@ static inline int target_memory_rw_debug(GDBState* s, unsigned long long thread,
                 PyString_AsStringAndSize(ret, (char**) &tmp_str, &length);
                 PyErr_Print();
                 if (!is_write){
-                    memcpy(buf, tmp_str, len);
+                    memcpy(buf, tmp_str, length < len? length : len);
                 }
                 Py_DECREF(ret);
                 return length;
@@ -393,9 +399,46 @@ static inline int target_memory_rw_debug(GDBState* s, unsigned long long thread,
     return 0;
 }
 
+static void gdb_set_cpu_pc(GDBState *s, target_ulong pc)
+{
+    // Calls python function to set cpu PC 
+    PyObject* py_module_name = PyString_FromString("vmi");
+    PyObject* py_vmi_module = PyImport_Import(py_module_name);
+    Py_DECREF(py_module_name);
+    PyObject* py_gdb_set_cpu_pc = PyObject_GetAttrString(py_vmi_module,"gdb_set_cpu_pc");
+    if (py_gdb_set_cpu_pc) {
+        if (PyCallable_Check(py_gdb_set_cpu_pc)) {
+            PyObject* py_args = PyTuple_New(3);
+            PyTuple_SetItem(py_args, 0, PyLong_FromUnsignedLongLong(s->c_thread_id)); // The reference to the object in the tuple is stolen
+            Py_INCREF(s->current_threads);
+            PyTuple_SetItem(py_args, 1, s->current_threads); // The reference to the object in the tuple is stolen
+            //Add the pc
+            #if TARGET_LONG_SIZE == 4
+            PyTuple_SetItem(py_args, 2, PyLong_FromUnsignedLong(pc)); // The reference to the object in the tuple is stolen
+            #elif TARGET_LONG_SIZE == 8
+            PyTuple_SetItem(py_args, 2, PyLong_FromUnsignedLongLong(pc)); // The reference to the object in the tuple is stolen
+            #else
+            #error TARGET_LONG_SIZE undefined
+            #endif
+            PyObject* ret = PyObject_CallObject(py_gdb_set_cpu_pc, py_args);
+            Py_DECREF(py_args);
+            if (ret) {
+                // Create a string from the returned value 
+                //int length = PyLong_AsLong(ret);
+                Py_DECREF(ret);
+                return;
+            }
+            PyErr_Print();
+            return;
+        }
+        PyErr_Print();
+        return;
+    }
+    PyErr_Print();
+    return;
+}
 
 /* Resume execution.  */
-// XXX: Implement this on PyREBox
 static inline void pyrebox_gdb_continue(GDBState *s)
 {
     if (!runstate_needs_reset()) {
@@ -409,16 +452,7 @@ static void pyrebox_gdb_breakpoint_remove_all(void)
     return;
 }
 
-static void pyrebox_gdb_set_cpu_pc(GDBState *s, target_ulong pc)
-{
-    //CPUState *cpu = s->c_cpu;
-    //cpu_synchronize_state if necessary only with HW virtualization
-    //cpu_synchronize_state(cpu);
-    //cpu_set_pc(cpu, pc);
-    //XXX PyREBox primitive
-}
-
-static void pyrebox_cpu_single_step(unsigned long long thread){
+static void pyrebox_cpu_single_step(unsigned long long thread, int activate){
     //XXX Pyrebox primitive
 }
 
@@ -489,6 +523,48 @@ static int pyrebox_gdb_breakpoint_remove(target_ulong addr, target_ulong len, in
     }
 }
 
+void gdb_signal_breakpoint(unsigned int thread_index) {
+    GDBState *s = pyrebox_gdbserver_state;
+    pyrebox_update_threads(s);
+    unsigned long long thread = pyrebox_thread_gdb_index(s, thread_index);
+    char buf[256];
+
+    //if (cpu->watchpoint_hit) {
+    //    switch (cpu->watchpoint_hit->flags & BP_MEM_ACCESS) {
+    //    case BP_MEM_READ:
+    //        type = "r";
+    //        break;
+    //    case BP_MEM_ACCESS:
+    //        type = "a";
+    //        break;
+    //    default:
+    //        type = "";
+    //        break;
+    //    }
+    //    snprintf(buf, sizeof(buf),
+    //             "T%02xthread:%02x;%swatch:" TARGET_FMT_lx ";",
+    //             GDB_SIGNAL_TRAP, cpu_gdb_index(cpu), type,
+    //             (target_ulong)cpu->watchpoint_hit->vaddr);
+    //    cpu->watchpoint_hit = NULL;
+    //    put_packet(s, buf);
+    //}
+
+    // Flush all cpus:
+    CPUState *cpu;
+    for (cpu = first_cpu; cpu != NULL; cpu = CPU_NEXT(cpu)) {
+        tb_flush(cpu);
+    }
+    s->c_thread_id = thread;
+    s->g_thread_id = thread;
+    snprintf(buf, sizeof(buf), "T%02xthread:%02llx;", GDB_SIGNAL_TRAP, thread);
+    pyrebox_put_packet(s, buf);
+
+    // disable single step if it was enabled 
+    pyrebox_cpu_single_step(thread, 0);
+
+    // Stop the CPU, so that it doesn't keep executing when we return
+    pyrebox_vm_stop(s);
+}
 
 static int gdb_get_register_size(int gdb_register_index){
     PyObject* py_module_name = PyString_FromString("vmi");
@@ -618,7 +694,7 @@ static void pyrebox_hextomem(uint8_t *mem, const char *buf, int len)
 }
 
 /* return -1 if error, 0 if OK */
-static int pyrebox_put_packet_binary(GDBState *s, const char *buf, int len, bool dump)
+int pyrebox_put_packet_binary(GDBState *s, const char *buf, int len, bool dump)
 {
     int csum, i;
     uint8_t *p;
@@ -652,7 +728,7 @@ static int pyrebox_put_packet_binary(GDBState *s, const char *buf, int len, bool
 }
 
 /* return -1 if error, 0 if OK */
-static int pyrebox_put_packet(GDBState *s, const char *buf)
+int pyrebox_put_packet(GDBState *s, const char *buf)
 {
     return pyrebox_put_packet_binary(s, buf, strlen(buf), false);
 }
@@ -800,7 +876,7 @@ static int pyrebox_gdb_handle_packet(GDBState *s, const char *line_buf)
         //Continue and (optionally) set address
         if (*p != '\0') {
             addr = strtoull(p, (char **)&p, 16);
-            pyrebox_gdb_set_cpu_pc(s, addr);
+            gdb_set_cpu_pc(s, addr);
         }
         pyrebox_gdb_continue(s);
         return RS_IDLE;
@@ -847,9 +923,9 @@ static int pyrebox_gdb_handle_packet(GDBState *s, const char *line_buf)
         // Single step
         if (*p != '\0') {
             addr = strtoull(p, (char **)&p, 16);
-            pyrebox_gdb_set_cpu_pc(s, addr);
+            gdb_set_cpu_pc(s, addr);
         }
-        pyrebox_cpu_single_step(s->c_thread_id);
+        pyrebox_cpu_single_step(s->c_thread_id, 1);
         pyrebox_gdb_continue(s);
         return RS_IDLE;
     // case 'F':
