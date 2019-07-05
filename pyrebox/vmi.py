@@ -28,6 +28,7 @@ from utils import pp_print
 from utils import pp_debug
 from utils import pp_warning
 from utils import pp_error
+from api import BP 
 
 # symbol cache
 __symbols = {}
@@ -40,6 +41,8 @@ OS_FAMILY_WIN = 0
 OS_FAMILY_LINUX = 1
 
 os_family = None
+
+gdb_breakpoint_list = {}
 
 def get_modules():
     global __modules
@@ -514,7 +517,6 @@ def gdb_set_cpu_pc(thread_id, thread_list, val):
         elif os_family == OS_FAMILY_LINUX:
             raise NotImplementedError("gdb_set_cpu_pc not implemented yet on Linux guests")
 
-
 def gdb_get_register_size(gdb_register_index):
     ''' Given a register index, returns its register size'''
     if conf_m.platform == "i386-softmmu":
@@ -554,3 +556,142 @@ def gdb_memory_rw_debug(thread_id, thread_list, addr, length, buf, is_write):
             return mem
         except Exception as e:
             raise e
+
+GDB_BREAKPOINT_SW = 0
+GDB_BREAKPOINT_HW = 1
+GDB_WATCHPOINT_WRITE = 2
+GDB_WATCHPOINT_READ = 3
+GDB_WATCHPOINT_ACCESS = 4
+
+def gdb_breakpoint_callback(addr, pgd, length, bp_type, params):
+    import c_api
+    import api
+
+    if bp_type == GDB_BREAKPOINT_SW or bp_type == GDB_BREAKPOINT_HW:
+        cpu_index = params["cpu_index"]
+        cpu = params["cpu"]
+    else:
+        cpu_index = params["cpu_index"]
+        addr = params["vaddr"]
+        size = params["size"]
+        haddr = params["haddr"]
+
+    pgd = api.get_running_process(cpu_index)
+
+    thread_id = None
+    thread_list = get_threads()
+    for thread in thread_list:
+        if thread['running'] == cpu_index:
+            thread_id = thread['id']
+
+    if thread_id is None:
+        return None
+
+    # We must signal GDB client that a breakpoint has occurred
+    c_api.gdb_signal_breakpoint(thread_id)
+
+def gdb_breakpoint_insert(thread_id, thread_list, addr, length, bp_type):
+    ''' Insert a breakpoing for GDB '''
+    global gdb_breakpoint_list
+    from api import BP
+    import functools
+
+    # Obtain PGD from thread
+    thread = None
+    # First, check if we can read the register from the CPU object
+    for element in thread_list:
+        if element['id'] == thread_id:
+            thread = element
+            break
+
+    if thread is None:
+        return 0 
+
+    pgd = thread['pgd']
+
+    if bp_type not in gdb_breakpoint_list:
+        gdb_breakpoint_list[bp_type] = {}
+    if pgd not in gdb_breakpoint_list[bp_type]:
+        gdb_breakpoint_list[bp_type][pgd] = {}
+    if addr not in gdb_breakpoint_list[bp_type][pgd]:
+        gdb_breakpoint_list[bp_type][pgd][addr] = []
+
+    nb_breakpoints_added = 0
+
+    if bp_type == GDB_BREAKPOINT_SW:
+        f = functools.partial(gdb_breakpoint_callback, addr, pgd, length, bp_type)
+        bp = BP(addr=addr, pgd=pgd, size=length, typ=BP.EXECUTION, func=f, new_style=True)
+        bp.enable()
+        gdb_breakpoint_list[bp_type][pgd][addr].append(bp)
+        nb_breakpoints_added += 1
+
+    if bp_type == GDB_BREAKPOINT_HW:
+        f = functools.partial(gdb_breakpoint_callback, addr, pgd, length, bp_type, new_style=True)
+        bp = BP(addr=addr, pgd=pgd, size=length, typ=BP.EXECUTION, func=f)
+        bp.enable()
+        gdb_breakpoint_list[bp_type][pgd][addr].append(bp)
+        nb_breakpoints_added += 1
+
+    if bp_type == GDB_WATCHPOINT_WRITE or bp_type == GDB_WATCHPOINT_ACCESS:
+        f = functools.partial(gdb_breakpoint_callback, addr, pgd, length, bp_type, new_style=True)
+        bp = BP(addr=addr, pgd=pgd, size=length, typ=BP.MEM_WRITE, func=f)
+        bp.enable()
+        gdb_breakpoint_list[bp_type][pgd][addr].append(bp)
+        nb_breakpoints_added += 1
+
+    if bp_type == GDB_WATCHPOINT_READ or bp_type == GDB_WATCHPOINT_ACCESS:
+        f = functools.partial(gdb_breakpoint_callback, addr, pgd, length, bp_type, new_style=True)
+        bp = BP(addr=addr, pgd=pgd, size=length, typ=BP.MEM_READ, func=f)
+        bp.enable()
+        gdb_breakpoint_list[bp_type][pgd][addr].append(bp)
+        nb_breakpoints_added += 1
+
+    return nb_breakpoints_added  
+
+def gdb_breakpoint_remove(thread_id, thread_list, addr, length, bp_type):
+    ''' Remove a breakpoint from GDB'''
+    global gdb_breakpoint_list
+
+    # Obtain PGD from thread
+    thread = None
+    # First, check if we can read the register from the CPU object
+    for element in thread_list:
+        if element['id'] == thread_id:
+            thread = element
+            break
+
+    if thread is None:
+        return False 
+
+    pgd = thread['pgd']
+
+    nb_breakpoints_removed = 0
+    bps_to_keep = []
+    # Disable the corresponding breakpoints
+    if bp_type in gdb_breakpoint_list:
+        if pgd in gdb_breakpoint_list[bp_type]:
+            if addr in gdb_breakpoint_list[bp_type][pgd]:
+                for bp in gdb_breakpoint_list[bp_type][pgd][addr]:
+                    if bp.get_size() == length:
+                        bp.disable()
+                    else:
+                        bps_to_keep.append(bp)
+
+                nb_breakpoints_removed = len(gdb_breakpoint_list[bp_type][pgd][addr]) - len(bps_to_keep)
+                gdb_breakpoint_list[bp_type][pgd][addr] = bps_to_keep
+
+    return nb_breakpoints_removed
+
+def gdb_breakpoint_remove_all():
+    ''' Remove all breakpoints from GDB'''
+    global gdb_breakpoint_list
+
+    # Disable all breakpoints:
+    for bp_type in gdb_breakpoint_list:
+        for pgd in gdb_breakpoint_list[bp_type]:
+            for addr in gdb_breakpoint_list[bp_type][pgd]:
+                for bp in gdb_breakpoint_list[bp_type][pgd][addr]:
+                    bp.disable()
+
+    # Empty the list
+    gdb_breakpoing_list = {}

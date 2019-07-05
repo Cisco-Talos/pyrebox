@@ -827,7 +827,7 @@ def get_threads():
     results = []
 
     config = conf_m.vol_conf
-    t = Threads(config)
+    t = Threads(config, light_mode = True)
 
     # Each returned item has a pid, a tid, and a variable
     # set of attributes

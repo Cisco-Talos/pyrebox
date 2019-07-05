@@ -42,6 +42,7 @@ extern "C" {
     #include "utils.h"
     #include "qemu_glue_sleuthkit.h"
     #include "qemu_glue_ui.h"
+    #include "qemu_glue_gdbstub.h"
 }
 
 #include "callbacks.h"
@@ -1286,6 +1287,24 @@ PyObject* py_screendump(PyObject *dummy, PyObject *args){
      }
 }
 
+PyObject* py_gdb_signal_breakpoint(PyObject *dummy, PyObject *args){
+    Py_ssize_t args_size = PyTuple_Size(args);
+    unsigned long long thread;
+    if (args_size == 1){
+        if (PyArg_ParseTuple(args, "K", &thread)){
+           gdb_signal_breakpoint(thread);
+           Py_INCREF(Py_True);
+           return Py_True;
+         } else {
+               PyErr_SetString(PyExc_ValueError, "This internal function accepts 1 argument: thread");
+               return 0;
+         }
+     } else {
+           PyErr_SetString(PyExc_ValueError, "This internal function accepts 1 argument: thread");
+           return 0;
+     }
+}
+
 PyMethodDef api_methods[] = {
       {"register_callback", register_callback, METH_VARARGS, "register_callback"}, 
       {"unregister_callback", unregister_callback, METH_VARARGS, "unregister_callback"},
@@ -1334,6 +1353,7 @@ PyMethodDef api_methods[] = {
       {"mouse_button", py_mouse_button, METH_VARARGS, "mouse_button"},
       {"send_key", py_send_key, METH_VARARGS, "send_key"},
       {"screendump", py_screendump, METH_VARARGS, "screendump"},
+      {"gdb_signal_breakpoint", py_gdb_signal_breakpoint, METH_VARARGS, "gdb_signal_breakpoint"},
       { NULL, NULL, 0, NULL }
     };
 
