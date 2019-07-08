@@ -1586,7 +1586,7 @@ int pyrebox_gdbserver_start(unsigned int port)
     snprintf(gdbstub_device_name, sizeof(gdbstub_device_name),
              "tcp::%u,nowait,nodelay,server", port);
 
-    chr = qemu_chr_new_noreplay("pyrebox_gdb", gdbstub_device_name);
+    chr = qemu_chr_new_noreplay("pyrebox_gdb", gdbstub_device_name, true, NULL);
     if (!chr)
         return -1;
 
@@ -1605,7 +1605,7 @@ int pyrebox_gdbserver_start(unsigned int port)
          * client to the QEMU monitor. Would it be interesting to redirect
          * these commands to pyrebox ipython interface? */
         mon_chr = qemu_chardev_new(NULL, TYPE_PYREBOX_CHARDEV_GDB,
-                                   NULL, &error_abort);
+                                   NULL, NULL, &error_abort);
         monitor_init(mon_chr, 0);
     } else {
         qemu_chr_fe_deinit(&s->chr, true);
