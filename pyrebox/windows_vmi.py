@@ -839,7 +839,7 @@ def get_threads():
 
         element['pid'] = int(thread.Cid.UniqueProcess)
         element['tid'] = int(thread.Cid.UniqueThread)
-        element['thread_object_base'] = thread.v()
+        element['thread_object_base'] = thread.Tcb.v()
         element['pgd'] = int(thread.attached_process().Pcb.DirectoryTableBase)
 
         element['id'] = element['tid']
@@ -921,10 +921,10 @@ def set_running_threads(thread_list):
                 kpcr = obj.Object("_KPCR", offset=kpcr_addr, vm=conf_m.addr_space)
                 self_kpcr_addr = kpcr.Self.v()
             if self_kpcr_addr == kpcr_addr:
-                if kpcr.Prcb.CurrentThread:
-                    kthread_addr = kpcr.Prcb.CurrentThread.v()
+                current_thread = kpcr.ProcessorBlock.CurrentThread.dereference_as("_ETHREAD")
+                if current_thread:
                     for element in thread_list:
-                        if element["thread_object_base"] == kthread_addr:
+                        if element["thread_object_base"] == current_thread.obj_offset:
                             element['running'] = cpu_index
             else:
                 raise NotImplementedError("Windows set_running_threads: Architecture of type %s not implemented yet" % str(type(cpu)))

@@ -65,7 +65,7 @@
 
 #define GDB_ATTACHED "1"
 
-#define GDB_DEBUG_MODE 
+//#define GDB_DEBUG_MODE 
 
 #define TYPE_PYREBOX_CHARDEV_GDB "chardev-pyrebox-gdb"
 

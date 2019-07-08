@@ -376,22 +376,28 @@ def gdb_read_thread_register(thread_id, thread_list, gdb_register_index):
 
     cpu_index = None
     thread = None
+
+    some_thread_running = False
     # First, check if we can read the register from the CPU object
     for element in thread_list:
         if element['id'] == thread_id:
-            cpu_index = element['running']
             thread = element
-            break
+            cpu_index = element['running']
+            if cpu_index:
+                some_thread_running = True
 
     if thread is None:
         return None
+
+    if cpu_index is None and not some_thread_running:
+        cpu_index = 0
 
     if cpu_index is not None:
         cpu = r_cpu(cpu_index)
         val = 0
         try:
             if gdb_map[gdb_register_index][3] == RT_SEGMENT:
-                val = getattr(cpu, gdb_map[gdb_register_index][0]).base
+                val = getattr(cpu, gdb_map[gdb_register_index][0])['base']
             else:
                 val = getattr(cpu, gdb_map[gdb_register_index][0])
         except:
