@@ -750,7 +750,7 @@ def windows_read_paged_out_memory(pgd, addr, size):
         if ppte_size == 4:
             ppte = struct.unpack("<I", api.r_va(pgd, ppte_addr, 4))[0]
         elif ppte_size == 8:
-            ppte = struct.unpack("<K", api.r_va(pgd, ppte_addr, 8))[0]
+            ppte = struct.unpack("<Q", api.r_va(pgd, ppte_addr, 8))[0]
         else:
             raise NotImplementedError()
 
@@ -816,3 +816,158 @@ def get_system_time():
     addr_space = get_addr_space()
     k = obj.Object("_KUSER_SHARED_DATA", offset = obj.VolMagic(addr_space).KUSER_SHARED_DATA.v(), vm = addr_space)
     return k.SystemTime.as_datetime()
+
+def get_threads():
+    from volatility.plugins.malware.threads import Threads
+    from utils import ConfigurationManager as conf_m
+
+    # Use the threads plugin to retrieve thread data
+    # Code partially obtained from volatility.plugins.malware.threads
+
+    results = []
+
+    config = conf_m.vol_conf
+    t = Threads(config, light_mode = True)
+
+    # Each returned item has a pid, a tid, and a variable
+    # set of attributes
+    for thread, addr_space, mods, mod_addrs, \
+                 instances, hooked_tables, system_range, owner_name in t.calculate():
+
+        element = {}
+        element['tags'] = set([t for t, v in instances.items() if v.check()])
+
+        element['pid'] = int(thread.Cid.UniqueProcess)
+        element['tid'] = int(thread.Cid.UniqueThread)
+        element['thread_object_base'] = thread.Tcb.v()
+        element['pgd'] = int(thread.attached_process().Pcb.DirectoryTableBase)
+
+        element['id'] = element['tid']
+
+        element['created'] = str(thread.CreateTime)
+        element['exited'] = str(thread.ExitTime)
+        element['process_name'] = str(
+            thread.owning_process().ImageFileName)
+        element['attached_process_name'] = str(
+            thread.attached_process().ImageFileName)
+
+        # Lookup the thread's state
+        state = str(thread.Tcb.State)
+
+        # Append the wait reason
+        if state == 'Waiting':
+            state = state + ':' + str(thread.Tcb.WaitReason)
+
+        element['state'] = str(state)
+        element['base_priority'] = int(thread.Tcb.BasePriority)
+        element['priority'] = int(thread.Tcb.Priority)
+        element['teb'] = int(thread.Tcb.Teb)
+        element['start_address'] = int(thread.StartAddress)
+        element['start_address_owner_name'] = str(owner_name)
+        element['running'] = None 
+        
+        results.append(element)
+
+    results = sorted(results,  key=lambda k: k['pid'])
+    set_running_threads(results)
+    return results
+    
+
+def set_running_threads(thread_list):
+    from api import get_num_cpus
+    from api import r_cpu
+    from api import is_kernel_running
+    from api import r_va
+    import struct
+    from cpus import X86CPU
+    from cpus import X64CPU
+
+    num_cpus = get_num_cpus()
+
+    for cpu_index in range(0, num_cpus):
+        cpu = r_cpu(cpu_index)
+        if not is_kernel_running(cpu_index):
+            # User mode: Get the TEB address from the TIB, and compare.
+            # The TIB is pointed by the FS register (in 32 bits) or the gs register
+            # in 64 bit.
+            if isinstance(cpu, X86CPU):
+                # In 32 bits, use fs register
+                teb_addr = r_va(cpu.CR3, cpu.FS["base"] + 0x18, 4)
+                if teb_addr:
+                    teb_addr = struct.unpack("<I", teb_addr)[0]
+            elif isinstance(cpu, X64CPU):
+                # In 64 bits, use gs register
+                teb_addr = r_va(cpu.CR3, cpu.GS["base"] + 0x30, 8)
+                if teb_addr:
+                    teb_addr = struct.unpack("<Q", teb_addr)[0]
+            if teb_addr:
+                # Now, go through the list of threads and find the one with the same TEB
+                for element in thread_list:
+                    if element['teb'] == teb_addr and element['pgd'] == cpu.CR3:
+                        element['running'] = cpu_index
+            else:
+                raise NotImplementedError("Windows set_running_threads: Architecture of type %s not implemented yet" % str(type(cpu)))
+        else:
+            from utils import ConfigurationManager as conf_m
+            # Kernel mode: For each CPU, KPCR->PCRB->CurrentThread
+            if isinstance(cpu, X86CPU):
+                # In 32 bits, use fs register
+                kpcr_addr = cpu.FS["base"]
+                kpcr = obj.Object("_KPCR", offset=kpcr_addr, vm=conf_m.addr_space)
+                self_kpcr_addr = kpcr.SelfPcr.v()
+            elif isinstance(cpu, X64CPU):
+                # In 64 bits, use gs register
+                kpcr_addr = cpu.GS["base"]
+                kpcr = obj.Object("_KPCR", offset=kpcr_addr, vm=conf_m.addr_space)
+                self_kpcr_addr = kpcr.Self.v()
+            if self_kpcr_addr == kpcr_addr:
+                current_thread = kpcr.ProcessorBlock.CurrentThread.dereference_as("_ETHREAD")
+                if current_thread:
+                    for element in thread_list:
+                        if element["thread_object_base"] == current_thread.obj_offset:
+                            element['running'] = cpu_index
+            else:
+                raise NotImplementedError("Windows set_running_threads: Architecture of type %s not implemented yet" % str(type(cpu)))
+
+def win_read_thread_register_from_ktrap_frame(thread, reg_name):
+    """ Get a register from a threads trap frame """
+    from utils import ConfigurationManager as conf_m
+
+    vol_thread = obj.Object("_ETHREAD", offset=thread['thread_object_base'], vm=conf_m.addr_space)
+    try:
+        trap = vol_thread.Tcb.TrapFrame.dereference_as("_KTRAP_FRAME")
+    except:
+        return 0
+    if isinstance(trap, obj.NoneObject):
+        return 0
+    # Silently fall back to 0
+    try:
+        value = getattr(trap, reg_name).v()
+    except:
+        value = 0
+    if value == -1:
+        value = 0
+    return value
+
+def win_write_thread_register_in_ktrap_frame(thread, reg_name, buf, size):
+    """ Get a register from a threads trap frame """
+    from utils import ConfigurationManager as conf_m
+
+    vol_thread = obj.Object("_ETHREAD", offset=thread['thread_object_base'], vm=conf_m.addr_space)
+    try:
+        trap = vol_thread.Tcb.TrapFrame.dereference_as("_KTRAP_FRAME")
+    except:
+        return 0
+    if isinstance(trap, obj.NoneObject):
+        return 0
+    # Silently fall back to 0
+    try:
+        offset = getattr(trap, reg_name).obj_offset
+        from api import w_va
+        w_va(thread['pgd'], offset, buf, size)
+        return size
+    except:
+        return 0 
+    if value < 0:
+        value = 0
+    return value

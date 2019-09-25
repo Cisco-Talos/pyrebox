@@ -28,6 +28,7 @@ from utils import pp_print
 from utils import pp_debug
 from utils import pp_warning
 from utils import pp_error
+from api import BP 
 
 # symbol cache
 __symbols = {}
@@ -40,6 +41,8 @@ OS_FAMILY_WIN = 0
 OS_FAMILY_LINUX = 1
 
 os_family = None
+
+gdb_breakpoint_list = {}
 
 def get_modules():
     global __modules
@@ -259,3 +262,442 @@ def get_system_time():
         return win_get_system_time()
     elif os_family == OS_FAMILY_LINUX:
         raise NotImplementedError("get_system_time not implemented on Linux guests")
+
+def get_threads():
+    global os_family
+    from windows_vmi import get_threads as win_get_threads
+    if os_family == OS_FAMILY_WIN:
+        return list(win_get_threads())
+    elif os_family == OS_FAMILY_LINUX:
+        raise NotImplementedError("get_threads not implemented yet on Linux guests")
+
+def get_thread_id(thread_number, thread_list):
+    if thread_number < len(thread_list):
+        return long(thread_list[thread_number]['id'])
+    else:
+        return long(0)
+
+def get_thread_description(thread_id, thread_list):
+    for element in thread_list:
+        if element['id'] == thread_id:
+            return "%s(%x) - %x" % (element['process_name'], element['pid'], element['tid'])
+    return ""
+
+def get_running_thread_first_cpu(thread_list):
+    for element in thread_list:
+        if element['running'] is not None and element['running'] == 0:
+            return long(element['id'])
+
+    # As a fallback, just return the first thread in the list
+    return long(thread_list[0]['id'])
+
+def does_thread_exist(thread_id, thread_list):
+    for element in thread_list:
+        if element['id'] == thread_id:
+            return True
+    return False
+
+def str_to_val(buf, str_size):
+    import struct
+    from utils import ConfigurationManager as conf_m
+
+    if str_size == 1:
+        struct_letter = "B"
+    elif str_size == 2:
+        struct_letter = "H"
+    elif str_size == 4:
+        struct_letter = "I"
+    elif str_size == 8:
+        struct_letter = "Q"
+    else:
+        raise NotImplementedError("[val_to_str - gdb_write_thread_register] Not implemented")
+
+    if conf_m.endianess == "l":
+        struct_letter = "<" + struct_letter
+    else:
+        struct_letter = ">" + struct_letter
+
+    try:
+        ret_val = struct.unpack(struct_letter, buf)[0]
+    except Exception as e:
+        raise e
+    return ret_val 
+
+def val_to_str(val, str_size):
+    import struct
+    from utils import ConfigurationManager as conf_m
+
+    if str_size == 1:
+        struct_letter = "B"
+    elif str_size == 2:
+        struct_letter = "H"
+    elif str_size == 4:
+        struct_letter = "I"
+    elif str_size == 8:
+        struct_letter = "Q"
+    else:
+        raise NotImplementedError("[val_to_str - gdb_read_thread_register] Not implemented")
+
+    if conf_m.endianess == "l":
+        struct_letter = "<" + struct_letter
+    else:
+        struct_letter = ">" + struct_letter
+
+    try:
+        ret_val = struct.pack(struct_letter, val)
+    except Exception as e:
+        raise e
+    return ret_val 
+
+def gdb_read_thread_register(thread_id, thread_list, gdb_register_index):
+    '''
+    Given a GDB register index, return an str with its value. Obtain
+    the value either from the running CPU or the saved KTRAP_FRAME.
+    NOTE: Not all registers are supported, if so, 0's are returned.
+    '''
+    from utils import ConfigurationManager as conf_m
+    from api import r_cpu
+    from cpus import RT_SEGMENT
+    from cpus import RT_REGULAR
+
+    if conf_m.platform == "i386-softmmu":
+        from cpus import gdb_map_i386_softmmu as gdb_map
+    elif conf_m.platform == "x86_64-softmmu":
+        from cpus import gdb_map_x86_64_softmmu as gdb_map
+    else:
+        raise NotImplementedError("[gdb_read_thread_register] Architecture not supported yet")
+
+    # If it is not mapped to a CPU register or KTRAP_FRAME value,
+    # we just return 0s.
+    if gdb_register_index not in gdb_map:
+        return "\0" * (conf_m.bitness / 8)
+    else:
+        str_size = gdb_map[gdb_register_index][2]
+
+    cpu_index = None
+    thread = None
+
+    some_thread_running = False
+    # First, check if we can read the register from the CPU object
+    for element in thread_list:
+        if element['id'] == thread_id:
+            thread = element
+            cpu_index = element['running']
+            if cpu_index:
+                some_thread_running = True
+
+    if thread is None:
+        return None
+
+    if cpu_index is None and not some_thread_running:
+        cpu_index = 0
+
+    if cpu_index is not None:
+        cpu = r_cpu(cpu_index)
+        val = 0
+        try:
+            if gdb_map[gdb_register_index][3] == RT_SEGMENT:
+                val = getattr(cpu, gdb_map[gdb_register_index][0])['base']
+            else:
+                val = getattr(cpu, gdb_map[gdb_register_index][0])
+        except:
+            val = 0
+        if val == -1:
+            val = 0
+        return val_to_str(val, str_size)
+    # If the thread is not running, read it from the KTRAP_FRAME
+    else:
+        if os_family == OS_FAMILY_WIN:
+            from windows_vmi import win_read_thread_register_from_ktrap_frame
+            val = 0
+            try:
+                val = win_read_thread_register_from_ktrap_frame(thread, gdb_map[gdb_register_index][1])
+            except Exception as e:
+                pp_debug("Exception after win_read_thread_register_from_ktrap_frame: " + str(e))
+            if val == -1:
+                val = 0
+            return val_to_str(val, str_size)
+        elif os_family == OS_FAMILY_LINUX:
+            raise NotImplementedError("gdb_read_thread_register not implemented yet on Linux guests")
+
+def gdb_write_thread_register(thread_id, thread_list, gdb_register_index, buf):
+    '''
+    Given a GDB register index, write the provided value. Obtain
+    the value either from the running CPU or the saved KTRAP_FRAME.
+    NOTE: Not all registers are supported, if so, 0's are returned.
+    '''
+    from utils import ConfigurationManager as conf_m
+    from api import r_cpu
+    from cpus import RT_SEGMENT
+    from cpus import RT_REGULAR
+
+
+    if conf_m.platform == "i386-softmmu":
+        from cpus import gdb_map_i386_softmmu as gdb_map
+    elif conf_m.platform == "x86_64-softmmu":
+        from cpus import gdb_map_x86_64_softmmu as gdb_map
+    else:
+        raise NotImplementedError("[gdb_write_thread_register] Architecture not supported yet")
+
+    # If it is not mapped to a CPU register or KTRAP_FRAME value,
+    # we just return 0s.
+    if gdb_register_index not in gdb_map:
+        return 0 
+    else:
+        str_size = gdb_map[gdb_register_index][2]
+
+    cpu_index = None
+    thread = None
+    # First, check if we can read the register from the CPU object
+    for element in thread_list:
+        if element['id'] == thread_id:
+            cpu_index = element['running']
+            thread = element
+            break
+
+    if thread is None:
+        return None
+
+    if cpu_index is not None:
+        val = str_to_val(buf, str_size)
+        w_r(cpu_index, gdb_map[gdb_register_index][0], val)
+        return str_size
+    # If the thread is not running, read it from the KTRAP_FRAME
+    else:
+        if os_family == OS_FAMILY_WIN:
+            from windows_vmi import win_read_thread_register_from_ktrap_frame
+            try:
+                bytes_written = win_write_thread_register_in_ktrap_frame(thread, gdb_map[gdb_register_index][1], buf, str_size)
+            except Exception as e:
+                pp_debug("Exception after win_write_thread_register_in_ktrap_frame: " + str(e))
+            if bytes_written < 0:
+                bytes_written = 0
+            return bytes_written 
+        elif os_family == OS_FAMILY_LINUX:
+            raise NotImplementedError("gdb_write_thread_register not implemented yet on Linux guests")
+
+def gdb_set_cpu_pc(thread_id, thread_list, val):
+    ''' Set cpu PC '''
+    if conf_m.platform == "i386-softmmu":
+        from cpus import gdb_map_i386_softmmu as gdb_map
+        gdb_register_index = 8 
+    elif conf_m.platform == "x86_64-softmmu":
+        from cpus import gdb_map_x86_64_softmmu as gdb_map
+        gdb_register_index = 16
+    else:
+        raise NotImplementedError("[gdb_write_thread_register] Architecture not supported yet")
+
+    # If it is not mapped to a CPU register or KTRAP_FRAME value,
+    # we just return 0s.
+    if gdb_register_index not in gdb_map:
+        return 0 
+    else:
+        str_size = gdb_map[gdb_register_index][2]
+
+    cpu_index = None
+    thread = None
+    # First, check if we can read the register from the CPU object
+    for element in thread_list:
+        if element['id'] == thread_id:
+            cpu_index = element['running']
+            thread = element
+            break
+
+    if thread is None:
+        return None
+
+    if cpu_index is not None:
+        w_r(cpu_index, gdb_map[gdb_register_index][0], val)
+        return str_size
+    # If the thread is not running, read it from the KTRAP_FRAME
+    else:
+        if os_family == OS_FAMILY_WIN:
+            from windows_vmi import win_read_thread_register_from_ktrap_frame
+            try:
+                bytes_written = win_write_thread_register_in_ktrap_frame(thread, gdb_map[gdb_register_index][1], val_to_str(val, str_size), str_size)
+            except Exception as e:
+                pp_debug("Exception after win_write_thread_register_in_ktrap_frame: " + str(e))
+            if bytes_written < 0:
+                bytes_written = 0
+            return bytes_written 
+        elif os_family == OS_FAMILY_LINUX:
+            raise NotImplementedError("gdb_set_cpu_pc not implemented yet on Linux guests")
+
+def gdb_get_register_size(gdb_register_index):
+    ''' Given a register index, returns its register size'''
+    if conf_m.platform == "i386-softmmu":
+        from cpus import gdb_map_i386_softmmu as gdb_map
+    elif conf_m.platform == "x86_64-softmmu":
+        from cpus import gdb_map_x86_64_softmmu as gdb_map
+    else:
+        raise NotImplementedError("[gdb_get_register_size] Architecture not supported yet")
+
+    if gdb_register_index in gdb_map:
+        return gdb_map[gdb_register_index][2]
+    else:
+        return 0
+
+def gdb_memory_rw_debug(thread_id, thread_list, addr, length, buf, is_write):
+    ''' Read / Write memory '''
+
+    thread = None
+    # First, check if we can read the register from the CPU object
+    for element in thread_list:
+        if element['id'] == thread_id:
+            thread = element
+            break
+
+    if thread is None:
+        return None
+
+    if is_write:
+        from api import w_va
+        w_va(thread['pgd'], addr, buf, length)
+        return buf
+    else:
+        try:
+            from api import r_va
+            import binascii
+            mem = r_va(thread['pgd'], addr, length)
+            return mem
+        except Exception as e:
+            raise e
+
+GDB_BREAKPOINT_SW = 0
+GDB_BREAKPOINT_HW = 1
+GDB_WATCHPOINT_WRITE = 2
+GDB_WATCHPOINT_READ = 3
+GDB_WATCHPOINT_ACCESS = 4
+
+def gdb_breakpoint_callback(addr, pgd, length, bp_type, params):
+    import c_api
+    import api
+
+    if bp_type == GDB_BREAKPOINT_SW or bp_type == GDB_BREAKPOINT_HW:
+        cpu_index = params["cpu_index"]
+        cpu = params["cpu"]
+    else:
+        cpu_index = params["cpu_index"]
+        addr = params["vaddr"]
+        size = params["size"]
+        haddr = params["haddr"]
+
+    pgd = api.get_running_process(cpu_index)
+
+    thread_id = None
+    thread_list = get_threads()
+    for thread in thread_list:
+        if thread['running'] == cpu_index:
+            thread_id = thread['id']
+
+    if thread_id is None:
+        return None
+
+    # We must signal GDB client that a breakpoint has occurred
+    c_api.gdb_signal_breakpoint(thread_id)
+
+def gdb_breakpoint_insert(thread_id, thread_list, addr, length, bp_type):
+    ''' Insert a breakpoing for GDB '''
+    global gdb_breakpoint_list
+    from api import BP
+    import functools
+
+    # Obtain PGD from thread
+    thread = None
+    # First, check if we can read the register from the CPU object
+    for element in thread_list:
+        if element['id'] == thread_id:
+            thread = element
+            break
+
+    if thread is None:
+        return 0 
+
+    pgd = thread['pgd']
+
+    if bp_type not in gdb_breakpoint_list:
+        gdb_breakpoint_list[bp_type] = {}
+    if pgd not in gdb_breakpoint_list[bp_type]:
+        gdb_breakpoint_list[bp_type][pgd] = {}
+    if addr not in gdb_breakpoint_list[bp_type][pgd]:
+        gdb_breakpoint_list[bp_type][pgd][addr] = []
+
+    nb_breakpoints_added = 0
+
+    if bp_type == GDB_BREAKPOINT_SW:
+        f = functools.partial(gdb_breakpoint_callback, addr, pgd, length, bp_type)
+        bp = BP(addr=addr, pgd=pgd, size=length, typ=BP.EXECUTION, func=f, new_style=True)
+        bp.enable()
+        gdb_breakpoint_list[bp_type][pgd][addr].append(bp)
+        nb_breakpoints_added += 1
+
+    if bp_type == GDB_BREAKPOINT_HW:
+        f = functools.partial(gdb_breakpoint_callback, addr, pgd, length, bp_type, new_style=True)
+        bp = BP(addr=addr, pgd=pgd, size=length, typ=BP.EXECUTION, func=f)
+        bp.enable()
+        gdb_breakpoint_list[bp_type][pgd][addr].append(bp)
+        nb_breakpoints_added += 1
+
+    if bp_type == GDB_WATCHPOINT_WRITE or bp_type == GDB_WATCHPOINT_ACCESS:
+        f = functools.partial(gdb_breakpoint_callback, addr, pgd, length, bp_type, new_style=True)
+        bp = BP(addr=addr, pgd=pgd, size=length, typ=BP.MEM_WRITE, func=f)
+        bp.enable()
+        gdb_breakpoint_list[bp_type][pgd][addr].append(bp)
+        nb_breakpoints_added += 1
+
+    if bp_type == GDB_WATCHPOINT_READ or bp_type == GDB_WATCHPOINT_ACCESS:
+        f = functools.partial(gdb_breakpoint_callback, addr, pgd, length, bp_type, new_style=True)
+        bp = BP(addr=addr, pgd=pgd, size=length, typ=BP.MEM_READ, func=f)
+        bp.enable()
+        gdb_breakpoint_list[bp_type][pgd][addr].append(bp)
+        nb_breakpoints_added += 1
+
+    return nb_breakpoints_added  
+
+def gdb_breakpoint_remove(thread_id, thread_list, addr, length, bp_type):
+    ''' Remove a breakpoint from GDB'''
+    global gdb_breakpoint_list
+
+    # Obtain PGD from thread
+    thread = None
+    # First, check if we can read the register from the CPU object
+    for element in thread_list:
+        if element['id'] == thread_id:
+            thread = element
+            break
+
+    if thread is None:
+        return False 
+
+    pgd = thread['pgd']
+
+    nb_breakpoints_removed = 0
+    bps_to_keep = []
+    # Disable the corresponding breakpoints
+    if bp_type in gdb_breakpoint_list:
+        if pgd in gdb_breakpoint_list[bp_type]:
+            if addr in gdb_breakpoint_list[bp_type][pgd]:
+                for bp in gdb_breakpoint_list[bp_type][pgd][addr]:
+                    if bp.get_size() == length:
+                        bp.disable()
+                    else:
+                        bps_to_keep.append(bp)
+
+                nb_breakpoints_removed = len(gdb_breakpoint_list[bp_type][pgd][addr]) - len(bps_to_keep)
+                gdb_breakpoint_list[bp_type][pgd][addr] = bps_to_keep
+
+    return nb_breakpoints_removed
+
+def gdb_breakpoint_remove_all():
+    ''' Remove all breakpoints from GDB'''
+    global gdb_breakpoint_list
+
+    # Disable all breakpoints:
+    for bp_type in gdb_breakpoint_list:
+        for pgd in gdb_breakpoint_list[bp_type]:
+            for addr in gdb_breakpoint_list[bp_type][pgd]:
+                for bp in gdb_breakpoint_list[bp_type][pgd][addr]:
+                    bp.disable()
+
+    # Empty the list
+    gdb_breakpoing_list = {}

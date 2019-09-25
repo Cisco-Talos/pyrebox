@@ -41,6 +41,7 @@
 #include "callbacks.h"
 #include "qemu_commands.h"
 #include "pyrebox.h"
+#include "qemu_glue_gdbstub.h"
 
 void import_module(Monitor* mon, const QDict* qdict)
 {
@@ -110,7 +111,6 @@ void reload_module(Monitor* mon, const QDict* qdict)
 
 void list_modules(Monitor* mon, const QDict* qdict)
 {
-
     PyObject* py_main_module, *py_global_dict;
     PyObject* py_import;//,*py_args_tuple;
     // Get a reference to the main module and global dictionary
@@ -134,4 +134,19 @@ void pyrebox_shell(Monitor* mon, const QDict* qdict)
     py_import = PyDict_GetItemString(py_global_dict, "pyrebox_ipython_shell");
     PyObject* ret = PyObject_CallObject(py_import,0);
     Py_XDECREF(ret);
+}
+
+void pyrebox_gdbserver(Monitor* mon, const QDict* qdict){
+    if ((qdict != NULL) && (qdict_haskey(qdict, "port")))
+    {
+        pyrebox_gdbserver_start(qdict_get_int(qdict, "port"));
+    }
+}
+
+void signal_breakpoint(Monitor* mon, const QDict* qdict){
+    if ((qdict != NULL) && (qdict_haskey(qdict, "thread")))
+    {
+        gdb_signal_breakpoint(qdict_get_int(qdict, "thread"));
+    }
+
 }

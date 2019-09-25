@@ -56,3 +56,17 @@
 	.params		= "",
 	.help		= "Start a pyrebox shell"
 },
+{
+	.name		= "pyrebox_gdbserver",
+	.args_type	= "port:i?",
+	.cmd	= pyrebox_gdbserver,
+	.params		= "[port]",
+	.help		= "Start a PyREBox gdbserver on a given port"
+},
+{
+	.name		= "signal_breakpoint",
+	.args_type	= "thread:i?",
+	.cmd	= signal_breakpoint,
+	.params		= "[thread]",
+	.help		= "Signal a GDB breakpoint on a thread"
+},
