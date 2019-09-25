@@ -1318,8 +1318,14 @@ static void gen_illegal_opcode(DisasContext *s)
         tcg_temp_free_i32(tcg_opcode);
 
     }
-    //Pyrebox: We don't need to trigger cpu loop exit,
-    // as it will be done on the gen_exception
+
+    //Pyrebox: trigger cpu loop exit if needed
+    //Update flags. In QEMU flags are only updated when needed (on block
+    //transitions). But for us to be able to exit a block in the middle
+    //of its execution, we need to update flags as well on every instruction
+    //transition
+    gen_update_cc_op(s);
+    gen_helper_qemu_trigger_cpu_loop_exit_if_needed();
 
     gen_exception(s, EXCP06_ILLOP, s->pc_start - s->cs_base);
 }
