@@ -178,7 +178,7 @@ PyObject* r_pa(PyObject *dummy, PyObject *args){
         if (buffer)
         {
             qemu_physical_memory_rw(addr,buffer,len,0);
-            result = Py_BuildValue("s#",buffer,len);
+            result = Py_BuildValue("y#",buffer,len);
             free(buffer);
         }
         else
@@ -215,7 +215,7 @@ PyObject* r_va(PyObject *dummy, PyObject *args)
             buffer = (uint8_t*) malloc(len * sizeof(uint8_t));
             if (buffer) {
                 if (qemu_virtual_memory_rw_with_pgd(pgd,addr,buffer,len,0) == 0) {
-                    result = Py_BuildValue("s#",buffer,len);
+                    result = Py_BuildValue("y#",buffer,len);
                 } else
                 {
                     PyErr_SetString(PyExc_RuntimeError, "Could not read memory");
@@ -242,9 +242,9 @@ PyObject* w_pa(PyObject *dummy, PyObject *args)
     unsigned int len;
     uint8_t* buffer;
 #if TARGET_LONG_SIZE == 4
-    if (PyArg_ParseTuple(args, "Is#", &addr, &buffer,&len)){
+    if (PyArg_ParseTuple(args, "Iy#", &addr, &buffer,&len)){
 #elif TARGET_LONG_SIZE == 8
-    if (PyArg_ParseTuple(args, "Ks#", &addr, &buffer,&len)){
+    if (PyArg_ParseTuple(args, "Ky#", &addr, &buffer,&len)){
 #else
 #error TARGET_LONG_SIZE undefined
 #endif
@@ -280,10 +280,10 @@ PyObject* w_va(PyObject *dummy, PyObject *args) {
     uint8_t* buffer;
     pyrebox_target_ulong pgd;
 #if TARGET_LONG_SIZE == 4
-    if (PyArg_ParseTuple(args, "IIs#",&pgd,&addr, &buffer,&len)){
+    if (PyArg_ParseTuple(args, "IIy#",&pgd,&addr, &buffer,&len)){
 
 #elif TARGET_LONG_SIZE == 8
-    if (PyArg_ParseTuple(args, "KKs#",&pgd,&addr, &buffer,&len)){
+    if (PyArg_ParseTuple(args, "KKy#",&pgd,&addr, &buffer,&len)){
 #else
 #error TARGET_LONG_SIZE undefined
 #endif
@@ -739,7 +739,7 @@ PyObject* py_vol_read_memory(PyObject *dummy, PyObject *args){
             result = Py_None;
         }
         else{
-            result = Py_BuildValue("s#",buf,length);
+            result = Py_BuildValue("y#",buf,length);
         }
         free(buf);
     }
@@ -754,7 +754,7 @@ PyObject* py_vol_write_memory(PyObject *dummy, PyObject *args){
     PyObject *result = 0;
     unsigned int len;
     char* buffer;
-    if (PyArg_ParseTuple(args, "KKs#", &address,&length,&buffer,&len)){
+    if (PyArg_ParseTuple(args, "KKy#", &address,&length,&buffer,&len)){
         if (len != length){
             Py_INCREF(Py_None);
             result = Py_None;
@@ -917,7 +917,7 @@ PyObject* py_import_module(PyObject *dummy, PyObject *args){
 
         PyObject* py_main_module, *py_global_dict;
         PyObject* py_import,*py_args_tuple;
-        PyObject *module_path = PyString_FromString(name);
+        PyObject *module_path = PyUnicode_FromString(name);
         // Get a reference to the main module and global dictionary
         py_main_module = PyImport_AddModule("__main__");
         py_global_dict = PyModule_GetDict(py_main_module);
@@ -943,7 +943,7 @@ PyObject* py_unload_module(PyObject *dummy, PyObject *args){
     if (PyArg_ParseTuple(args, "I",&module_id)){
         PyObject* py_main_module, *py_global_dict;
         PyObject* py_import,*py_args_tuple;
-        PyObject *module_hdl = PyInt_FromLong(module_id);
+        PyObject *module_hdl = PyLong_FromLong(module_id);
         // Get a reference to the main module and global dictionary
         py_main_module = PyImport_AddModule("__main__");
         py_global_dict = PyModule_GetDict(py_main_module);
@@ -970,7 +970,7 @@ PyObject* py_reload_module(PyObject *dummy, PyObject *args){
     if (PyArg_ParseTuple(args, "I",&module_id)){
         PyObject* py_main_module, *py_global_dict;
         PyObject* py_import,*py_args_tuple;
-        PyObject *module_hdl = PyInt_FromLong(module_id);
+        PyObject *module_hdl = PyLong_FromLong(module_id);
         // Get a reference to the main module and global dictionary
         py_main_module = PyImport_AddModule("__main__");
         py_global_dict = PyModule_GetDict(py_main_module);
@@ -1115,7 +1115,7 @@ PyObject* py_read_guest_file(PyObject *dummy, PyObject *args){
                        PyErr_SetString(PyExc_ValueError, "Error while reading data, could not read any bytes.");
                        return 0;
                    } else {
-                        return Py_BuildValue("s#", buffer, bytes_read);
+                        return Py_BuildValue("y#", buffer, bytes_read);
                    }
                } else {
                    PyErr_SetString(PyExc_ValueError, "Could not allocate buffer for reading data");

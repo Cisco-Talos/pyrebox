@@ -21,8 +21,11 @@
 #   
 #-------------------------------------------------------------------------------
 
-PYTHON_CFLAGS = -I/usr/include/python2.7 -I/usr/include/python2.7 -fno-strict-aliasing -fwrapv  -fstack-protector --param=ssp-buffer-size=4 #-DNDEBUG 
-PYTHON_LIBS = -L/usr/lib/python2.7/config -lpthread -ldl -lutil -lm -lpython2.7 -Wl,-O1 -Wl,-Bsymbolic-functions -Xlinker -export-dynamic
+#PYTHON_CFLAGS = -I/usr/include/python3.7 -I/usr/include/python3.7 -fno-strict-aliasing -fwrapv  -fstack-protector --param=ssp-buffer-size=4 #-DNDEBUG 
+#PYTHON_LIBS = -L/usr/lib/python3.7/config -lpthread -ldl -lutil -lm -lpython3.7 -Wl,-O1 -Wl,-Bsymbolic-functions -Xlinker -export-dynamic
+PYTHON_CFLAGS = $(shell python3-config --cflags | sed -r "s/-DNDEBUG//" | sed -r "s/-Wsign-compare//")
+PYTHON_LIBS = $(shell python3-config --ldflags)
+
 
 SLEUTHKIT_CFLAGS = -I$(BUILD_DIR)/pyrebox/sleuthkit/
 SLEUTHKIT_LIBS = -L$(BUILD_DIR)/pyrebox/sleuthkit/tsk/.libs/ -ltsk

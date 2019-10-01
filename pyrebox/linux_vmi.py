@@ -55,18 +55,18 @@ def linux_get_offsets():
         # process exit
         proc_exit_connector_offset = profile.get_symbol("proc_exit_connector")
 
-        return (long(init_task_offset),
-                long(comm_offset),
-                long(pid_offset),
-                long(tasks_offset),
-                long(mm_offset),
-                long(pgd_offset),
-                long(parent_offset),
-                long(exit_state_offset),
-                long(thread_stack_size),
-                long(proc_exec_connector_offset),
-                long(trim_init_extable_offset),
-                long(proc_exit_connector_offset))
+        return (int(init_task_offset),
+                int(comm_offset),
+                int(pid_offset),
+                int(tasks_offset),
+                int(mm_offset),
+                int(pgd_offset),
+                int(parent_offset),
+                int(exit_state_offset),
+                int(thread_stack_size),
+                int(proc_exec_connector_offset),
+                int(trim_init_extable_offset),
+                int(proc_exit_connector_offset))
 
     except Exception as e:
         pp_error("Could not retrieve symbols for profile initialization %s" %
@@ -83,7 +83,7 @@ def linux_init_address_space():
             addr_space = utils.load_as(config)
         except BaseException as e:
             # Return silently
-            print (str(e))
+            print((str(e)))
             conf_m.addr_space = None
             return False
         conf_m.addr_space = addr_space
@@ -311,7 +311,7 @@ def linux_update_modules(pgd, update_symbols=False):
             # First, create a module for the "module_core", that contains
             # .text, readonly data and writable data
             if module.module_core != 0 and module.core_size != 0:
-                linux_insert_kernel_module(module, long(module.module_core.v()), long(
+                linux_insert_kernel_module(module, int(module.module_core.v()), int(
                     module.core_size.v()), str(module.name), str(module.name), update_symbols)
             # Now, check if there is "module_init" region, which will contain init sections such as .init.text , init
             # readonly and writable data...

@@ -208,13 +208,13 @@ def set_modules_non_present(pid, pgd):
     global __modules
     if pid is not None:
         if (pid, pgd) in __modules:
-            for base, mod in __modules[(pid, pgd)].iteritems():
+            for base, mod in __modules[(pid, pgd)].items():
                 mod.set_present(False)
     else:
-        for pid, _pgd in __modules.keys():
+        for pid, _pgd in list(__modules.keys()):
             if _pgd == pgd:
                 if (pid, pgd) in __modules:
-                    for base, mod in __modules[(pid, _pgd)].iteritems():
+                    for base, mod in __modules[(pid, _pgd)].items():
                         mod.set_present(False)
 
 def clean_non_present_modules(pid, pgd):
@@ -224,14 +224,14 @@ def clean_non_present_modules(pid, pgd):
     mods_to_remove = []
     if pid is not None:
         if (pid, pgd) in __modules:
-            for base, mod in __modules[(pid, pgd)].iteritems():
+            for base, mod in __modules[(pid, pgd)].items():
                 if not mod.is_present():
                     mods_to_remove.append((pid, pgd, base))
     else:
-        for pid, _pgd in __modules.keys():
+        for pid, _pgd in list(__modules.keys()):
             if _pgd == pgd:
                 if (pid, _pgd) in __modules:
-                    for base, mod in __modules[(pid, _pgd)].iteritems():
+                    for base, mod in __modules[(pid, _pgd)].items():
                         if not mod.is_present():
                             mods_to_remove.append((pid, pgd, base))
 
@@ -273,9 +273,9 @@ def get_threads():
 
 def get_thread_id(thread_number, thread_list):
     if thread_number < len(thread_list):
-        return long(thread_list[thread_number]['id'])
+        return int(thread_list[thread_number]['id'])
     else:
-        return long(0)
+        return int(0)
 
 def get_thread_description(thread_id, thread_list):
     for element in thread_list:
@@ -286,10 +286,10 @@ def get_thread_description(thread_id, thread_list):
 def get_running_thread_first_cpu(thread_list):
     for element in thread_list:
         if element['running'] is not None and element['running'] == 0:
-            return long(element['id'])
+            return int(element['id'])
 
     # As a fallback, just return the first thread in the list
-    return long(thread_list[0]['id'])
+    return int(thread_list[0]['id'])
 
 def does_thread_exist(thread_id, thread_list):
     for element in thread_list:

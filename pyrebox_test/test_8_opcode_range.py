@@ -21,7 +21,7 @@
 #
 # -------------------------------------------------------------------------------
 
-from __future__ import print_function
+
 
 # Callback manager
 cm = None

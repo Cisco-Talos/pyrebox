@@ -86,7 +86,7 @@ void linux_init_address_space(){
 
    utils_print_debug("[*] Initializing volatility address space...\n");
    if (init_task_offset != 0){
-       PyObject* py_module_name = PyString_FromString("linux_vmi");
+       PyObject* py_module_name = PyUnicode_FromString("linux_vmi");
        PyObject* py_vmi_module = PyImport_Import(py_module_name);
        Py_DECREF(py_module_name);
        if(py_vmi_module != NULL){
@@ -129,7 +129,7 @@ void linux_vmi_init(os_index_t os_index){
    utils_print_debug("[*] Setting up Linux Profile...\n");
 
    //Update the OS family in the Python VMI module
-   PyObject* py_module_name = PyString_FromString("vmi");
+   PyObject* py_module_name = PyUnicode_FromString("vmi");
    PyObject* py_vmi_module = PyImport_Import(py_module_name);
    Py_DECREF(py_module_name);
 
@@ -150,7 +150,7 @@ void linux_vmi_init(os_index_t os_index){
    }
 
    if (init_task_offset == 0){
-       PyObject* py_module_name = PyString_FromString("linux_vmi");
+       PyObject* py_module_name = PyUnicode_FromString("linux_vmi");
        PyObject* py_vmi_module = PyImport_Import(py_module_name);
        Py_DECREF(py_module_name);
        if(py_vmi_module != NULL){

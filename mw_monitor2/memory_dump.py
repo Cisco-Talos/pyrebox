@@ -21,7 +21,7 @@
 #
 # -------------------------------------------------------------------------------
 
-from __future__ import print_function
+
 import shutil
 import os
 
@@ -79,10 +79,10 @@ def dump(pgd_list, pyrebox_print, path = "/tmp/unpacker_results"):
                                                           fix=True):
                         of.seek(offset)
                         of.write(code)
-                except ValueError, ve:
+                except ValueError as ve:
                     pyrebox_print("Error: {0}".format(ve))
                     return
-                except exceptions.SanityCheckException, ve:
+                except exceptions.SanityCheckException as ve:
                     pyrebox_print("Error: {0} Try -u/--unsafe".format(ve))
                     return
                 finally:
@@ -96,7 +96,7 @@ def dump(pgd_list, pyrebox_print, path = "/tmp/unpacker_results"):
                 # dumping them as vads.
                 covered_ranges = [task.Peb.ImageBaseAddress]
 
-                for mod in mods.values():
+                for mod in list(mods.values()):
                     mod_base = mod.DllBase.v()
                     mod_name = mod.BaseDllName
                     if not task_space.is_valid_address(mod_base):
@@ -118,10 +118,10 @@ def dump(pgd_list, pyrebox_print, path = "/tmp/unpacker_results"):
                                                                   fix=True):
                                 of.seek(offset)
                                 of.write(code)
-                        except ValueError, ve:
+                        except ValueError as ve:
                             pyrebox_print("Error: {0}".format(ve))
                             return
-                        except exceptions.SanityCheckException, ve:
+                        except exceptions.SanityCheckException as ve:
                             pyrebox_print(
                                 "Error: {0} Try -u/--unsafe".format(ve))
                             return

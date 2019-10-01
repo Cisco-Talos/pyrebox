@@ -46,7 +46,7 @@
 #
 # -------------------------------------------------------------------------------
 
-from __future__ import print_function
+
 import os
 import shutil
 import json
@@ -307,7 +307,7 @@ def initialize_callbacks(module_hdl, printer):
             extracted_files[tarinfo.name] = None
 
         # Extract each file into a temporary file
-        for fname in extracted_files.keys():
+        for fname in list(extracted_files.keys()):
             temp_dname = tempfile.mkdtemp(dir=conf["temp_path"])
             temp_dnames.append(temp_dname)
             tar.extract(fname, path=temp_dname)
@@ -316,7 +316,7 @@ def initialize_callbacks(module_hdl, printer):
         tar.close()
         
         # Copy files to the VM
-        for fname, temp_fname in extracted_files.iteritems():
+        for fname, temp_fname in extracted_files.items():
             # Copy the specified file to C:\\temp.exe in the guest
             if conf["preserve_filenames"]:
                 guest_agent.copy_file(temp_fname, conf["extract_path"] + fname)

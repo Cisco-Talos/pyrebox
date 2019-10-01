@@ -81,7 +81,7 @@ void update_modules(pyrebox_target_ulong pgd){
    fflush(stderr);
 
    //Call python for module scanning
-   PyObject* py_module_name = PyString_FromString("vmi");
+   PyObject* py_module_name = PyUnicode_FromString("vmi");
    PyObject* py_vmi_module = PyImport_Import(py_module_name);
    Py_DECREF(py_module_name);
 

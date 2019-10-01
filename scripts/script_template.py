@@ -21,7 +21,7 @@
 #
 # -------------------------------------------------------------------------------
 
-from __future__ import print_function
+
 from api import CallbackManager
 
 # Callback manager

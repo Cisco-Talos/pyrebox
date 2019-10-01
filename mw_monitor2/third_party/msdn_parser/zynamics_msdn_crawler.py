@@ -36,7 +36,7 @@ def parse_old_style(file, content):
         if m != None:
             description = strip_html(m.group(1))
         else:
-            print "Error: Could not retrieve function description from file %s" % file
+            print("Error: Could not retrieve function description from file %s" % file)
             return None
         
         m = re.search("<P CLASS=\"clsRef\">Parameters</P><BLOCKQUOTE>(.*?)</BLOCKQUOTE>", content)
@@ -68,7 +68,7 @@ def parse_old_style(file, content):
                     argument_types[count] = argument_types[count] + t.group(0)
                 count+=1
             
-            arguments = zip(argument_names2, argument_types,descriptions)
+            arguments = list(zip(argument_names2, argument_types,descriptions))
         else:
             # It's possible to have functions without arguments
             arguments = [ ]
@@ -81,7 +81,7 @@ def parse_old_style(file, content):
             # If something has no return value it's not a function.
             return None
             
-        print "Found function %s!%s" % (dll, function_name) 
+        print("Found function %s!%s" % (dll, function_name)) 
             
         return [(dll, function_name, description, arguments, return_value)]
     else:
@@ -94,7 +94,7 @@ def parse_new_style(file, content):
         return None
     
     if not api_types in ([], ["COM"], ["DllExport"]):
-        print "API Type: ", api_types
+        print("API Type: ", api_types)
     
     function_names = re.findall("<MSHelp:Attr Name=\"APIName\" Value=\"(.*?)\"[ /]*>", content) # Check for > not for /> because some docs are broken
     
@@ -108,7 +108,7 @@ def parse_new_style(file, content):
         if m != None:
             description = strip_html(m.group(1))
         else:
-            print "Error: Could not retrieve function description from file %s" % file
+            print("Error: Could not retrieve function description from file %s" % file)
             return None
             
         m = re.search("<P CLASS=\"clsRef\">Parameters</P><BLOCKQUOTE>(.*?)</BLOCKQUOTE>", content)
@@ -140,7 +140,7 @@ def parse_new_style(file, content):
                     argument_types[count] = argument_types[count] + t.group(0)
                 count+=1
             
-            arguments = zip(argument_names2, argument_types, descriptions)
+            arguments = list(zip(argument_names2, argument_types, descriptions))
         else:
             m = re.search("<h3>Parameters</h3><dl>(.*?)</dl><h3>", content)
             if m != None:
@@ -170,7 +170,7 @@ def parse_new_style(file, content):
                         argument_types[count] = argument_types[count] + t.group(0)
                     count+=1
                 
-                arguments = zip(argument_names2,argument_types, descriptions)
+                arguments = list(zip(argument_names2,argument_types, descriptions))
             else:
                 # It's possible to have functions without arguments
                 arguments = [ ]
@@ -187,9 +187,9 @@ def parse_new_style(file, content):
         
         for dll_name in dll_names:
             for function_name in function_names:
-                print "Found function %s!%s" % (dll_name.lower(), function_name) 
+                print("Found function %s!%s" % (dll_name.lower(), function_name)) 
                 if not arguments:
-                    print "No arguments: %s" % function_name
+                    print("No arguments: %s" % function_name)
                 return_list.append((dll_name.lower(), function_name, description, arguments, return_value))
                 
         return return_list
@@ -197,7 +197,7 @@ def parse_new_style(file, content):
         return None
 
 def parse_file(file):
-    print "Parsing %s" % file
+    print("Parsing %s" % file)
 
     text_file = open(file, "r")
     content = text_file.read().translate(None, "\r\n")
@@ -266,12 +266,12 @@ def parse_files(msdn_directory):
     return (file_counter, results)
 
 def main():
-    print "zynamics msdn-crawler - Copyright 2010"
-    print "For updates please check http://github.com/zynamics/msdn-crawler"
-    print
+    print("zynamics msdn-crawler - Copyright 2010")
+    print("For updates please check http://github.com/zynamics/msdn-crawler")
+    print()
     if len(sys.argv) != 2:
-        print "usage: %s path_to_msdn" % sys.argv[0]
-        print "    where path_to_msdn is the path to the decompiled MSDN help files"
+        print("usage: %s path_to_msdn" % sys.argv[0])
+        print("    where path_to_msdn is the path to the decompiled MSDN help files")
         sys.exit(0)
 
     msdn_directory = sys.argv[1] # 'C:\\Programme\\Microsoft SDKs\\Windows\\v7.0\\Help\\1033'
@@ -279,8 +279,8 @@ def main():
     (file_counter, results) = parse_files(msdn_directory)
     results = sum(results, [])
 
-    print "Parsed %d files" % file_counter
-    print "Extracted information about %d functions" % len(results)
+    print("Parsed %d files" % file_counter)
+    print("Extracted information about %d functions" % len(results))
 
     xml_file = open("msdn.xml", "w")
     xml_file.write(to_xml(results))

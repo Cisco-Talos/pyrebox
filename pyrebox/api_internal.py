@@ -251,7 +251,7 @@ def dispatch_module_load_callback(pid, pgd, base, size, name, fullname):
     Internal function. Dispatch all module load callbacks.
     '''
     if pgd in module_load_callbacks:
-        cns = module_load_callbacks[pgd].keys()
+        cns = list(module_load_callbacks[pgd].keys())
         for cn in cns:
             # We iterate like this because the list/dictionary can change as
             # a result of a callback being called
@@ -268,7 +268,7 @@ def dispatch_module_remove_callback(pid, pgd, base, size, name, fullname):
     Internal function. Dispatch all module remove callbacks.
     '''
     if pgd in module_remove_callbacks:
-        cns = module_remove_callbacks[pgd].keys()
+        cns = list(module_remove_callbacks[pgd].keys())
         for cn in cns:
             # We iterate like this because the list/dictionary can change as
             # a result of a callback being called

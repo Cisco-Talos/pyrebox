@@ -26,8 +26,10 @@ DEFINES=-I. -I..
 
 CC=gcc
 CPP=g++
-PYTHON_CFLAGS = -I./pyrebox/ -I/usr/include/python2.7 -I/usr/include/python2.7 -fno-strict-aliasing -DNDEBUG -fwrapv  -fstack-protector --param=ssp-buffer-size=4
-PYTHON_LIBS = -L/usr/lib/python2.7/config -lpthread -ldl -lutil -lm -lpython2.7 -Wl,-O1 -Wl,-Bsymbolic-functions -Xlinker -export-dynamic
+#PYTHON_CFLAGS = -I./pyrebox/ -I/usr/include/python2.7 -I/usr/include/python2.7 -fno-strict-aliasing -DNDEBUG -fwrapv  -fstack-protector --param=ssp-buffer-size=4
+#PYTHON_LIBS = -L/usr/lib/python2.7/config -lpthread -ldl -lutil -lm -lpython2.7 -Wl,-O1 -Wl,-Bsymbolic-functions -Xlinker -export-dynamic
+PYTHON_CFLAGS = -I./pyrebox $(shell python3-config --cflags | sed -r "s/-DNDEBUG//" | sed -r "s/-Wsign-compare//")
+PYTHON_LIBS = $(shell python3-config --ldflags)
 CFLAGS=-Wall -O2 -g -fPIC -MMD -std=c++11 -std=gnu++11 
 CFLAGS+=$(PYTHON_CFLAGS)
 LDFLAGS=-g -shared 
@@ -69,6 +71,7 @@ documentation:
 
 #We place these 2 rules so that we can compile more comfortably from this directory
 all: 
+	echo $(PYTHON_CFLAGS)
 	rm -f pyrebox-i386
 	rm -f pyrebox-x86_64
 	cp -f .pyrebox-i386 pyrebox-i386

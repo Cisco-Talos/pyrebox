@@ -186,7 +186,7 @@ class ProcPrompt(Prompts):
     def continuation_prompt_tokens(self, cli=None, width=None):
         if width is None:
             width = self._width()
-        return [(Token.Prompt, (' ' * (width - 2)) + u'> '), ]
+        return [(Token.Prompt, (' ' * (width - 2)) + '> '), ]
 
     def out_prompt_tokens(self):
         width = self._width()
@@ -563,7 +563,7 @@ class ShellMagics(Magics):
             counter += 1
 
     def do_help(self, command):
-        if isinstance(command, str) or isinstance(command, unicode):
+        if isinstance(command, str):
             f = getattr(self, command)
             if f:
                 pp_print(f.__doc__)
@@ -1530,7 +1530,7 @@ class ShellMagics(Magics):
             return
         param = line.split()[0]
         if param == "*":
-            for bp in self.bps.keys():
+            for bp in list(self.bps.keys()):
                 # If breakpoint is enabled
                 if self.bps[bp].enabled():
                     self.bps[bp].disable()
@@ -1558,7 +1558,7 @@ class ShellMagics(Magics):
             return
         param = line.split()[0]
         if param == "*":
-            for bp in self.bps.keys():
+            for bp in list(self.bps.keys()):
                 if not self.bps[bp].enabled():
                     self.bps[bp].enable()
             pp_print("All breakpoints enabled\n")

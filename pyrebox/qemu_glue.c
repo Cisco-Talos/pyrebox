@@ -186,7 +186,7 @@ PyObject* get_cpu_state(qemu_cpu_opaque_t cpu_opaque){
                             env->cr[4],
                             get_qemu_cpu_index_with_pgd(env->cr[3]));
 
-    PyObject* py_module_name = PyString_FromString("api_internal");
+    PyObject* py_module_name = PyUnicode_FromString("api_internal");
     PyObject* py_module = PyImport_Import(py_module_name);
     Py_DECREF(py_module_name);
     if(py_module != NULL){
@@ -236,7 +236,7 @@ PyObject* get_cpu_state(qemu_cpu_opaque_t cpu_opaque){
                             env->regs[14],
                             env->regs[15]);
 
-    PyObject* py_module_name = PyString_FromString("api_internal");
+    PyObject* py_module_name = PyUnicode_FromString("api_internal");
     PyObject* py_module = PyImport_Import(py_module_name);
     Py_DECREF(py_module_name);
     if(py_module != NULL){

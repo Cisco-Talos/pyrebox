@@ -369,7 +369,7 @@ def windows_kdbgscan_fast(dtb):
         except BaseException:
             # Return silently
             conf_m.addr_space = None
-            return 0L
+            return 0
         conf_m.addr_space = addr_space
 
         if obj.VolMagic(addr_space).KPCR.value:
@@ -378,13 +378,13 @@ def windows_kdbgscan_fast(dtb):
             kdbg = kpcr.get_kdbg()
             if kdbg.is_valid():
                 last_kdbg = kdbg.obj_offset
-                return long(last_kdbg)
+                return int(last_kdbg)
 
         kdbg = obj.VolMagic(addr_space).KDBG.v()
 
         if kdbg.is_valid():
             last_kdbg = kdbg.obj_offset
-            return long(last_kdbg)
+            return int(last_kdbg)
 
         # skip the KPCR backup method for x64
         memmode = addr_space.profile.metadata.get('memory_model', '32bit')
@@ -405,8 +405,8 @@ def windows_kdbgscan_fast(dtb):
 
                 if kdbg.is_valid():
                     last_kdbg = kdbg.obj_offset
-                    return long(last_kdbg)
-        return 0L
+                    return int(last_kdbg)
+        return 0
     except BaseException:
         traceback.print_exc()
 
@@ -835,7 +835,7 @@ def get_threads():
                  instances, hooked_tables, system_range, owner_name in t.calculate():
 
         element = {}
-        element['tags'] = set([t for t, v in instances.items() if v.check()])
+        element['tags'] = set([t for t, v in list(instances.items()) if v.check()])
 
         element['pid'] = int(thread.Cid.UniqueProcess)
         element['tid'] = int(thread.Cid.UniqueThread)

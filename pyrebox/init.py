@@ -26,7 +26,7 @@ import os
 from prettytable import PrettyTable
 
 import sys
-import ConfigParser
+import configparser
 import traceback
 from utils import ConfigurationManager as conf_m
 from utils import pp_print
@@ -229,7 +229,7 @@ def init(platform, root_path, volatility_path, conf_name):
         pp_debug("[*] Starting python module initialization\n")
         pp_debug("[*] Reading configuration from '%s'\n" % (conf_name))
         sys.settrace
-        config = ConfigParser.RawConfigParser()
+        config = configparser.RawConfigParser()
         # Store configuration information in raw,
         # for plugins to be able to fetch it
         conf_m.config = config

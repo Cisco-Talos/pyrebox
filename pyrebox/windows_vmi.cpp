@@ -84,7 +84,7 @@ pyrebox_target_ulong scan_kdbg(pyrebox_target_ulong pgd){
    fflush(stdout);
    fflush(stderr);
 
-   PyObject* py_module_name = PyString_FromString("windows_vmi");
+   PyObject* py_module_name = PyUnicode_FromString("windows_vmi");
    PyObject* py_vmi_module = PyImport_Import(py_module_name);
    Py_DECREF(py_module_name);
 
@@ -135,7 +135,7 @@ void windows_vmi_init(os_index_t os_index){
    utils_print_debug("[*] Searching for KDBG...\n");
 
    //Update the OS family in the Python VMI module
-   PyObject* py_module_name = PyString_FromString("vmi");
+   PyObject* py_module_name = PyUnicode_FromString("vmi");
    PyObject* py_vmi_module = PyImport_Import(py_module_name);
    Py_DECREF(py_module_name);
 

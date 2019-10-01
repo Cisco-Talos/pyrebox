@@ -30,7 +30,7 @@
 #
 # -------------------------------------------------------------------------------
 
-from __future__ import print_function
+
 import os
 import json
 import functools
@@ -189,7 +189,7 @@ class InterprocData():
             cb(proc)
 
     def get_process(self, index):
-        return self.__procs.values()[index]
+        return list(self.__procs.values())[index]
 
     def get_process_by_pid(self, pid):
         if pid in self.__procs:
@@ -198,14 +198,14 @@ class InterprocData():
             return None
 
     def get_process_by_pgd(self, pgd):
-        for p in self.__procs.values():
+        for p in list(self.__procs.values()):
             if p.get_pgd() == pgd:
                 return p
         else:
             return None
 
     def get_processes(self):
-        return self.__procs.values()
+        return list(self.__procs.values())
 
     # ---- File 
 
@@ -343,16 +343,16 @@ def add_module(proc, params):
     # Update Process instance with module info
     proc.set_module(fullname, base, size)
 
-    from interproc_callbacks import ntcreateprocess
-    from interproc_callbacks import ntopenprocess
-    from interproc_callbacks import ntwritevirtualmemory
-    from interproc_callbacks import ntreadvirtualmemory
-    from interproc_callbacks import ntreadfile
-    from interproc_callbacks import ntwritefile
-    from interproc_callbacks import ntmapviewofsection
-    from interproc_callbacks import ntunmapviewofsection
-    from interproc_callbacks import ntvirtualprotect
-    from interproc_callbacks import ntallocatevirtualmemory
+    from .interproc_callbacks import ntcreateprocess
+    from .interproc_callbacks import ntopenprocess
+    from .interproc_callbacks import ntwritevirtualmemory
+    from .interproc_callbacks import ntreadvirtualmemory
+    from .interproc_callbacks import ntreadfile
+    from .interproc_callbacks import ntwritefile
+    from .interproc_callbacks import ntmapviewofsection
+    from .interproc_callbacks import ntunmapviewofsection
+    from .interproc_callbacks import ntvirtualprotect
+    from .interproc_callbacks import ntallocatevirtualmemory
 
 
     # Add callbacks, if ntdll is loaded
@@ -563,7 +563,7 @@ def interproc_start_monitoring_process(params):
     global interproc_data
 
     import api
-    from core import Process
+    from .core import Process
     from api import CallbackManager
 
     # Get parameters

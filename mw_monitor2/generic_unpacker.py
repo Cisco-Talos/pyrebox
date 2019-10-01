@@ -40,7 +40,7 @@
 #
 # -------------------------------------------------------------------------------
 
-from __future__ import print_function
+
 import os
 import json
 import functools
@@ -50,8 +50,8 @@ from api import get_os_bits
 TARGET_LONG_SIZE = get_os_bits() / 8
 
 # Our helpers, that leverage volatility
-from vads import VADRegion, get_vads
-from memory_dump import dump
+from .vads import VADRegion, get_vads
+from .memory_dump import dump
 
 # Script requirements
 requirements = ["mw_monitor2.interproc"]

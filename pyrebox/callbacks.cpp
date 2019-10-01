@@ -841,9 +841,9 @@ void CallbackManager::deliver_callback(callback_type_t type, callback_params_t p
             //Size is duplicated, first for the size of the string, second one for the size parameter
 #if TARGET_LONG_SIZE == 4
             //Since this is target independent, we use always 64 bits
-            kwarg =  Py_BuildValue("{s:s#,s:K,s:K,s:K,s:K}",
+            kwarg =  Py_BuildValue("{s:y#,s:K,s:K,s:K,s:K}",
 #elif TARGET_LONG_SIZE == 8
-            kwarg =  Py_BuildValue("{s:s#,s:K,s:K,s:K,s:K}",
+            kwarg =  Py_BuildValue("{s:y#,s:K,s:K,s:K,s:K}",
 #else
 #error TARGET_LONG_SIZE undefined
 #endif
@@ -862,9 +862,9 @@ void CallbackManager::deliver_callback(callback_type_t type, callback_params_t p
        case NIC_SEND_CB:
 #if TARGET_LONG_SIZE == 4
             //Since this is target independent, we use always 64 bits
-            kwarg =  Py_BuildValue("{s:K,s:K,s:s#}",
+            kwarg =  Py_BuildValue("{s:K,s:K,s:y#}",
 #elif TARGET_LONG_SIZE == 8
-            kwarg =  Py_BuildValue("{s:K,s:K,s:s#}",
+            kwarg =  Py_BuildValue("{s:K,s:K,s:y#}",
 #else
 #error TARGET_LONG_SIZE undefined
 #endif

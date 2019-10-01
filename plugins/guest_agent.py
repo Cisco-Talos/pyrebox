@@ -24,7 +24,7 @@
 
 import api
 import os
-import ConfigParser
+import configparser
 import functools
 import struct
 from cpus import X86CPU
@@ -121,7 +121,7 @@ class GuestAgentPlugin(object):
                     pp_error(
                         "[!] Could not initialize agent, offset config file missing!\n")
                     return
-                self.__agent_config_file = ConfigParser.RawConfigParser()
+                self.__agent_config_file = configparser.RawConfigParser()
                 self.__agent_config_file.read(
                     conf_m.config.get('AGENT', 'conf'))
 
@@ -135,10 +135,10 @@ class GuestAgentPlugin(object):
                     self.__agent_config_file.get('BUFFER', 'BufferSize'))
             self.__agent_buffer_size = conf_m.agent_buffer_size
 
-        except ConfigParser.NoSectionError:
+        except configparser.NoSectionError:
             pp_error(
                 "[*] No agent configuration provided, guest agent will not work if not configured\n")
-        except ConfigParser.NoOptionError:
+        except configparser.NoOptionError:
             pp_error(
                 "[*] No agent name provided, guest agent will not work if not configured properly\n")
 
@@ -251,11 +251,11 @@ class GuestAgentPlugin(object):
                              before it is executed).
             :type callback: func
         """
-        if type(path) is not str and type(path) is not unicode:
+        if not isinstance(path, str):
             raise ValueError("The path must be a string")
-        if type(args) is not list:
+        if not isinstance(args, list):
             raise ValueError("Args must be provided as a python list")
-        if type(env) is not dict:
+        if not isinstance(env, dict):
             raise ValueError(
                 "Args must be provided as a dictionary of varible name -> value mappings")
 
@@ -888,7 +888,7 @@ class GuestAgentPlugin(object):
 
             env_size = 0
             if len(env) > 0:
-                env = ["{:s}={:s}".format(k, v) for k, v in env.items()]
+                env = ["{:s}={:s}".format(k, v) for k, v in list(env.items())]
                 env_size = sum(len(x) + 1 for x in env) + 1
                 if env_size > self.__agent_buffer_size:
                     raise ValueError(
@@ -1012,7 +1012,7 @@ class GuestAgentPlugin(object):
         # called" % (buf, size))
         if len(env) > 0:
 
-            env = ["{:s}={:s}".format(k, v) for k, v in env.items()]
+            env = ["{:s}={:s}".format(k, v) for k, v in list(env.items())]
             env_size = sum(len(x) + 1 for x in env) + TARGET_LONG_SIZE * (len(env) + 1)
 
             try:

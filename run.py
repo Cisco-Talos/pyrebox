@@ -102,7 +102,7 @@ def start_pyrebox(vm_image = VM_IMAGE,
     try:
         if vm_image is None or not os.path.isfile(vm_image):
             raise ValueError("The specified path for the VM image is incorrect.")
-        if vm_snapshot is None or (not isinstance(vm_snapshot, str) and not isinstance(vm_snapshot, unicode)):
+        if vm_snapshot is None or (not isinstance(vm_snapshot, str)):
             raise ValueError("The specified snapshot is not a valid string")
         if ram is None:
             raise ValueError("The specified value for RAM is not valid")
@@ -112,7 +112,7 @@ def start_pyrebox(vm_image = VM_IMAGE,
             raise ValueError("The specified timeout is not a valid int value")
         if config is None or not os.path.isfile(config):
             raise ValueError("The specified path for the config file is not valid")
-        if autorun_config is None or (not isinstance(autorun_config, str) and not isinstance(autorun_config, unicode)):
+        if autorun_config is None or (not isinstance(autorun_config, str)):
             raise ValueError("The specified path for the autorun config file is not valid")
 
         # Autorun module handle (so that we can unload it)
@@ -138,7 +138,7 @@ def start_pyrebox(vm_image = VM_IMAGE,
                                  env=pyrebox_env,
                                  stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                  stderr=subprocess.PIPE, shell=True,
-                                 env={"LD_LIBRARY_PATH": "sleuthkit/tsk/.libs:%s" % (current_ld_library_path)}
+                                 env={"LD_LIBRARY_PATH": "sleuthkit/tsk/.libs:%s" % (current_ld_library_path)},
                                  # Open the process on a new session
                                  preexec_fn=os.setsid)
 

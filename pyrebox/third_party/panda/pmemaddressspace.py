@@ -1,8 +1,8 @@
 #!/usr/bin/python
 
-from __future__ import print_function
+
 import volatility.addrspace as addrspace
-import urllib
+import urllib.request, urllib.parse, urllib.error
 import socket
 import struct
 import sys

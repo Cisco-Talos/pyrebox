@@ -50,7 +50,7 @@ void import_module(Monitor* mon, const QDict* qdict)
   {
     PyObject* py_main_module, *py_global_dict;
     PyObject* py_import,*py_args_tuple;
-    PyObject *module_path = PyString_FromString(qdict_get_str(qdict, "modulename"));
+    PyObject *module_path = PyUnicode_FromString(qdict_get_str(qdict, "modulename"));
     // Get a reference to the main module and global dictionary
     py_main_module = PyImport_AddModule("__main__");
     py_global_dict = PyModule_GetDict(py_main_module);
@@ -72,7 +72,7 @@ void unload_module(Monitor* mon, const QDict* qdict)
   {
     PyObject* py_main_module, *py_global_dict;
     PyObject* py_import,*py_args_tuple;
-    PyObject *module_hdl = PyInt_FromLong(qdict_get_int(qdict, "modulehandle"));
+    PyObject *module_hdl = PyLong_FromLong(qdict_get_int(qdict, "modulehandle"));
     // Get a reference to the main module and global dictionary
     py_main_module = PyImport_AddModule("__main__");
     py_global_dict = PyModule_GetDict(py_main_module);
@@ -94,7 +94,7 @@ void reload_module(Monitor* mon, const QDict* qdict)
   {
     PyObject* py_main_module, *py_global_dict;
     PyObject* py_import,*py_args_tuple;
-    PyObject *module_hdl = PyInt_FromLong(qdict_get_int(qdict, "modulehandle"));
+    PyObject *module_hdl = PyLong_FromLong(qdict_get_int(qdict, "modulehandle"));
     // Get a reference to the main module and global dictionary
     py_main_module = PyImport_AddModule("__main__");
     py_global_dict = PyModule_GetDict(py_main_module);

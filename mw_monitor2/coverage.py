@@ -21,7 +21,7 @@
 #
 # -------------------------------------------------------------------------
 
-from __future__ import print_function
+
 import os
 import json
 import functools
@@ -50,7 +50,7 @@ def log_coverage():
     '''
     import api
     import ntpath
-    from interproc import interproc_data
+    from .interproc import interproc_data
     import struct
 
     for proc in interproc_data.get_processes():
@@ -176,7 +176,7 @@ def module_entry_point(params):
 
     from api import CallbackManager
     import api
-    from interproc import interproc_data
+    from .interproc import interproc_data
 
     # Get pameters
     cpu_index = params["cpu_index"]

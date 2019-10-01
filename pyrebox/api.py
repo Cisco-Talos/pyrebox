@@ -560,7 +560,7 @@ def get_module_list(pgd):
     if found:
         vmi.update_modules(proc_pgd, update_symbols=False)
         if (proc_pid, proc_pgd) in vmi.get_modules():
-            for mod in vmi.get_modules()[(proc_pid, proc_pgd)].values():
+            for mod in list(vmi.get_modules()[(proc_pid, proc_pgd)].values()):
                 mods.append({"name": mod.get_name(),
                              "fullname": mod.get_fullname(),
                              "base": mod.get_base(),
@@ -592,14 +592,14 @@ def get_symbol_list(pgd = None):
             if proc_pgd != 0:
                 vmi.update_modules(proc_pgd, update_symbols=True)
                 if (proc_pid, proc_pgd) in vmi.get_modules():
-                    for module in vmi.get_modules()[proc_pid, proc_pgd].values():
+                    for module in list(vmi.get_modules()[proc_pid, proc_pgd].values()):
                         n = module.get_fullname()
                         if n not in diff_modules:
                             diff_modules[n] = module
         # Include kernel modules too
         vmi.update_modules(0, update_symbols=True)
         if (0, 0) in vmi.get_modules():
-            for module in vmi.get_modules()[0, 0].values():
+            for module in list(vmi.get_modules()[0, 0].values()):
                 n = module.get_fullname()
                 if n not in diff_modules:
                     diff_modules[n] = module
@@ -608,12 +608,12 @@ def get_symbol_list(pgd = None):
         vmi.update_modules(pgd, update_symbols=True)
         for proc_pid, proc_pgd in vmi.get_modules():
             if proc_pgd == pgd:
-                for module in vmi.get_modules()[proc_pid, proc_pgd].values():
+                for module in list(vmi.get_modules()[proc_pid, proc_pgd].values()):
                     n = module.get_fullname()
                     if n not in diff_modules:
                         diff_modules[n] = module
 
-    for mod in diff_modules.values():
+    for mod in list(diff_modules.values()):
         syms = mod.get_symbols()
         for name in syms:
             res_syms.append({"mod": mod.get_name(), "mod_fullname": mod.get_fullname(), "name": name, "addr": syms[name]})
@@ -648,7 +648,7 @@ def sym_to_va(pgd, mod_name, func_name):
     func_name = func_name.lower()
     for proc_pid, proc_pgd in vmi.get_modules():
         if proc_pgd == pgd:
-            for module in vmi.get_modules()[proc_pid, proc_pgd].values():
+            for module in list(vmi.get_modules()[proc_pid, proc_pgd].values()):
                 if mod_name in module.get_name().lower():
                     syms = module.get_symbols()
                     for name in syms:
@@ -683,7 +683,7 @@ def va_to_sym(pgd, addr):
 
     for proc_pid, proc_pgd in vmi.get_modules():
         if proc_pgd == pgd:
-            for module in vmi.get_modules()[proc_pid, proc_pgd].values():
+            for module in list(vmi.get_modules()[proc_pid, proc_pgd].values()):
                 offset = (addr - module.get_base())
                 if offset > 0 and offset < module.get_size():
                     syms = module.get_symbols()
@@ -1154,13 +1154,13 @@ class CallbackManager:
             return
         if isinstance(val, str):
             set_trigger_str(self.callbacks[name], var_name, val)
-        elif (isinstance(val, int) or isinstance(val, long)) and val < 0:
+        elif isinstance(val, int) and val < 0:
             raise ValueError(
                 "Negative integers not supported, use only unsigned integers")
-        elif (isinstance(val, int) or isinstance(val, long)) and conf_m.platform == "i386-softmmu":
+        elif isinstance(val, int) and conf_m.platform == "i386-softmmu":
             set_trigger_uint32(self.callbacks[name], var_name, val)
-        elif (isinstance(val, int) or isinstance(val, long)) and conf_m.platform == "x86_64-softmmu":
-            set_trigger_uint64(self.callbacks[name], var_name, long(val))
+        elif isinstance(val, int) and conf_m.platform == "x86_64-softmmu":
+            set_trigger_uint64(self.callbacks[name], var_name, int(val))
         else:
             raise ValueError(
                 "[!] Unsupported trigger var type: %s\n" % str(
@@ -1214,13 +1214,13 @@ class CallbackManager:
             :return: None
             :rtype: None
         """
-        names = self.callbacks.keys()
+        names = list(self.callbacks.keys())
         for name in names:
             self.rm_callback(name)
-        names = self.load_module_callbacks.keys()
+        names = list(self.load_module_callbacks.keys())
         for name in names:
             self.rm_callback(name)
-        names = self.remove_module_callbacks.keys()
+        names = list(self.remove_module_callbacks.keys())
         for name in names:
             self.rm_callback(name)
 
@@ -1286,9 +1286,9 @@ class BP:
         self.__bp_repr = "BP%s_%d" % (typ_str, BP.__bp_num)
         BP.__bp_num += 1
         self.pgd = pgd
-        if isinstance(addr, int) or isinstance(addr, long):
+        if isinstance(addr, int):
             self.addr = addr
-        elif isinstance(addr, str) or isinstance(addr, unicode):
+        elif isinstance(addr, str):
             # Try symbol resolution
             self.addr = None
             symbols = get_symbol_list(pgd)

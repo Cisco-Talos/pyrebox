@@ -32,8 +32,8 @@ from utils import pp_warning
 from utils import pp_print
 
 
-from interproc import interproc_data
-from interproc import interproc_config
+from .interproc import interproc_data
+from .interproc import interproc_config
 
 # Memory protection constants (virtualprotect)
 PAGE_EXECUTE = 0x10
@@ -584,7 +584,7 @@ class Process:
                 elif self.TARGET_LONG_SIZE == 8:
                     f.write("0x%016x - %016x\n" % addr_s)
                 mod_vads.extend(
-                    filter(lambda x: x.get_start() >= addr_s[0] and (x.get_start() < (addr_s[0] + addr_s[1])), vads))
+                    [x for x in vads if x.get_start() >= addr_s[0] and (x.get_start() < (addr_s[0] + addr_s[1]))])
                 #mod_syms.extend(
                 #    filter(lambda x: x.addr >= addr_s[0] and (x.addr < (addr_s[0] + addr_s[1])), syms))
             for v in mod_vads:

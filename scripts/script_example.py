@@ -39,7 +39,7 @@
 #   6) Using the PyREBox printer function that will prepend the script name to every line you print
 #   7) Defining custom commands that can be used from the ipython shell
 
-from __future__ import print_function
+
 from ipython_shell import start_shell
 from api import CallbackManager
 from api import BP

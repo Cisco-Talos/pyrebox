@@ -25,7 +25,7 @@
 import sqlite3
 import struct
 import unicodedata
-from StringIO import StringIO
+from io import StringIO
 
 # CONSTANTS IN THE DATABASE
 
@@ -222,7 +222,7 @@ class BasicArgument(AbstractArgument):
         # Type ID
         self.typ = typ
         # Normalize name
-        if type(arg_name) is unicode:
+        if isinstance(arg_name, str):
             self.arg_name = unicodedata.normalize(
                 'NFKD', arg_name).encode('ascii', 'ignore')
         else:
@@ -301,7 +301,7 @@ class BasicArgument(AbstractArgument):
                 try:
                     parsed_value = val.decode("utf-16")
                 except Exception:
-                    parsed_value = u"\x00"
+                    parsed_value = "\x00"
             self.val = parsed_value
 
     def get_val(self):
@@ -352,13 +352,13 @@ class Struct(AbstractArgument):
         self.typ = typ
         self.size = size / 8
 
-        if type(name) is unicode:
+        if isinstance(name, str):
             self.name = unicodedata.normalize(
                 'NFKD', name).encode('ascii', 'ignore')
         else:
             self.name = name
 
-        if type(arg_name) is unicode:
+        if isinstance(arg_name, str):
             self.arg_name = unicodedata.normalize(
                 'NFKD', arg_name).encode('ascii', 'ignore')
         else:
@@ -405,12 +405,12 @@ class Union(AbstractArgument):
         self.val = val
         self.typ = typ
         self.size = size / 8
-        if type(name) is unicode:
+        if isinstance(name, str):
             self.name = unicodedata.normalize(
                 'NFKD', name).encode('ascii', 'ignore')
         else:
             self.name = name
-        if type(arg_name) is unicode:
+        if isinstance(arg_name, str):
             self.arg_name = unicodedata.normalize(
                 'NFKD', arg_name).encode('ascii', 'ignore')
         else:
@@ -455,7 +455,7 @@ class Typedef(AbstractArgument):
         self.pgd = pgd
         self.val = val
         self.typ = typ
-        if type(arg_name) is unicode:
+        if isinstance(arg_name, str):
             self.arg_name = unicodedata.normalize(
                 'NFKD', arg_name).encode('ascii', 'ignore')
         else:
@@ -486,7 +486,7 @@ class Typedef(AbstractArgument):
                 # use .__str__() instead of str() due to error while unpickling
                 return "%s" % self.equivalent_arg.__str__()
             except Exception:
-                print (self.equivalent_arg.__class__.__name__)
+                print((self.equivalent_arg.__class__.__name__))
 
 
 class Array(AbstractArgument):
@@ -499,7 +499,7 @@ class Array(AbstractArgument):
         self.pgd = pgd
         self.val = val
         self.typ = typ
-        if type(arg_name) is unicode:
+        if isinstance(arg_name, str):
             self.arg_name = unicodedata.normalize(
                 'NFKD', arg_name).encode('ascii', 'ignore')
         else:
@@ -548,7 +548,7 @@ class ParamStr(AbstractArgument):
         self.addr = addr
         self.pgd = pgd
         self.val = val
-        if type(arg_name) is unicode:
+        if isinstance(arg_name, str):
             self.arg_name = unicodedata.normalize(
                 'NFKD', arg_name).encode('ascii', 'ignore')
         else:
@@ -612,7 +612,7 @@ class Pointer(AbstractArgument):
         self.val = val
         self.typ = typ
 
-        if type(arg_name) is unicode:
+        if isinstance(arg_name, str):
             self.arg_name = unicodedata.normalize(
                 'NFKD', arg_name).encode('ascii', 'ignore')
         else:
@@ -661,9 +661,8 @@ class Pointer(AbstractArgument):
                 self.dereferenced_type.add_field(c)
                 c.dereference(argument_parser)
                 val = c.get_val()
-                if (type(val) is int and val == 0) or \
-                   (type(val) is str and val[0] == "\x00") or \
-                   (type(val) is unicode and val[0] == u"\x00"):
+                if (isinstance(val, int) and val == 0) or \
+                   (isinstance(val, bytes) and val[0] == "\x00"):
                     break
                 deref_addr += len(c)
         else:
@@ -721,7 +720,7 @@ class Reference(AbstractArgument):
         self.val = val
         self.typ = typ
 
-        if type(arg_name) is unicode:
+        if isintance(arg_name, str):
             self.arg_name = unicodedata.normalize(
                 'NFKD', arg_name).encode('ascii', 'ignore')
         else:
@@ -775,7 +774,7 @@ class Enumeration(AbstractArgument):
         self.val = val
         self.cursor = cursor
         # Name of the argument
-        if type(arg_name) is unicode:
+        if isinstance(arg_name, str):
             self.arg_name = unicodedata.normalize(
                 'NFKD', arg_name).encode('ascii', 'ignore')
         else:
@@ -919,8 +918,8 @@ class ArgumentParser:
                                                                val=None,
                                                                arg_num=arg_num))
                 else:
-                    print("Unsupported type: A struct has been returned as" +
-                                  "return value (EAX/RAX), or as register parameter (RCX/RDX/R8/R9).")
+                    print(("Unsupported type: A struct has been returned as" +
+                                  "return value (EAX/RAX), or as register parameter (RCX/RDX/R8/R9)."))
                 return new_struct
             else:
                 return None
@@ -957,8 +956,8 @@ class ArgumentParser:
                                                               offset,
                                                               arg_num=arg_num))
                 else:
-                    print("Unsupported type: A union has been returned as" +
-                                  "return value (EAX/RAX), or as register parameter (RCX/RDX/R8/R9).")
+                    print(("Unsupported type: A union has been returned as" +
+                                  "return value (EAX/RAX), or as register parameter (RCX/RDX/R8/R9)."))
 
                 return new_union
             else:
@@ -1015,8 +1014,8 @@ class ArgumentParser:
                                                             arg_num=arg_num))
                         addr += size_of_element
                 else:
-                    print("Unsupported type: An array has been returned as" +
-                                  "return value (EAX/RAX), or as register parameter (RCX/RDX/R8/R9).")
+                    print(("Unsupported type: An array has been returned as" +
+                                  "return value (EAX/RAX), or as register parameter (RCX/RDX/R8/R9)."))
                 return the_arr
             else:
                 return None

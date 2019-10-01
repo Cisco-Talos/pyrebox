@@ -21,7 +21,7 @@
 #
 # -------------------------------------------------------------------------------
 
-from __future__ import print_function
+
 from ipython_shell import start_shell
 from api import CallbackManager
 

@@ -21,7 +21,7 @@
 #
 # -------------------------------------------------------------------------
 
-from __future__ import print_function
+
 import os
 import json
 import functools
@@ -72,7 +72,7 @@ APITRACER_ENABLE_JMP = False
 APITRACER_ENABLE_RET = False
 
 def serialize_calls():
-    from interproc import interproc_data
+    from .interproc import interproc_data
     global pyrebox_print
     try:
         f_out = open(APITRACER_BIN_LOG_PATH, "w")
@@ -84,7 +84,7 @@ def serialize_calls():
 
 def log_calls():
     import api
-    from interproc import interproc_data
+    from .interproc import interproc_data
 
     TARGET_LONG_SIZE = api.get_os_bits() / 8
 
@@ -247,7 +247,7 @@ def opcodes_ret(addr_from, addr_to, data, callback_name, argument_parser, mod, f
 def opcodes(params, cb_name, proc):
     from api import CallbackManager
     import api
-    from deviare_db_parser import ArgumentParser
+    from .deviare_db_parser import ArgumentParser
     import struct
 
     global bp_counter
@@ -430,7 +430,7 @@ def module_entry_point(params):
     import os
     from api import CallbackManager
     import api
-    from interproc import interproc_data
+    from .interproc import interproc_data
 
     # Get pameters
     cpu_index = params["cpu_index"]
@@ -559,7 +559,7 @@ def initialize_callbacks(module_hdl, printer):
     from api import CallbackManager
     from plugins.guest_agent import guest_agent
     from mw_monitor2.interproc import interproc_data
-    from deviare_db_parser import set_db_path 
+    from .deviare_db_parser import set_db_path 
 
     global cm
     global pyrebox_print
@@ -597,11 +597,11 @@ def initialize_callbacks(module_hdl, printer):
                 raise Exception("Invalid rules configuration: each rule must be a dictionary")
             if "action" not in ru or "mod" not in ru or "fun" not in ru:
                 raise Exception("Invalid rules configuration: each rule must contain the keywords: action, mod, and fun")
-            if not (isinstance(ru["action"], str) or isinstance(ru["action"], unicode)):
+            if not (isinstance(ru["action"], str)):
                 raise Exception("Invalid rules configuration: action keyword must be str or unicode")
-            if not (isinstance(ru["mod"], str) or isinstance(ru["mod"], unicode)):
+            if not (isinstance(ru["mod"], str)):
                 raise Exception("Invalid rules configuration: mod keyword must be str or unicode")
-            if not (isinstance(ru["fun"], str) or isinstance(ru["fun"], unicode)):
+            if not (isinstance(ru["fun"], str)):
                 raise Exception("Invalid rules configuration: fun keyword must be str or unicode")
             for kw in ru:
                 if kw not in ["action", "mod", "fun", "from_mod"]:

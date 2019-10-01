@@ -60,6 +60,24 @@ void pyrebox_init_blocks(void){
   pyrebox_blocks_init();
 }
 
+static struct PyModuleDef capi_module = {
+    PyModuleDef_HEAD_INIT,
+    "capi",   /* name of module */
+    0, /* module documentation, may be NULL */
+    -1,       /* size of per-interpreter state of the module,
+    or -1 if the module keeps state in global variables. */
+    api_methods 
+};
+static struct PyModuleDef utils_print_module = {
+    PyModuleDef_HEAD_INIT,
+    "utils_print",   /* name of module */
+    0, /* module documentation, may be NULL */
+    -1,       /* size of per-interpreter state of the module,
+    or -1 if the module keeps state in global variables. */
+    utils_methods_print 
+};
+
+
 int pyrebox_init(const char *pyrebox_conf_str){
 
   //Initialize mutex to call python code, which may sometime be thread unsafe
@@ -80,16 +98,16 @@ int pyrebox_init(const char *pyrebox_conf_str){
 
   //XXX: Needed as a workaround to a python bug: 
   //https://mail.python.org/pipermail/new-bugs-announce/2008-November/003322.html
-  dlopen("libpython2.7.so", RTLD_LAZY | RTLD_GLOBAL);
+  dlopen("libpython3.7.so", RTLD_LAZY | RTLD_GLOBAL);
 
   Py_Initialize();
   PyObject *sysPath = PySys_GetObject((char*)"path");
-  PyObject *path = PyString_FromString(PYREBOX_PATH);
+  PyObject *path = PyUnicode_FromString(PYREBOX_PATH);
   PyList_Insert(sysPath, 0, path);
 
   //Register all the interface function for python
-  Py_InitModule("c_api", api_methods);
-  Py_InitModule("utils_print", utils_methods_print);
+  PyModule_Create(&capi_module);
+  PyModule_Create(&utils_print_module);
 
   unsigned int length = strlen(PYREBOX_PATH) + strlen("init.py") + 2;
   //More than 4k path should be unreasonable
@@ -123,10 +141,10 @@ int pyrebox_init(const char *pyrebox_conf_str){
 
   //Call the initialization function
   PyObject *py_args_tuple;
-  PyObject *platform_str = PyString_FromString(target_platform);
-  PyObject *root_path_str = PyString_FromString(ROOT_PATH);
-  PyObject *volatility_path_str = PyString_FromString(VOLATILITY_PATH);
-  PyObject *conf_name_str = PyString_FromString(pyrebox_conf_str);
+  PyObject *platform_str = PyUnicode_FromString(target_platform);
+  PyObject *root_path_str = PyUnicode_FromString(ROOT_PATH);
+  PyObject *volatility_path_str = PyUnicode_FromString(VOLATILITY_PATH);
+  PyObject *conf_name_str = PyUnicode_FromString(pyrebox_conf_str);
 
   py_args_tuple = PyTuple_New(4);
   PyTuple_SetItem(py_args_tuple, 0, platform_str); 
@@ -135,14 +153,14 @@ int pyrebox_init(const char *pyrebox_conf_str){
   PyTuple_SetItem(py_args_tuple, 3, conf_name_str);
 
   py_init = PyDict_GetItemString(py_global_dict, "init");
-  PyObject* vol_profile = PyObject_CallObject(py_init,py_args_tuple);
+  PyObject* vol_profile = PyObject_CallObject(py_init, py_args_tuple);
   if (vol_profile == 0 || vol_profile == Py_None){
       return 1;
   }
   Py_DECREF(py_args_tuple);
 
   PyObject* vol_prof_repr = PyObject_Repr(vol_profile);
-  const char* s = PyString_AsString(vol_prof_repr);
+  const char* s = PyUnicode_AsUTF8(vol_prof_repr);
   //Set the vol profile in vmi.cpp
   vmi_init(s);
 

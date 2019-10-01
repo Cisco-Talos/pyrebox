@@ -169,7 +169,7 @@ static void pyrebox_update_threads(GDBState *s, int already_locked){
         // Already up to date;
         return;
     }
-    PyObject* py_module_name = PyString_FromString("vmi");
+    PyObject* py_module_name = PyUnicode_FromString("vmi");
     PyObject* py_vmi_module = PyImport_Import(py_module_name);
     Py_DECREF(py_module_name);
     PyObject* py_get_threads = PyObject_GetAttrString(py_vmi_module,"get_threads");
@@ -202,7 +202,7 @@ static int get_thread_description(GDBState* s, unsigned long long thread, char* 
 
     pthread_mutex_lock(&pyrebox_mutex);
 
-    PyObject* py_module_name = PyString_FromString("vmi");
+    PyObject* py_module_name = PyUnicode_FromString("vmi");
     PyObject* py_vmi_module = PyImport_Import(py_module_name);
     Py_DECREF(py_module_name);
     PyObject* py_get_thread_description = PyObject_GetAttrString(py_vmi_module,"get_thread_description");
@@ -217,7 +217,7 @@ static int get_thread_description(GDBState* s, unsigned long long thread, char* 
             Py_DECREF(py_args);
             if (ret) {
                 // Copy the string
-                const char* s = PyString_AsString(ret);
+                const char* s = PyUnicode_AsUTF8(ret);
                 strncpy(buf, s, len - 1);
                 Py_DECREF(ret);
             }
@@ -241,7 +241,7 @@ static unsigned long long pyrebox_thread_gdb_index(GDBState* s, unsigned int thr
     pthread_mutex_lock(&pyrebox_mutex);
 
     //Return the Thread ID.
-    PyObject* py_module_name = PyString_FromString("vmi");
+    PyObject* py_module_name = PyUnicode_FromString("vmi");
     PyObject* py_vmi_module = PyImport_Import(py_module_name);
     Py_DECREF(py_module_name);
     PyObject* py_get_thread_id = PyObject_GetAttrString(py_vmi_module,"get_thread_id");
@@ -273,7 +273,7 @@ static unsigned long long pyrebox_get_running_thread_first_cpu(GDBState* s){
         pthread_mutex_lock(&pyrebox_mutex);
 
         //Return the Thread ID.
-        PyObject* py_module_name = PyString_FromString("vmi");
+        PyObject* py_module_name = PyUnicode_FromString("vmi");
         PyObject* py_vmi_module = PyImport_Import(py_module_name);
         Py_DECREF(py_module_name);
         PyObject* py_get_thread_id = PyObject_GetAttrString(py_vmi_module,"get_running_thread_first_cpu");
@@ -308,7 +308,7 @@ static int does_thread_exist(GDBState* s, unsigned long long thread){
 
     pthread_mutex_lock(&pyrebox_mutex);
 
-    PyObject* py_module_name = PyString_FromString("vmi");
+    PyObject* py_module_name = PyUnicode_FromString("vmi");
     PyObject* py_vmi_module = PyImport_Import(py_module_name);
     Py_DECREF(py_module_name);
     PyObject* py_does_thread_exist = PyObject_GetAttrString(py_vmi_module,"does_thread_exist");
@@ -336,7 +336,7 @@ static int gdb_read_thread_register(GDBState* s, unsigned long long thread, int 
     // and returns 0 if not, 1 if it exists
     pthread_mutex_lock(&pyrebox_mutex);
 
-    PyObject* py_module_name = PyString_FromString("vmi");
+    PyObject* py_module_name = PyUnicode_FromString("vmi");
     PyObject* py_vmi_module = PyImport_Import(py_module_name);
     Py_DECREF(py_module_name);
     PyObject* py_gdb_read_thread_register = PyObject_GetAttrString(py_vmi_module,"gdb_read_thread_register");
@@ -353,8 +353,8 @@ static int gdb_read_thread_register(GDBState* s, unsigned long long thread, int 
             Py_DECREF(py_args);
             if (ret) {
                 // Create a string from the returned value 
-                char* tmp_str;
-                PyString_AsStringAndSize(ret, (char**) &tmp_str, &length);
+                const char* tmp_str;
+                tmp_str = PyUnicode_AsUTF8AndSize(ret, &length);
                 memcpy(buf, tmp_str, length);
                 Py_DECREF(ret);
             }
@@ -405,7 +405,7 @@ static inline int target_memory_rw_debug(GDBState* s, unsigned long long thread,
 
     // Calls python function to check if a thread exists 
     // and returns 0 if not, 1 if it exists
-    PyObject* py_module_name = PyString_FromString("vmi");
+    PyObject* py_module_name = PyUnicode_FromString("vmi");
     PyObject* py_vmi_module = PyImport_Import(py_module_name);
     Py_DECREF(py_module_name);
     PyObject* py_gdb_memory_rw_debug = PyObject_GetAttrString(py_vmi_module, "gdb_memory_rw_debug");
@@ -425,7 +425,7 @@ static inline int target_memory_rw_debug(GDBState* s, unsigned long long thread,
             #endif
             PyTuple_SetItem(py_args, 3, PyLong_FromLong(len)); // The reference to the object in the tuple is stolen
             if (is_write){
-                PyTuple_SetItem(py_args, 4, PyString_FromStringAndSize((const char*)buf, (Py_ssize_t) len)); // The reference to the object in the tuple is stolen
+                PyTuple_SetItem(py_args, 4, PyUnicode_FromStringAndSize((const char*)buf, (Py_ssize_t) len)); // The reference to the object in the tuple is stolen
             } else {
                 Py_INCREF(Py_None);
                 PyTuple_SetItem(py_args, 4, Py_None); // The reference to the object in the tuple is stolen
@@ -436,8 +436,8 @@ static inline int target_memory_rw_debug(GDBState* s, unsigned long long thread,
             Py_DECREF(py_args);
             if (ret) {
                 // Create a string from the returned value 
-                char* tmp_str;
-                PyString_AsStringAndSize(ret, (char**) &tmp_str, &length);
+                const char* tmp_str;
+                tmp_str = PyUnicode_AsUTF8AndSize(ret, &length);
                 if (!is_write){
                     memcpy(buf, tmp_str, length < len? length : len);
                 }
@@ -456,7 +456,7 @@ static void gdb_set_cpu_pc(GDBState *s, target_ulong pc)
     int err = 0;
 
     // Calls python function to set cpu PC 
-    PyObject* py_module_name = PyString_FromString("vmi");
+    PyObject* py_module_name = PyUnicode_FromString("vmi");
     PyObject* py_vmi_module = PyImport_Import(py_module_name);
     Py_DECREF(py_module_name);
     PyObject* py_gdb_set_cpu_pc = PyObject_GetAttrString(py_vmi_module,"gdb_set_cpu_pc");
@@ -514,7 +514,7 @@ static void pyrebox_gdb_breakpoint_remove_all(void)
 
     int err = 0;
 
-    PyObject* py_module_name = PyString_FromString("vmi");
+    PyObject* py_module_name = PyUnicode_FromString("vmi");
     PyObject* py_vmi_module = PyImport_Import(py_module_name);
     Py_DECREF(py_module_name);
     PyObject* py_gdb_breakpoint_remove_all = PyObject_GetAttrString(py_vmi_module,"gdb_breakpoint_remove_all");
@@ -554,7 +554,7 @@ static int pyrebox_gdb_breakpoint_insert(GDBState* s, unsigned long long thread,
     int err = 0;
     int ret_val = 0;
 
-    PyObject* py_module_name = PyString_FromString("vmi");
+    PyObject* py_module_name = PyUnicode_FromString("vmi");
     PyObject* py_vmi_module = PyImport_Import(py_module_name);
     Py_DECREF(py_module_name);
     PyObject* py_gdb_breakpoint_insert = PyObject_GetAttrString(py_vmi_module,"gdb_breakpoint_insert");
@@ -607,7 +607,7 @@ static int pyrebox_gdb_breakpoint_remove(GDBState* s, unsigned long long thread,
     int ret_val = 0;
     pthread_mutex_lock(&pyrebox_mutex);
 
-    PyObject* py_module_name = PyString_FromString("vmi");
+    PyObject* py_module_name = PyUnicode_FromString("vmi");
     PyObject* py_vmi_module = PyImport_Import(py_module_name);
     Py_DECREF(py_module_name);
     PyObject* py_gdb_breakpoint_remove = PyObject_GetAttrString(py_vmi_module,"gdb_breakpoint_remove");
@@ -697,7 +697,7 @@ static int gdb_get_register_size(int gdb_register_index){
 
     pthread_mutex_lock(&pyrebox_mutex);
 
-    PyObject* py_module_name = PyString_FromString("vmi");
+    PyObject* py_module_name = PyUnicode_FromString("vmi");
     PyObject* py_vmi_module = PyImport_Import(py_module_name);
     Py_DECREF(py_module_name);
     PyObject* py_gdb_get_register_size = PyObject_GetAttrString(py_vmi_module,"gdb_get_register_size");
@@ -743,7 +743,7 @@ static int gdb_write_thread_register(GDBState* s, unsigned long long thread, int
 
     // Calls python function to check if a thread exists 
     // and returns 0 if not, 1 if it exists
-    PyObject* py_module_name = PyString_FromString("vmi");
+    PyObject* py_module_name = PyUnicode_FromString("vmi");
     PyObject* py_vmi_module = PyImport_Import(py_module_name);
     Py_DECREF(py_module_name);
     PyObject* py_gdb_write_thread_register = PyObject_GetAttrString(py_vmi_module,"gdb_write_thread_register");
@@ -756,7 +756,7 @@ static int gdb_write_thread_register(GDBState* s, unsigned long long thread, int
             //Add the gdb_register index
             PyTuple_SetItem(py_args, 2, PyLong_FromUnsignedLongLong(gdb_register_index)); // The reference to the object in the tuple is stolen
             //Add the buffer
-            PyTuple_SetItem(py_args, 3, PyString_FromStringAndSize((const char*)buf, (Py_ssize_t) len)); // The reference to the object in the tuple is stolen
+            PyTuple_SetItem(py_args, 3, PyUnicode_FromStringAndSize((const char*)buf, (Py_ssize_t) len)); // The reference to the object in the tuple is stolen
 
             PyObject* ret = PyObject_CallObject(py_gdb_write_thread_register, py_args);
             Py_DECREF(py_args);

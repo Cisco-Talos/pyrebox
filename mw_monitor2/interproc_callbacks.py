@@ -30,8 +30,8 @@ from utils import pp_debug
 from utils import pp_warning
 from utils import pp_print
 
-from interproc import interproc_data
-from interproc import interproc_config
+from .interproc import interproc_data
+from .interproc import interproc_config
 
 # ================================= UTILS ==================================
 
@@ -140,8 +140,8 @@ def ntcreateprocessret(params,
                        long_size):
 
     import volatility.win32.tasks as tasks
-    from interproc import interproc_start_monitoring_process
-    from core import Process
+    from .interproc import interproc_start_monitoring_process
+    from .core import Process
     from api import get_running_process
     from utils import get_addr_space
     import api
@@ -304,8 +304,8 @@ def ntcreateprocess(params,
 
 def ntopenprocessret(params, cm, callback_name, proc_hdl_p, proc, update_vads, long_size):
     import volatility.win32.tasks as tasks
-    from interproc import interproc_start_monitoring_process
-    from core import Process
+    from .interproc import interproc_start_monitoring_process
+    from .core import Process
     from api import get_running_process
     from utils import get_addr_space
     import api
@@ -419,7 +419,7 @@ def ntopenprocess(params, cm, proc, update_vads, long_size):
 
 def ntwritevirtualmemory(params, cm, proc, update_vads, long_size, reverse=False):
     import volatility.win32.tasks as tasks
-    from core import Injection
+    from .core import Injection
     import api
     from utils import get_addr_space
     global interproc_data
@@ -524,9 +524,9 @@ def ntreadvirtualmemory(params, cm, proc, update_vads, long_size):
 
 def ntreadfile(params, cm, proc, update_vads, long_size, is_write=False):
     import volatility.win32.tasks as tasks
-    from core import FileRead
-    from core import FileWrite
-    from core import File
+    from .core import FileRead
+    from .core import FileWrite
+    from .core import File
     from utils import get_addr_space
     import api
     TARGET_LONG_SIZE = api.get_os_bits() / 8
@@ -666,7 +666,7 @@ def ntmapviewofsection_ret(params,
                            proc,
                            update_vads,
                            long_size):
-    from core import SectionMap
+    from .core import SectionMap
     import api
     global interproc_data
     global interproc_config
@@ -720,7 +720,7 @@ def ntmapviewofsection(params, cm, proc, update_vads, long_size):
     import volatility.obj as obj
     import volatility.win32.tasks as tasks
     import volatility.plugins.overlays.windows.windows as windows
-    from core import Section
+    from .core import Section
     from utils import get_addr_space
     import api
     from api import CallbackManager

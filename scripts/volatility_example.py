@@ -21,7 +21,7 @@
 #
 # -------------------------------------------------------------------------------
 
-from __future__ import print_function
+
 from utils import get_addr_space
 from api import CallbackManager
 

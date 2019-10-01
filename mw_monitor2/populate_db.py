@@ -72,12 +72,12 @@ for child in root:
                                     count += 1
                                 else:
                                     not_in_db += 1
-                                    print "%s:%s:%s" % (module.upper(),name.upper(),arg_name.upper())
+                                    print("%s:%s:%s" % (module.upper(),name.upper(),arg_name.upper()))
                         else:
                             discarded += 1
 
-print "%d elements updated" % count
-print "discarded %d" % discarded
-print "not in db %d" % not_in_db
+print("%d elements updated" % count)
+print("discarded %d" % discarded)
+print("not in db %d" % not_in_db)
 conn.commit()
 conn.close()
