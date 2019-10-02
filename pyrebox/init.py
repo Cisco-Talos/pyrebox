@@ -81,6 +81,7 @@ class Module:
     def reload(self):
         import api_internal
         from ipython_shell import add_command
+        from imp import reload
         if self.__module is not None:
             pp_print("[*]  Reloading python module %s\n" % self.__module_name)
             if self.__loaded is True:
