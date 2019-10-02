@@ -222,11 +222,7 @@ class BasicArgument(AbstractArgument):
         # Type ID
         self.typ = typ
         # Normalize name
-        if isinstance(arg_name, str):
-            self.arg_name = unicodedata.normalize(
-                'NFKD', arg_name).encode('ascii', 'ignore')
-        else:
-            self.arg_name = arg_name
+        self.arg_name = unicodedata.normalize('NFKD', arg_name)
 
     def get_id(self):
         return self.typ
@@ -352,17 +348,10 @@ class Struct(AbstractArgument):
         self.typ = typ
         self.size = size / 8
 
-        if isinstance(name, str):
-            self.name = unicodedata.normalize(
-                'NFKD', name).encode('ascii', 'ignore')
-        else:
-            self.name = name
+        self.name = unicodedata.normalize('NFKD', name)
 
-        if isinstance(arg_name, str):
-            self.arg_name = unicodedata.normalize(
-                'NFKD', arg_name).encode('ascii', 'ignore')
-        else:
-            self.arg_name = arg_name
+        # Normalize arg_name
+        self.arg_name = unicodedata.normalize('NFKD', arg_name)
 
         self.align = align
         self.flags = flags
@@ -405,16 +394,13 @@ class Union(AbstractArgument):
         self.val = val
         self.typ = typ
         self.size = size / 8
-        if isinstance(name, str):
-            self.name = unicodedata.normalize(
-                'NFKD', name).encode('ascii', 'ignore')
-        else:
-            self.name = name
-        if isinstance(arg_name, str):
-            self.arg_name = unicodedata.normalize(
-                'NFKD', arg_name).encode('ascii', 'ignore')
-        else:
-            self.arg_name = arg_name
+
+        # Normalize name
+        self.name = unicodedata.normalize('NFKD', name)
+
+        # Normalize arg_name
+        self.arg_name = unicodedata.normalize('NFKD', arg_name)
+
         self.align = align
         self.flags = flags
         self.fields = []
@@ -455,11 +441,10 @@ class Typedef(AbstractArgument):
         self.pgd = pgd
         self.val = val
         self.typ = typ
-        if isinstance(arg_name, str):
-            self.arg_name = unicodedata.normalize(
-                'NFKD', arg_name).encode('ascii', 'ignore')
-        else:
-            self.arg_name = arg_name
+
+        # Normalize arg_name
+        self.arg_name = unicodedata.normalize('NFKD', arg_name)
+
         self.equivalent_arg = equivalent_arg
 
     def get_id(self):
@@ -499,11 +484,10 @@ class Array(AbstractArgument):
         self.pgd = pgd
         self.val = val
         self.typ = typ
-        if isinstance(arg_name, str):
-            self.arg_name = unicodedata.normalize(
-                'NFKD', arg_name).encode('ascii', 'ignore')
-        else:
-            self.arg_name = arg_name
+
+        # Normalize arg_name
+        self.arg_name = unicodedata.normalize('NFKD', arg_name)
+
         self.max = max
         self.size = size
         self.align = align
@@ -548,11 +532,10 @@ class ParamStr(AbstractArgument):
         self.addr = addr
         self.pgd = pgd
         self.val = val
-        if isinstance(arg_name, str):
-            self.arg_name = unicodedata.normalize(
-                'NFKD', arg_name).encode('ascii', 'ignore')
-        else:
-            self.arg_name = arg_name
+
+        # Normalize arg_name
+        self.arg_name = unicodedata.normalize('NFKD', arg_name)
+
         self.fields = []
 
     def get_addr(self):
@@ -612,11 +595,8 @@ class Pointer(AbstractArgument):
         self.val = val
         self.typ = typ
 
-        if isinstance(arg_name, str):
-            self.arg_name = unicodedata.normalize(
-                'NFKD', arg_name).encode('ascii', 'ignore')
-        else:
-            self.arg_name = arg_name
+        # Normalize arg_name
+        self.arg_name = unicodedata.normalize('NFKD', arg_name)
 
         self.size = size / 8
         self.align = align
@@ -720,11 +700,8 @@ class Reference(AbstractArgument):
         self.val = val
         self.typ = typ
 
-        if isintance(arg_name, str):
-            self.arg_name = unicodedata.normalize(
-                'NFKD', arg_name).encode('ascii', 'ignore')
-        else:
-            self.arg_name = arg_name
+        # Normalize arg_name
+        self.arg_name = unicodedata.normalize('NFKD', arg_name)
 
         self.size = size / 8
         self.align = align
@@ -773,12 +750,10 @@ class Enumeration(AbstractArgument):
         self.pgd = pgd
         self.val = val
         self.cursor = cursor
-        # Name of the argument
-        if isinstance(arg_name, str):
-            self.arg_name = unicodedata.normalize(
-                'NFKD', arg_name).encode('ascii', 'ignore')
-        else:
-            self.arg_name = arg_name
+
+        # Normalize arg_name
+        self.arg_name = unicodedata.normalize('NFKD', arg_name)
+
         self.typ = typ
         # Name of the enumeration value
         self.name = name
