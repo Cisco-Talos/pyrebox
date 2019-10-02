@@ -459,7 +459,7 @@ def windows_read_memory_mapped(pgd, addr, size, pte, is_pae, bitness):
     offset_on_vad = addr - vad.Start
     page_offset_on_vad = (offset_on_vad - (offset_on_vad & 0xFFF))
     # Consider 4 KiB pages
-    ppte_index = page_offset_on_vad / 0x1000
+    ppte_index = int(page_offset_on_vad / 0x1000)
     
     if ppte_index >= vad.ControlArea.Segment.TotalNumberOfPtes.v():
         return None
@@ -486,9 +486,9 @@ def windows_read_memory_mapped(pgd, addr, size, pte, is_pae, bitness):
         # to.
         ppte_addr = subsect.SubsectionBase.v()
         if bitness == 32 and is_pae:
-            ppte_index = (subsect.SubsectionBase.v() - vad.ControlArea.Segment.PrototypePte.v()) / 8
+            ppte_index = int((subsect.SubsectionBase.v() - vad.ControlArea.Segment.PrototypePte.v()) / 8)
         else:
-            ppte_index = (subsect.SubsectionBase.v() - vad.ControlArea.Segment.PrototypePte.v()) / addr_space.profile.vtypes["_MMPTE_PROTOTYPE"][0]
+            ppte_index = int((subsect.SubsectionBase.v() - vad.ControlArea.Segment.PrototypePte.v()) / addr_space.profile.vtypes["_MMPTE_PROTOTYPE"][0])
 
         subsection_base = vad.Start + (ppte_index * 0x1000)
         subsection_size = subsect.PtesInSubsection.v() * 0x1000

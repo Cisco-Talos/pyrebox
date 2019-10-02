@@ -235,7 +235,7 @@ class Process:
 
     def __init__(self, proc_name):
         import api
-        self.TARGET_LONG_SIZE = api.get_os_bits() / 8
+        self.TARGET_LONG_SIZE = int(api.get_os_bits() / 8)
         self.__proc_num = Process.proc_counter
         Process.proc_counter += 1
         self.__proc_name = proc_name
@@ -753,7 +753,7 @@ class Section:
         import api
         global interproc_data
 
-        TARGET_LONG_SIZE = api.get_os_bits() / 8
+        TARGET_LONG_SIZE = int(api.get_os_bits() / 8)
 
         # Volatility object representing the section
         self.__section_object = section_object

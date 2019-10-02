@@ -346,7 +346,7 @@ class Struct(AbstractArgument):
         self.pgd = pgd
         self.val = val
         self.typ = typ
-        self.size = size / 8
+        self.size = int(size / 8)
 
         self.name = unicodedata.normalize('NFKD', name)
 
@@ -393,7 +393,7 @@ class Union(AbstractArgument):
         self.pgd = pgd
         self.val = val
         self.typ = typ
-        self.size = size / 8
+        self.size = int(size / 8)
 
         # Normalize name
         self.name = unicodedata.normalize('NFKD', name)
@@ -598,7 +598,7 @@ class Pointer(AbstractArgument):
         # Normalize arg_name
         self.arg_name = unicodedata.normalize('NFKD', arg_name)
 
-        self.size = size / 8
+        self.size = int(size / 8)
         self.align = align
         self.i_was_dereferenced = False
         self.dereferenced_type = None
@@ -703,7 +703,7 @@ class Reference(AbstractArgument):
         # Normalize arg_name
         self.arg_name = unicodedata.normalize('NFKD', arg_name)
 
-        self.size = size / 8
+        self.size = int(size / 8)
         self.align = align
         self.dereferenced_type = dereferenced_type
 
@@ -757,7 +757,7 @@ class Enumeration(AbstractArgument):
         self.typ = typ
         # Name of the enumeration value
         self.name = name
-        self.size = size / 8
+        self.size = int(size / 8)
 
     def __len__(self):
         return self.size
@@ -882,7 +882,7 @@ class ArgumentParser:
                         if sub_field[3] == 0 and sub_field[1] > 1:
                             continue
 
-                        offset = sub_field[3] / 8
+                        offset = int(sub_field[3] / 8)
 
                         new_struct.add_field(offset,
                                              self.generate_arg(sub_field[2],
@@ -921,7 +921,7 @@ class ArgumentParser:
                                    "from UnionsMembers where UnionId =  %d order by Id ASC" % (arg_typ))
                     sub_fields = self.c.fetchall()
                     for sub_field in sub_fields:
-                        offset = sub_field[3] / 8
+                        offset = int(sub_field[3] / 8)
                         new_union.add_field(offset,
                                             self.generate_arg(sub_field[2],
                                                               sub_field[6],
@@ -977,7 +977,7 @@ class ArgumentParser:
                                 arg_num=arg_num)
 
                 if addr is not None:
-                    size_of_element = res[2] / res[1]
+                    size_of_element = int(res[2] / res[1])
                     for i in range(0, res[1]):
                         the_arr.add_field(i,
                                           self.generate_arg("",
@@ -1069,7 +1069,7 @@ class ArgumentParser:
 
     def populate_args(self):
         import api
-        TARGET_LONG_SIZE = api.get_os_bits() / 8
+        TARGET_LONG_SIZE = int(api.get_os_bits() / 8)
 
         if self.func_id is None:
             return []

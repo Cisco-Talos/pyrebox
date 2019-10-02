@@ -370,7 +370,7 @@ def gdb_read_thread_register(thread_id, thread_list, gdb_register_index):
     # If it is not mapped to a CPU register or KTRAP_FRAME value,
     # we just return 0s.
     if gdb_register_index not in gdb_map:
-        return "\0" * (conf_m.bitness / 8)
+        return "\0" * int(conf_m.bitness / 8)
     else:
         str_size = gdb_map[gdb_register_index][2]
 

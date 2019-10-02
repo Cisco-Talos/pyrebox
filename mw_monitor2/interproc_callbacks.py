@@ -41,7 +41,7 @@ def read_return_parameter(cpu):
         Returns the return parameter (EAX/RAX)
     '''
     import api
-    TARGET_LONG_SIZE = api.get_os_bits() / 8
+    TARGET_LONG_SIZE = int(api.get_os_bits() / 8)
     if TARGET_LONG_SIZE == 4:
         return cpu.EAX
     elif TARGET_LONG_SIZE == 8:
@@ -56,7 +56,7 @@ def read_parameters(cpu, num_params, long_size):
         Reads parameters from the registers/stack
     '''
     import api
-    TARGET_LONG_SIZE = api.get_os_bits() / 8
+    TARGET_LONG_SIZE = int(api.get_os_bits() / 8)
     if long_size == 4:
         # All the parameters are on the stack
         # We need to read num_params values + the return address
@@ -148,7 +148,7 @@ def ntcreateprocessret(params,
     global interproc_data
     global interproc_config
 
-    TARGET_LONG_SIZE = api.get_os_bits() / 8
+    TARGET_LONG_SIZE = int(api.get_os_bits() / 8)
 
     cpu_index = params["cpu_index"]
     cpu = params["cpu"]
@@ -313,7 +313,7 @@ def ntopenprocessret(params, cm, callback_name, proc_hdl_p, proc, update_vads, l
     global interproc_config
 
 
-    TARGET_LONG_SIZE = api.get_os_bits() / 8
+    TARGET_LONG_SIZE = int(api.get_os_bits() / 8)
 
     cpu_index = params["cpu_index"]
     cpu = params["cpu"]
@@ -426,7 +426,7 @@ def ntwritevirtualmemory(params, cm, proc, update_vads, long_size, reverse=False
     global interproc_config
 
 
-    TARGET_LONG_SIZE = api.get_os_bits() / 8
+    TARGET_LONG_SIZE = int(api.get_os_bits() / 8)
 
     cpu_index = params["cpu_index"]
     cpu = params["cpu"]
@@ -529,7 +529,7 @@ def ntreadfile(params, cm, proc, update_vads, long_size, is_write=False):
     from .core import File
     from utils import get_addr_space
     import api
-    TARGET_LONG_SIZE = api.get_os_bits() / 8
+    TARGET_LONG_SIZE = int(api.get_os_bits() / 8)
     global interproc_data
     global interproc_config
 
@@ -671,7 +671,7 @@ def ntmapviewofsection_ret(params,
     global interproc_data
     global interproc_config
 
-    TARGET_LONG_SIZE = api.get_os_bits() / 8
+    TARGET_LONG_SIZE = int(api.get_os_bits() / 8)
 
     cpu_index = params["cpu_index"]
     cpu = params["cpu"]
@@ -727,7 +727,7 @@ def ntmapviewofsection(params, cm, proc, update_vads, long_size):
     global interproc_data
     global interproc_config
 
-    TARGET_LONG_SIZE = api.get_os_bits() / 8
+    TARGET_LONG_SIZE = int(api.get_os_bits() / 8)
 
     cpu_index = params["cpu_index"]
     cpu = params["cpu"]
@@ -841,7 +841,7 @@ def ntunmapviewofsection(params, cm, proc, update_vads, long_size):
     global interproc_data
     global interproc_config
 
-    TARGET_LONG_SIZE = api.get_os_bits() / 8
+    TARGET_LONG_SIZE = int(api.get_os_bits() / 8)
 
     cpu_index = params["cpu_index"]
     cpu = params["cpu"]
@@ -995,7 +995,7 @@ def ntallocatevirtualmemory_ret(params,
     global interproc_data
     global interproc_config
 
-    TARGET_LONG_SIZE = api.get_os_bits() / 8
+    TARGET_LONG_SIZE = int(api.get_os_bits() / 8)
 
     cpu_index = params["cpu_index"]
     cpu = params["cpu"]
@@ -1044,7 +1044,7 @@ def ntallocatevirtualmemory(params,
     global interproc_data
     global interproc_config
 
-    TARGET_LONG_SIZE = api.get_os_bits() / 8
+    TARGET_LONG_SIZE = int(api.get_os_bits() / 8)
 
     cpu_index = params["cpu_index"]
     cpu = params["cpu"]

@@ -476,7 +476,7 @@ class GuestAgentPlugin(object):
         """
             Write a char* arg[] array.
         """
-        TARGET_LONG_SIZE = api.get_os_bits() / 8
+        TARGET_LONG_SIZE = int(api.get_os_bits() / 8)
         array_ptr = vaddr
         strings_ptr = vaddr + TARGET_LONG_SIZE * (len(array) + 1)
         for i, s in enumerate(array):
@@ -945,7 +945,7 @@ class GuestAgentPlugin(object):
             buf = cpu.RAX
             size = cpu.RBX
 
-        TARGET_LONG_SIZE = api.get_os_bits() / 8
+        TARGET_LONG_SIZE = int(api.get_os_bits() / 8)
 
         args = self.__file_to_execute["args"]
 
@@ -1003,7 +1003,7 @@ class GuestAgentPlugin(object):
             buf = cpu.RAX
             size = cpu.RBX
 
-        TARGET_LONG_SIZE = api.get_os_bits() / 8
+        TARGET_LONG_SIZE = int(api.get_os_bits() / 8)
 
         env = self.__file_to_execute["env"]
 

@@ -47,7 +47,7 @@ import functools
 
 # Determine TARGET_LONG_SIZE
 from api import get_os_bits
-TARGET_LONG_SIZE = get_os_bits() / 8
+TARGET_LONG_SIZE = int(get_os_bits() / 8)
 
 # Our helpers, that leverage volatility
 from .vads import VADRegion, get_vads

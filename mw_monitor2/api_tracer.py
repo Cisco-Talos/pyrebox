@@ -31,7 +31,7 @@ import pickle
 
 # Determine TARGET_LONG_SIZE
 from api import get_os_bits
-TARGET_LONG_SIZE = get_os_bits() / 8
+TARGET_LONG_SIZE = int(get_os_bits() / 8)
 
 # Script requirements
 requirements = ["mw_monitor2.interproc"]
@@ -85,8 +85,6 @@ def serialize_calls():
 def log_calls():
     import api
     from .interproc import interproc_data
-
-    TARGET_LONG_SIZE = api.get_os_bits() / 8
 
     f_out = open(APITRACER_TEXT_LOG_PATH, "w")
 
@@ -184,7 +182,6 @@ class APICallData:
 
     def __str__(self):
         import api
-        TARGET_LONG_SIZE = api.get_os_bits() / 8
         try:
             outstr = ""
             if TARGET_LONG_SIZE == 4:
@@ -225,7 +222,6 @@ class APICallData:
 def opcodes_ret(addr_from, addr_to, data, callback_name, argument_parser, mod, fun, proc, params):
     import api
     global cm
-    TARGET_LONG_SIZE = api.get_os_bits() / 8
 
     cpu_index = params["cpu_index"]
     cpu = params["cpu"]
@@ -256,7 +252,6 @@ def opcodes(params, cb_name, proc):
     global APITRACER_RULES
     global APITRACER_ANTI_STOLEN
 
-    TARGET_LONG_SIZE = api.get_os_bits() / 8
 
     cpu_index = params["cpu_index"]
     cpu = params["cpu"]

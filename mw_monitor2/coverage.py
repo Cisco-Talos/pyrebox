@@ -28,7 +28,7 @@ import functools
 
 # Determine TARGET_LONG_SIZE
 from api import get_os_bits
-TARGET_LONG_SIZE = get_os_bits() / 8
+TARGET_LONG_SIZE = int(get_os_bits() / 8)
 
 # Script requirements
 requirements = ["mw_monitor2.interproc"]
@@ -145,7 +145,6 @@ def log_coverage():
 
 def block_executed(params, proc=None):
     import api
-    TARGET_LONG_SIZE = api.get_os_bits() / 8
 
     cpu_index = params["cpu_index"]
     cpu = params["cpu"]
