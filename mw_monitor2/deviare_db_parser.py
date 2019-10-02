@@ -297,7 +297,7 @@ class BasicArgument(AbstractArgument):
                 try:
                     parsed_value = val.decode("utf-16")
                 except Exception:
-                    parsed_value = "\x00"
+                    parsed_value = ""
             self.val = parsed_value
 
     def get_val(self):

@@ -203,3 +203,14 @@ docker-src.*
 /qemu/roms/edk2
 /qemu/slirp
 /qemu/roms/SLOF
+
+qemu/qapi-event.c
+qemu/qapi-event.h
+qemu/qapi-types.c
+qemu/qapi-types.h
+qemu/qapi-visit.c
+qemu/qapi-visit.h
+qemu/qmp-commands.h
+qemu/qmp-introspect.c
+qemu/qmp-introspect.h
+qemu/qmp-marshal.c

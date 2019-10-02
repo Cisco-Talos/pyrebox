@@ -598,11 +598,11 @@ def initialize_callbacks(module_hdl, printer):
             if "action" not in ru or "mod" not in ru or "fun" not in ru:
                 raise Exception("Invalid rules configuration: each rule must contain the keywords: action, mod, and fun")
             if not (isinstance(ru["action"], str)):
-                raise Exception("Invalid rules configuration: action keyword must be str or unicode")
+                raise Exception("Invalid rules configuration: action keyword must be str")
             if not (isinstance(ru["mod"], str)):
-                raise Exception("Invalid rules configuration: mod keyword must be str or unicode")
+                raise Exception("Invalid rules configuration: mod keyword must be str")
             if not (isinstance(ru["fun"], str)):
-                raise Exception("Invalid rules configuration: fun keyword must be str or unicode")
+                raise Exception("Invalid rules configuration: fun keyword must be str")
             for kw in ru:
                 if kw not in ["action", "mod", "fun", "from_mod"]:
                     raise Exception("Invalid rules configuration: Invalid keyword: %s" % kw)

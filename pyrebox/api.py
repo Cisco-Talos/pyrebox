@@ -771,7 +771,7 @@ def send_key(keys, hold_time = -1):
     """ Send a keystroke
     
         :param keys: Keys to press. Example: ctrl-alt-f1. For a list of valid keys: run sendkey [tab] on qemu monitor.
-        :type keys: str or unicode
+        :type keys: str
 
         :param hold_time: Optional. Hold time for the key, in milliseconds. Default: 100 ms
         :type hold_time: int
@@ -1331,7 +1331,7 @@ class BP:
             if self.addr is None:
                 raise ValueError("Could not obtain absolute address for the symbol")
         else:
-            raise ValueError("The addr parameter has an invalid type, must be int, str or unicode")
+            raise ValueError("The addr parameter has an invalid type, must be int, str")
 
         self.en = False
         if (typ > self.EXECUTION) and size == 0:
@@ -1560,7 +1560,7 @@ class GuestFile:
         ''' Returns the name of the file 
 
             :return: The name of the file
-            :rtype: str or unicode
+            :rtype: str
         '''
         return self.__name
 

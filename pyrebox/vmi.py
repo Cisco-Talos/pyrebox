@@ -297,7 +297,7 @@ def does_thread_exist(thread_id, thread_list):
             return True
     return False
 
-def str_to_val(buf, str_size):
+def bytes_to_val(buf, str_size):
     import struct
     from utils import ConfigurationManager as conf_m
 
@@ -310,7 +310,7 @@ def str_to_val(buf, str_size):
     elif str_size == 8:
         struct_letter = "Q"
     else:
-        raise NotImplementedError("[val_to_str - gdb_write_thread_register] Not implemented")
+        raise NotImplementedError("[bytes_to_val - gdb_write_thread_register] Not implemented")
 
     if conf_m.endianess == "l":
         struct_letter = "<" + struct_letter
@@ -323,7 +323,7 @@ def str_to_val(buf, str_size):
         raise e
     return ret_val 
 
-def val_to_str(val, str_size):
+def val_to_bytes(val, str_size):
     import struct
     from utils import ConfigurationManager as conf_m
 
@@ -336,7 +336,7 @@ def val_to_str(val, str_size):
     elif str_size == 8:
         struct_letter = "Q"
     else:
-        raise NotImplementedError("[val_to_str - gdb_read_thread_register] Not implemented")
+        raise NotImplementedError("[val_to_bytes - gdb_read_thread_register] Not implemented")
 
     if conf_m.endianess == "l":
         struct_letter = "<" + struct_letter
@@ -404,7 +404,7 @@ def gdb_read_thread_register(thread_id, thread_list, gdb_register_index):
             val = 0
         if val == -1:
             val = 0
-        return val_to_str(val, str_size)
+        return val_to_bytes(val, str_size)
     # If the thread is not running, read it from the KTRAP_FRAME
     else:
         if os_family == OS_FAMILY_WIN:
@@ -416,7 +416,7 @@ def gdb_read_thread_register(thread_id, thread_list, gdb_register_index):
                 pp_debug("Exception after win_read_thread_register_from_ktrap_frame: " + str(e))
             if val == -1:
                 val = 0
-            return val_to_str(val, str_size)
+            return val_to_bytes(val, str_size)
         elif os_family == OS_FAMILY_LINUX:
             raise NotImplementedError("gdb_read_thread_register not implemented yet on Linux guests")
 
@@ -459,7 +459,7 @@ def gdb_write_thread_register(thread_id, thread_list, gdb_register_index, buf):
         return None
 
     if cpu_index is not None:
-        val = str_to_val(buf, str_size)
+        val = bytes_to_val(buf, str_size)
         w_r(cpu_index, gdb_map[gdb_register_index][0], val)
         return str_size
     # If the thread is not running, read it from the KTRAP_FRAME
@@ -514,7 +514,7 @@ def gdb_set_cpu_pc(thread_id, thread_list, val):
         if os_family == OS_FAMILY_WIN:
             from windows_vmi import win_read_thread_register_from_ktrap_frame
             try:
-                bytes_written = win_write_thread_register_in_ktrap_frame(thread, gdb_map[gdb_register_index][1], val_to_str(val, str_size), str_size)
+                bytes_written = win_write_thread_register_in_ktrap_frame(thread, gdb_map[gdb_register_index][1], val_to_bytes(val, str_size), str_size)
             except Exception as e:
                 pp_debug("Exception after win_write_thread_register_in_ktrap_frame: " + str(e))
             if bytes_written < 0:
