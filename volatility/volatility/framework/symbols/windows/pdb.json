@@ -1,0 +1,1598 @@
+{
+  "symbols": {
+  },
+  "user_types": {
+    "pascal_string": {
+      "fields": {
+        "length": {
+          "offset": 0,
+          "type": {
+            "kind": "base",
+            "name": "unsigned char"
+          }
+        },
+        "string": {
+          "offset": 1,
+          "type": {
+            "kind": "base",
+            "name": "string"
+          }
+        }
+      },
+      "kind": "struct",
+      "size": 2
+    },
+    "Type_Properties": {
+      "fields": {
+        "packed": {
+          "offset": 0,
+          "type": {
+            "bit_length": 1,
+            "bit_position": 0,
+            "kind": "bitfield",
+            "type": {
+              "kind": "base",
+              "name": "unsigned short"
+            }
+          }
+        },
+        "constructors": {
+          "offset": 0,
+          "type": {
+            "bit_length": 1,
+            "bit_position": 1,
+            "kind": "bitfield",
+            "type": {
+              "kind": "base",
+              "name": "unsigned short"
+            }
+          }
+        },
+        "overloaded_operators": {
+          "offset": 0,
+          "type": {
+            "bit_length": 1,
+            "bit_position": 2,
+            "kind": "bitfield",
+            "type": {
+              "kind": "base",
+              "name": "unsigned short"
+            }
+          }
+        },
+        "nested_type": {
+          "offset": 0,
+          "type": {
+            "bit_length": 1,
+            "bit_position": 3,
+            "kind": "bitfield",
+            "type": {
+              "kind": "base",
+              "name": "unsigned short"
+            }
+          }
+        },
+        "contains_nested": {
+          "offset": 0,
+          "type": {
+            "bit_length": 1,
+            "bit_position": 4,
+            "kind": "bitfield",
+            "type": {
+              "kind": "base",
+              "name": "unsigned short"
+            }
+          }
+        },
+        "overloaded_assignment": {
+          "offset": 0,
+          "type": {
+            "bit_length": 1,
+            "bit_position": 5,
+            "kind": "bitfield",
+            "type": {
+              "kind": "base",
+              "name": "unsigned short"
+            }
+          }
+        },
+        "overloaded_casting": {
+          "offset": 0,
+          "type": {
+            "bit_length": 1,
+            "bit_position": 6,
+            "kind": "bitfield",
+            "type": {
+              "kind": "base",
+              "name": "unsigned short"
+            }
+          }
+        },
+        "forward_reference": {
+          "offset": 0,
+          "type": {
+            "bit_length": 1,
+            "bit_position": 7,
+            "kind": "bitfield",
+            "type": {
+              "kind": "base",
+              "name": "unsigned short"
+            }
+          }
+        },
+        "scoped_definition": {
+          "offset": 0,
+          "type": {
+            "bit_length": 1,
+            "bit_position": 8,
+            "kind": "bitfield",
+            "type": {
+              "kind": "base",
+              "name": "unsigned short"
+            }
+          }
+        },
+        "unique_name": {
+          "offset": 0,
+          "type": {
+            "bit_length": 1,
+            "bit_position": 9,
+            "kind": "bitfield",
+            "type": {
+              "kind": "base",
+              "name": "unsigned short"
+            }
+          }
+        },
+        "sealed": {
+          "offset": 0,
+          "type": {
+            "bit_length": 1,
+            "bit_position": 10,
+            "kind": "bitfield",
+            "type": {
+              "kind": "base",
+              "name": "unsigned short"
+            }
+          }
+        },
+        "hfa": {
+          "offset": 0,
+          "type": {
+            "bit_length": 2,
+            "bit_position": 11,
+            "kind": "bitfield",
+            "type": {
+              "kind": "base",
+              "name": "unsigned short"
+            }
+          }
+        },
+        "intrinsic_type": {
+          "offset": 0,
+          "type": {
+            "bit_length": 1,
+            "bit_position": 12,
+            "kind": "bitfield",
+            "type": {
+              "kind": "base",
+              "name": "unsigned short"
+            }
+          }
+        },
+        "mocom": {
+          "offset": 0,
+          "type": {
+            "bit_length": 2,
+            "bit_position": 13,
+            "kind": "bitfield",
+            "type": {
+              "kind": "base",
+              "name": "unsigned short"
+            }
+          }
+        }
+      },
+      "kind": "struct",
+      "size": 2
+    },
+    "SI_PERSIST": {
+      "fields": {
+        "StreamInfoSize": {
+          "offset": 0,
+          "type": {
+            "kind": "base",
+            "name": "long"
+          }
+        },
+        "mpspnpn": {
+          "offset": 4,
+          "type": {
+            "kind": "base",
+            "name": "unsigned long"
+          }
+        }
+      },
+      "kind": "struct",
+      "size": 8
+    },
+    "MSF_HDR": {
+      "fields": {
+        "Magic": {
+          "offset": 0,
+          "type": {
+            "count": 44,
+            "kind": "array",
+            "subtype": {
+              "kind": "base",
+              "name": "unsigned char"
+            }
+          }
+        },
+        "PageSize": {
+          "offset": 44,
+          "type": {
+            "kind": "base",
+            "name": "long"
+          }
+        },
+        "FreePageMapNumber": {
+          "offset": 48,
+          "type": {
+            "kind": "base",
+            "name": "unsigned short"
+          }
+        },
+        "NumPages": {
+          "offset": 50,
+          "type": {
+            "kind": "base",
+            "name": "unsigned short"
+          }
+        },
+        "StreamInfo": {
+          "offset": 52,
+          "type": {
+            "kind": "struct",
+            "name": "SI_PERSIST"
+          }
+        }
+      },
+      "kind": "struct",
+      "size": 60
+    },
+    "BIG_MSF_HDR": {
+      "fields": {
+        "Magic": {
+          "offset": 0,
+          "type": {
+            "count": 30,
+            "kind": "array",
+            "subtype": {
+              "kind": "base",
+              "name": "unsigned char"
+            }
+          }
+        },
+        "PageSize": {
+          "offset": 32,
+          "type": {
+            "kind": "base",
+            "name": "long"
+          }
+        },
+        "FreePageMapNumber": {
+          "offset": 36,
+          "type": {
+            "kind": "base",
+            "name": "unsigned long"
+          }
+        },
+        "NumPages": {
+          "offset": 40,
+          "type": {
+            "kind": "base",
+            "name": "unsigned long"
+          }
+        },
+        "StreamInfo": {
+          "offset": 44,
+          "type": {
+            "kind": "struct",
+            "name": "SI_PERSIST"
+          }
+        }
+      },
+      "kind": "struct",
+      "size": 52
+    },
+    "TPI_HEADER": {
+      "fields": {
+        "version": {
+          "offset": 0,
+          "type": {
+            "kind": "base",
+            "name": "unsigned long"
+          }
+        },
+        "header_size": {
+          "offset": 4,
+          "type": {
+            "kind": "base",
+            "name": "unsigned long"
+          }
+        },
+        "index_min": {
+          "offset": 8,
+          "type": {
+            "kind": "base",
+            "name": "unsigned long"
+          }
+        },
+        "index_max": {
+          "offset": 12,
+          "type": {
+            "kind": "base",
+            "name": "unsigned long"
+          }
+        },
+        "gprec_size": {
+          "offset": 16,
+          "type": {
+            "kind": "base",
+            "name": "unsigned long"
+          }
+        },
+        "tpi_hash_stream": {
+          "offset": 20,
+          "type": {
+            "kind": "base",
+            "name": "unsigned short"
+          }
+        },
+        "tpi_hash_pad_stream": {
+          "offset": 22,
+          "type": {
+            "kind": "base",
+            "name": "unsigned short"
+          }
+        },
+        "hash_key_size": {
+          "offset": 24,
+          "type": {
+            "kind": "base",
+            "name": "unsigned long"
+          }
+        },
+        "hash_bucket_size": {
+          "offset": 28,
+          "type": {
+            "kind": "base",
+            "name": "unsigned long"
+          }
+        },
+        "hash_values_offset": {
+          "offset": 32,
+          "type": {
+            "kind": "base",
+            "name": "unsigned long"
+          }
+        },
+        "hash_values_size": {
+          "offset": 36,
+          "type": {
+            "kind": "base",
+            "name": "unsigned long"
+          }
+        },
+        "ti_off_offset": {
+          "offset": 40,
+          "type": {
+            "kind": "base",
+            "name": "unsigned long"
+          }
+        },
+        "ti_off_size": {
+          "offset": 44,
+          "type": {
+            "kind": "base",
+            "name": "unsigned long"
+          }
+        },
+        "hash_adj_offset": {
+          "offset": 48,
+          "type": {
+            "kind": "base",
+            "name": "unsigned long"
+          }
+        },
+        "hash_adj_size": {
+          "offset": 52,
+          "type": {
+            "kind": "base",
+            "name": "unsigned long"
+          }
+        }
+      },
+      "kind": "struct",
+      "size": 56
+    },
+    "DBI_HEADER": {
+      "fields": {
+        "magic": {
+          "offset": 0,
+          "type": {
+            "count": 4,
+            "kind": "array",
+            "subtype": {
+              "kind": "base",
+              "name": "unsigned char"
+            }
+          }
+        },
+        "version": {
+          "offset": 4,
+          "type": {
+            "kind": "base",
+            "name": "unsigned long"
+          }
+        },
+        "age": {
+          "offset": 8,
+          "type": {
+            "kind": "base",
+            "name": "unsigned long"
+          }
+        },
+        "gssymStream": {
+          "offset": 12,
+          "type": {
+            "kind": "base",
+            "name": "unsigned short"
+          }
+        },
+        "vers": {
+          "offset": 14,
+          "type": {
+            "kind": "base",
+            "name": "unsigned short"
+          }
+        },
+        "pssymStream": {
+          "offset": 16,
+          "type": {
+            "kind": "base",
+            "name": "unsigned short"
+          }
+        },
+        "pdbver": {
+          "offset": 18,
+          "type": {
+            "kind": "base",
+            "name": "unsigned short"
+          }
+        },
+        "symrecStream": {
+          "offset": 20,
+          "type": {
+            "kind": "base",
+            "name": "unsigned short"
+          }
+        },
+        "pdbver2": {
+          "offset": 22,
+          "type": {
+            "kind": "base",
+            "name": "unsigned short"
+          }
+        },
+        "module_size": {
+          "offset": 24,
+          "type": {
+            "kind": "base",
+            "name": "unsigned long"
+          }
+        },
+        "secconSize": {
+          "offset": 28,
+          "type": {
+            "kind": "base",
+            "name": "unsigned long"
+          }
+        },
+        "secmapSize": {
+          "offset": 32,
+          "type": {
+            "kind": "base",
+            "name": "unsigned long"
+          }
+        },
+        "filinfSize": {
+          "offset": 36,
+          "type": {
+            "kind": "base",
+            "name": "unsigned long"
+          }
+        },
+        "tsmapSize": {
+          "offset": 40,
+          "type": {
+            "kind": "base",
+            "name": "unsigned long"
+          }
+        },
+        "mfcIndex": {
+          "offset": 44,
+          "type": {
+            "kind": "base",
+            "name": "unsigned long"
+          }
+        },
+        "dbghdrSize": {
+          "offset": 48,
+          "type": {
+            "kind": "base",
+            "name": "unsigned long"
+          }
+        },
+        "ecinfoSize": {
+          "offset": 52,
+          "type": {
+            "kind": "base",
+            "name": "unsigned long"
+          }
+        },
+        "flags": {
+          "offset": 56,
+          "type": {
+            "kind": "base",
+            "name": "unsigned short"
+          }
+        },
+        "machine": {
+          "offset": 58,
+          "type": {
+            "kind": "enum",
+            "name": "MACHINE_TYPE"
+          }
+        },
+        "reserved": {
+          "offset": 60,
+          "type": {
+            "kind": "base",
+            "name": "unsigned long"
+          }
+        }
+      },
+      "kind": "struct",
+      "size": 64
+    },
+    "DBI_DBG_HEADER": {
+      "fields": {
+        "snFPO": {
+          "offset": 0,
+          "type": {
+            "kind": "base",
+            "name": "short"
+          }
+        },
+        "snException": {
+          "offset": 2,
+          "type": {
+            "kind": "base",
+            "name": "short"
+          }
+        },
+        "snFixup": {
+          "offset": 4,
+          "type": {
+            "kind": "base",
+            "name": "short"
+          }
+        },
+        "snOmapToSrc": {
+          "offset": 6,
+          "type": {
+            "kind": "base",
+            "name": "short"
+          }
+        },
+        "snOmapFromSrc": {
+          "offset": 8,
+          "type": {
+            "kind": "base",
+            "name": "short"
+          }
+        },
+        "snSectionHdr": {
+          "offset": 10,
+          "type": {
+            "kind": "base",
+            "name": "short"
+          }
+        },
+        "snTokenRidMap": {
+          "offset": 12,
+          "type": {
+            "kind": "base",
+            "name": "short"
+          }
+        },
+        "snXdata": {
+          "offset": 14,
+          "type": {
+            "kind": "base",
+            "name": "short"
+          }
+        },
+        "snPdata": {
+          "offset": 16,
+          "type": {
+            "kind": "base",
+            "name": "short"
+          }
+        },
+        "snNewFPO": {
+          "offset": 18,
+          "type": {
+            "kind": "base",
+            "name": "short"
+          }
+        },
+        "snSectionHdrOrig": {
+          "offset": 20,
+          "type": {
+            "kind": "base",
+            "name": "short"
+          }
+        }
+      },
+      "kind": "struct",
+      "size": 22
+    },
+    "GLOBAL_SYMBOL": {
+      "fields": {
+        "length": {
+          "offset": 0,
+          "type": {
+            "kind": "base",
+            "name": "unsigned short"
+          }
+        },
+        "leaf_type": {
+          "offset": 2,
+          "type": {
+            "kind": "base",
+            "name": "unsigned short"
+          }
+        },
+        "symtype": {
+          "offset": 4,
+          "type": {
+            "kind": "base",
+            "name": "unsigned long"
+          }
+        },
+        "offset": {
+          "offset": 8,
+          "type": {
+            "kind": "base",
+            "name": "unsigned long"
+          }
+        },
+        "segment": {
+          "offset": 12,
+          "type": {
+            "kind": "base",
+            "name": "unsigned short"
+          }
+        },
+        "name": {
+          "offset": 14,
+          "type": {
+            "kind": "base",
+            "name": "string"
+          }
+        }
+      },
+      "kind": "struct",
+      "size": 14
+    },
+    "IMAGE_SECTION_HEADER": {
+      "fields": {
+        "Characteristics": {
+          "offset": 36,
+          "type": {
+            "kind": "base",
+            "name": "unsigned long"
+          }
+        },
+        "Misc": {
+          "offset": 8,
+          "type": {
+            "kind": "base",
+            "name": "unsigned long"
+          }
+        },
+        "Name": {
+          "offset": 0,
+          "type": {
+            "count": 8,
+            "kind": "array",
+            "subtype": {
+              "kind": "base",
+              "name": "unsigned char"
+            }
+          }
+        },
+        "NumberOfLinenumbers": {
+          "offset": 34,
+          "type": {
+            "kind": "base",
+            "name": "unsigned short"
+          }
+        },
+        "NumberOfRelocations": {
+          "offset": 32,
+          "type": {
+            "kind": "base",
+            "name": "unsigned short"
+          }
+        },
+        "PointerToLinenumbers": {
+          "offset": 28,
+          "type": {
+            "kind": "base",
+            "name": "unsigned long"
+          }
+        },
+        "PointerToRawData": {
+          "offset": 20,
+          "type": {
+            "kind": "base",
+            "name": "unsigned long"
+          }
+        },
+        "PointerToRelocations": {
+          "offset": 24,
+          "type": {
+            "kind": "base",
+            "name": "unsigned long"
+          }
+        },
+        "SizeOfRawData": {
+          "offset": 16,
+          "type": {
+            "kind": "base",
+            "name": "unsigned long"
+          }
+        },
+        "VirtualAddress": {
+          "offset": 12,
+          "type": {
+            "kind": "base",
+            "name": "unsigned long"
+          }
+        }
+      },
+      "kind": "struct",
+      "size": 40
+    },
+    "LF_ARRAY": {
+      "fields": {
+        "element_type": {
+          "offset": 0,
+          "type": {
+            "kind": "base",
+            "name": "unsigned long"
+          }
+        },
+        "indexing_type": {
+          "offset": 4,
+          "type": {
+            "kind": "base",
+            "name": "unsigned long"
+          }
+        },
+        "size": {
+          "offset": 8,
+          "type": {
+            "kind": "base",
+            "name": "unsigned short"
+          }
+        },
+        "name": {
+          "offset": 10,
+          "type": {
+            "kind": "base",
+            "name": "string"
+          }
+        }
+      },
+      "kind": "struct",
+      "size": 10
+    },
+    "LF_BITFIELD": {
+      "fields": {
+        "underlying_type": {
+          "offset": 0,
+          "type": {
+            "kind": "base",
+            "name": "unsigned long"
+          }
+        },
+        "length": {
+          "offset": 4,
+          "type": {
+            "kind": "base",
+            "name": "unsigned char"
+          }
+        },
+        "position": {
+          "offset": 5,
+          "type": {
+            "kind": "base",
+            "name": "unsigned char"
+          }
+        }
+      },
+      "kind": "struct",
+      "size": 0
+    },
+    "LF_ENUM": {
+      "fields": {
+        "count": {
+          "offset": 0,
+          "type": {
+            "kind": "base",
+            "name": "unsigned short"
+          }
+        },
+        "properties": {
+          "offset": 2,
+          "type": {
+            "kind": "struct",
+            "name": "Type_Properties"
+          }
+        },
+        "subtype_index": {
+          "offset": 4,
+          "type": {
+            "kind": "base",
+            "name": "unsigned long"
+          }
+        },
+        "fields": {
+          "offset": 8,
+          "type": {
+            "kind": "base",
+            "name": "unsigned long"
+          }
+        },
+        "name": {
+          "offset": 12,
+          "type": {
+            "kind": "base",
+            "name": "string"
+          }
+        }
+      },
+      "kind": "struct",
+      "size": 12
+    },
+    "LF_ENUMERATE": {
+      "fields": {
+        "attributes": {
+          "offset": 0,
+          "type": {
+            "kind": "base",
+            "name": "unsigned short"
+          }
+        },
+        "value": {
+          "offset": 2,
+          "type": {
+            "kind": "base",
+            "name": "unsigned short"
+          }
+        },
+        "name": {
+          "offset": 4,
+          "type": {
+            "kind": "base",
+            "name": "string"
+          }
+        }
+      },
+      "kind": "struct",
+      "size": 4
+    },
+    "LF_MEMBER": {
+      "fields": {
+        "attributes": {
+          "offset": 0,
+          "type": {
+            "kind": "base",
+            "name": "unsigned short"
+          }
+        },
+        "field_type": {
+          "offset": 2,
+          "type": {
+            "kind": "base",
+            "name": "unsigned long"
+          }
+        },
+        "offset": {
+          "offset": 6,
+          "type": {
+            "kind": "base",
+            "name": "unsigned short"
+          }
+        },
+        "name": {
+          "offset": 8,
+          "type": {
+            "kind": "base",
+            "name": "string"
+          }
+        }
+      },
+      "kind": "struct",
+      "size": 8
+    },
+    "LF_MODIFIER": {
+      "fields": {
+        "subtype_index": {
+          "offset": 0,
+          "type": {
+            "kind": "base",
+            "name": "unsigned long"
+          }
+        },
+        "constant": {
+          "offset": 4,
+          "type": {
+            "bit_length": 1,
+            "bit_position": 0,
+            "kind": "bitfield",
+            "type": {
+              "kind": "base",
+              "name": "unsigned short"
+            }
+          }
+        },
+        "volatile": {
+          "offset": 4,
+          "type": {
+            "bit_length": 1,
+            "bit_position": 1,
+            "kind": "bitfield",
+            "type": {
+              "kind": "base",
+              "name": "unsigned short"
+            }
+          }
+        },
+        "unaligned": {
+          "offset": 4,
+          "type": {
+            "bit_length": 1,
+            "bit_position": 2,
+            "kind": "bitfield",
+            "type": {
+              "kind": "base",
+              "name": "unsigned short"
+            }
+          }
+        }
+      },
+      "kind": "struct",
+      "size": 6
+    },
+    "LF_POINTER": {
+      "fields": {
+        "subtype_index": {
+          "offset": 0,
+          "type": {
+            "kind": "base",
+            "name": "unsigned long"
+          }
+        },
+        "pointer_type": {
+          "offset": 4,
+          "type": {
+            "bit_length": 5,
+            "bit_position": 0,
+            "kind": "bitfield",
+            "type": {
+              "kind": "base",
+              "name": "unsigned long"
+            }
+          }
+        },
+        "mode": {
+          "offset": 4,
+          "type": {
+            "bit_length": 3,
+            "bit_position": 5,
+            "kind": "bitfield",
+            "type": {
+              "kind": "base",
+              "name": "unsigned long"
+            }
+          }
+        },
+        "flat32": {
+          "offset": 4,
+          "type": {
+            "bit_length": 1,
+            "bit_position": 8,
+            "kind": "bitfield",
+            "type": {
+              "kind": "base",
+              "name": "unsigned long"
+            }
+          }
+        },
+        "volatile": {
+          "offset": 4,
+          "type": {
+            "bit_length": 1,
+            "bit_position": 9,
+            "kind": "bitfield",
+            "type": {
+              "kind": "base",
+              "name": "unsigned long"
+            }
+          }
+        },
+        "constant": {
+          "offset": 4,
+          "type": {
+            "bit_length": 1,
+            "bit_position": 10,
+            "kind": "bitfield",
+            "type": {
+              "kind": "base",
+              "name": "unsigned long"
+            }
+          }
+        },
+        "unaligned": {
+          "offset": 4,
+          "type": {
+            "bit_length": 1,
+            "bit_position": 11,
+            "kind": "bitfield",
+            "type": {
+              "kind": "base",
+              "name": "unsigned long"
+            }
+          }
+        },
+        "restricted": {
+          "offset": 4,
+          "type": {
+            "bit_length": 1,
+            "bit_position": 12,
+            "kind": "bitfield",
+            "type": {
+              "kind": "base",
+              "name": "unsigned long"
+            }
+          }
+        },
+        "size": {
+          "offset": 4,
+          "type": {
+            "bit_length": 6,
+            "bit_position": 13,
+            "kind": "bitfield",
+            "type": {
+              "kind": "base",
+              "name": "unsigned long"
+            }
+          }
+        },
+        "mocom": {
+          "offset": 4,
+          "type": {
+            "bit_length": 1,
+            "bit_position": 19,
+            "kind": "bitfield",
+            "type": {
+              "kind": "base",
+              "name": "unsigned long"
+            }
+          }
+        },
+        "lref": {
+          "offset": 4,
+          "type": {
+            "bit_length": 1,
+            "bit_position": 20,
+            "kind": "bitfield",
+            "type": {
+              "kind": "base",
+              "name": "unsigned long"
+            }
+          }
+        },
+        "rref": {
+          "offset": 4,
+          "type": {
+            "bit_length": 1,
+            "bit_position": 21,
+            "kind": "bitfield",
+            "type": {
+              "kind": "base",
+              "name": "unsigned long"
+            }
+          }
+        }
+      },
+      "kind": "struct",
+      "size": 6
+    },
+    "LF_PROCEDURE": {
+      "fields": {
+        "return_type": {
+          "offset": 0,
+          "type": {
+            "kind": "base",
+            "name": "unsigned long"
+          }
+        },
+        "attributes": {
+          "offset": 4,
+          "type": {
+            "kind": "base",
+            "name": "unsigned short"
+          }
+        },
+        "parameter_count": {
+          "offset": 6,
+          "type": {
+            "kind": "base",
+            "name": "unsigned short"
+          }
+        },
+        "argument_list": {
+          "offset": 8,
+          "type": {
+            "kind": "base",
+            "name": "unsigned long"
+          }
+        }
+      },
+      "kind": "struct",
+      "size": 12
+    },
+    "LF_STRUCTURE": {
+      "fields": {
+        "count": {
+          "offset": 0,
+          "type": {
+            "kind": "base",
+            "name": "unsigned short"
+          }
+        },
+        "properties": {
+          "offset": 2,
+          "type": {
+            "kind": "struct",
+            "name": "Type_Properties"
+          }
+        },
+        "fields": {
+          "offset": 4,
+          "type": {
+            "kind": "base",
+            "name": "unsigned long"
+          }
+        },
+        "derived_from": {
+          "offset": 8,
+          "type": {
+            "kind": "base",
+            "name": "unsigned long"
+          }
+        },
+        "vtable_shape": {
+          "offset": 12,
+          "type": {
+            "kind": "base",
+            "name": "unsigned long"
+          }
+        },
+        "size": {
+          "offset": 16,
+          "type": {
+            "kind": "base",
+            "name": "unsigned short"
+          }
+        },
+        "name": {
+          "offset": 18,
+          "type": {
+            "kind": "base",
+            "name": "string"
+          }
+        }
+      },
+      "kind": "struct",
+      "size": 18
+    },
+    "LF_UNION": {
+      "fields": {
+        "count": {
+          "offset": 0,
+          "type": {
+            "kind": "base",
+            "name": "unsigned short"
+          }
+        },
+        "properties": {
+          "offset": 2,
+          "type": {
+            "kind": "struct",
+            "name": "Type_Properties"
+          }
+        },
+        "fields": {
+          "offset": 4,
+          "type": {
+            "kind": "base",
+            "name": "unsigned long"
+          }
+        },
+        "size": {
+          "offset": 8,
+          "type": {
+            "kind": "base",
+            "name": "unsigned short"
+          }
+        },
+        "name": {
+          "offset": 10,
+          "type": {
+            "kind": "base",
+            "name": "string"
+          }
+        }
+      },
+      "kind": "struct",
+      "size": 10
+    },
+    "OMAP_RECORD": {
+      "fields": {
+        "source_address": {
+          "offset": 0,
+          "type": {
+            "kind": "base",
+            "name": "unsigned long"
+          }
+        },
+        "target_address": {
+          "offset": 4,
+          "type": {
+            "kind": "base",
+            "name": "unsigned long"
+          }
+        }
+      },
+      "kind": "struct",
+      "size": 8
+    },
+    "PDB_INFORMATION": {
+      "fields": {
+        "version": {
+          "offset": 0,
+          "type": {
+            "kind": "base",
+            "name": "unsigned long"
+          }
+        },
+        "signature": {
+          "offset": 4,
+          "type": {
+            "kind": "base",
+            "name": "unsigned long"
+          }
+        },
+        "age": {
+          "offset": 8,
+          "type": {
+            "kind": "base",
+            "name": "unsigned long"
+          }
+        },
+        "GUID": {
+          "offset": 12,
+          "type": {
+            "count": 16,
+            "kind": "array",
+            "subtype": {
+              "kind": "base",
+              "name": "unsigned char"
+            }
+          }
+        }
+      },
+      "kind": "struct",
+      "size": 0
+    }
+  },
+  "enums": {
+    "MACHINE_TYPE": {
+      "base": "unsigned short",
+      "constants": {
+        "IMAGE_FILE_MACHINE_UNKNOWN": 0,
+        "IMAGE_FILE_MACHINE_I386": 332,
+        "IMAGE_FILE_MACHINE_R3000": 354,
+        "IMAGE_FILE_MACHINE_R4000": 358,
+        "IMAGE_FILE_MACHINE_R10000": 360,
+        "IMAGE_FILE_MACHINE_WCEMIPSV2": 361,
+        "IMAGE_FILE_MACHINE_ALPHA": 388,
+        "IMAGE_FILE_MACHINE_SH3": 418,
+        "IMAGE_FILE_MACHINE_SH3DSP": 419,
+        "IMAGE_FILE_MACHINE_SH3E": 420,
+        "IMAGE_FILE_MACHINE_SH4": 422,
+        "IMAGE_FILE_MACHINE_SH5": 424,
+        "IMAGE_FILE_MACHINE_ARM": 448,
+        "IMAGE_FILE_MACHINE_THUMB": 450,
+        "IMAGE_FILE_MACHINE_ARMNT": 452,
+        "IMAGE_FILE_MACHINE_AM33": 467,
+        "IMAGE_FILE_MACHINE_POWERPC": 496,
+        "IMAGE_FILE_MACHINE_POWERPCFP": 497,
+        "IMAGE_FILE_MACHINE_IA64": 512,
+        "IMAGE_FILE_MACHINE_MIPS16": 614,
+        "IMAGE_FILE_MACHINE_ALPHA64": 644,
+        "IMAGE_FILE_MACHINE_MIPSFPU": 870,
+        "IMAGE_FILE_MACHINE_MIPSFPU16": 1126,
+        "IMAGE_FILE_MACHINE_TRICORE": 1312,
+        "IMAGE_FILE_MACHINE_CEF": 3311,
+        "IMAGE_FILE_MACHINE_EBC": 3772,
+        "IMAGE_FILE_MACHINE_AMD64": 34404,
+        "IMAGE_FILE_MACHINE_M32R": 36929,
+        "IMAGE_FILE_MACHINE_CEE": 49390
+      },
+      "size": 2
+    },
+    "LEAF_TYPE": {
+      "base": "unsigned short",
+      "constants": {
+        "LF_MODIFIER_16t": 1,
+        "LF_POINTER_16t": 2,
+        "LF_ARRAY_16t": 3,
+        "LF_CLASS_16t": 4,
+        "LF_STRUCTURE_16t": 5,
+        "LF_UNION_16t": 6,
+        "LF_ENUM_16t": 7,
+        "LF_PROCEDURE_16t": 8,
+        "LF_MFUNCTION_16t": 9,
+        "LF_VTSHAPE": 10,
+        "LF_COBOL0_16t": 11,
+        "LF_COBOL1": 12,
+        "LF_BARRAY_16t": 13,
+        "LF_LABEL": 14,
+        "LF_NULL": 15,
+        "LF_NOTTRAN": 16,
+        "LF_DIMARRAY_16t": 17,
+        "LF_VFTPATH_16t": 18,
+        "LF_PRECOMP_16t": 19,
+        "LF_ENDPRECOMP": 20,
+        "LF_OEM_16t": 21,
+        "LF_TYPESERVER_ST": 22,
+        "LF_SKIP_16t": 512,
+        "LF_ARGLIST_16t": 513,
+        "LF_DEFARG_16t": 514,
+        "LF_LIST": 515,
+        "LF_FIELDLIST_16t": 516,
+        "LF_DERIVED_16t": 517,
+        "LF_BITFIELD_16t": 518,
+        "LF_METHODLIST_16t": 519,
+        "LF_DIMCONU_16t": 520,
+        "LF_DIMCONLU_16t": 521,
+        "LF_DIMVARU_16t": 522,
+        "LF_DIMVARLU_16t": 523,
+        "LF_REFSYM": 524,
+        "LF_BCLASS_16t": 1024,
+        "LF_VBCLASS_16t": 1025,
+        "LF_IVBCLASS_16t": 1026,
+        "LF_ENUMERATE_ST": 1027,
+        "LF_FRIENDFCN_16t": 1028,
+        "LF_INDEX_16t": 1029,
+        "LF_MEMBER_16t": 1030,
+        "LF_STMEMBER_16t": 1031,
+        "LF_METHOD_16t": 1032,
+        "LF_NESTTYPE_16t": 1033,
+        "LF_VFUNCTAB_16t": 1034,
+        "LF_FRIENDCLS_16t": 1035,
+        "LF_ONEMETHOD_16t": 1036,
+        "LF_VFUNCOFF_16t": 1037,
+        "LF_TI16_MAX": 4096,
+        "LF_MODIFIER": 4097,
+        "LF_POINTER": 4098,
+        "LF_ARRAY_ST": 4099,
+        "LF_CLASS_ST": 4100,
+        "LF_STRUCTURE_ST": 4101,
+        "LF_UNION_ST": 4102,
+        "LF_ENUM_ST": 4103,
+        "LF_PROCEDURE": 4104,
+        "LF_MFUNCTION": 4105,
+        "LF_COBOL0": 4106,
+        "LF_BARRAY": 4107,
+        "LF_DIMARRAY_ST": 4108,
+        "LF_VFTPATH": 4109,
+        "LF_PRECOMP_ST": 4110,
+        "LF_OEM": 4111,
+        "LF_ALIAS_ST": 4112,
+        "LF_OEM2": 4113,
+        "LF_SKIP": 4608,
+        "LF_ARGLIST": 4609,
+        "LF_DEFARG_ST": 4610,
+        "LF_FIELDLIST": 4611,
+        "LF_DERIVED": 4612,
+        "LF_BITFIELD": 4613,
+        "LF_METHODLIST": 4614,
+        "LF_DIMCONU": 4615,
+        "LF_DIMCONLU": 4616,
+        "LF_DIMVARU": 4617,
+        "LF_DIMVARLU": 4618,
+        "LF_BCLASS": 5120,
+        "LF_VBCLASS": 5121,
+        "LF_IVBCLASS": 5122,
+        "LF_FRIENDFCN_ST": 5123,
+        "LF_INDEX": 5124,
+        "LF_MEMBER_ST": 5125,
+        "LF_STMEMBER_ST": 5126,
+        "LF_METHOD_ST": 5127,
+        "LF_NESTTYPE_ST": 5128,
+        "LF_VFUNCTAB": 5129,
+        "LF_FRIENDCLS": 5130,
+        "LF_ONEMETHOD_ST": 5131,
+        "LF_VFUNCOFF": 5132,
+        "LF_NESTTYPEEX_ST": 5133,
+        "LF_MEMBERMODIFY_ST": 5134,
+        "LF_MANAGED_ST": 5135,
+        "LF_ST_MAX": 5376,
+        "LF_TYPESERVER": 5377,
+        "LF_ENUMERATE": 5378,
+        "LF_ARRAY": 5379,
+        "LF_CLASS": 5380,
+        "LF_STRUCTURE": 5381,
+        "LF_UNION": 5382,
+        "LF_ENUM": 5383,
+        "LF_DIMARRAY": 5384,
+        "LF_PRECOMP": 5385,
+        "LF_ALIAS": 5386,
+        "LF_DEFARG": 5387,
+        "LF_FRIENDFCN": 5388,
+        "LF_MEMBER": 5389,
+        "LF_STMEMBER": 5390,
+        "LF_METHOD": 5391,
+        "LF_NESTTYPE": 5392,
+        "LF_ONEMETHOD": 5393,
+        "LF_NESTTYPEEX": 5394,
+        "LF_MEMBERMODIFY": 5395,
+        "LF_MANAGED": 5396,
+        "LF_TYPESERVER2": 5397,
+        "LF_STRIDED_ARRAY": 5398,
+        "LF_HLSL": 5399,
+        "LF_MODIFIER_EX": 5400,
+        "LF_INTERFACE": 5401,
+        "LF_BINTERFACE": 5402,
+        "LF_VECTOR": 5403,
+        "LF_MATRIX": 5404,
+        "LF_VFTABLE": 5405,
+        "LF_FUNC_ID": 5633,
+        "LF_MFUNC_ID": 5634,
+        "LF_BUILDINFO": 5635,
+        "LF_SUBSTR_LIST": 5636,
+        "LF_STRING_ID": 5637,
+        "LF_UDT_SRC_LINE": 5638,
+        "LF_UDT_MOD_SRC_LINE": 5639,
+        "LF_CHAR": 32768,
+        "LF_SHORT": 32769,
+        "LF_USHORT": 32770,
+        "LF_LONG": 32771,
+        "LF_ULONG": 32772,
+        "LF_REAL32": 32773,
+        "LF_REAL64": 32774,
+        "LF_REAL80": 32775,
+        "LF_REAL128": 32776,
+        "LF_QUADWORD": 32777,
+        "LF_UQUADWORD": 32778,
+        "LF_REAL48": 32779,
+        "LF_COMPLEX32": 32780,
+        "LF_COMPLEX64": 32781,
+        "LF_COMPLEX80": 32782,
+        "LF_COMPLEX128": 32783,
+        "LF_VARSTRING": 32784,
+        "LF_OCTWORD": 32791,
+        "LF_UOCTWORD": 32792,
+        "LF_DECIMAL": 32793,
+        "LF_DATE": 32794,
+        "LF_UTF8STRING": 32795,
+        "LF_REAL16": 32796,
+        "LF_PAD0": 240,
+        "LF_PAD1": 241,
+        "LF_PAD2": 242,
+        "LF_PAD3": 243,
+        "LF_PAD4": 244,
+        "LF_PAD5": 245,
+        "LF_PAD6": 246,
+        "LF_PAD7": 247,
+        "LF_PAD8": 248,
+        "LF_PAD9": 249,
+        "LF_PAD10": 250,
+        "LF_PAD11": 251,
+        "LF_PAD12": 252,
+        "LF_PAD13": 253,
+        "LF_PAD14": 254,
+        "LF_PAD15": 255
+      },
+      "size": 2
+    }
+  },
+  "base_types": {
+    "unsigned char": {
+      "endian": "little",
+      "kind": "char",
+      "signed": false,
+      "size": 1
+    },
+    "unsigned short": {
+      "endian": "little",
+      "kind": "int",
+      "signed": false,
+      "size": 2
+    },
+    "short": {
+      "endian": "little",
+      "kind": "int",
+      "signed": true,
+      "size": 2
+    },
+    "long": {
+      "endian": "little",
+      "kind": "int",
+      "signed": true,
+      "size": 4
+    },
+    "char": {
+      "endian": "little",
+      "kind": "char",
+      "signed": true,
+      "size": 1
+    },
+    "unsigned long": {
+      "endian": "little",
+      "kind": "int",
+      "signed": false,
+      "size": 4
+    },
+    "long long": {
+      "endian": "little",
+      "kind": "int",
+      "signed": true,
+      "size": 8
+    },
+    "unsigned long long": {
+      "endian": "little",
+      "kind": "int",
+      "signed": false,
+      "size": 8
+    }
+  },
+  "metadata": {
+    "producer": {
+      "version": "0.0.1",
+      "name": "ikelos-by-hand",
+      "datetime": "2019-05-22T15:51:03"
+    },
+    "format": "4.0.0"
+  }
+}
