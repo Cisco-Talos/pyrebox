@@ -1,0 +1,29 @@
+# Python generated files
+__pycache__
+*.pyc
+
+# Sphinx generated files
+doc/build
+doc/source/volatility.*
+
+# Pycharm/PyDev development files
+workspace.xml
+.idea
+.vscode
+
+# Manually generated files
+.mypy_cache
+stubs
+volatility/symbols/linux*
+volatility/symbols/windows*
+volatility/symbols/mac*
+
+# Mac metadata files
+.DS_Store
+
+# Volatility's config 
+config*.json
+
+# Pyinstaller files
+build
+dist
