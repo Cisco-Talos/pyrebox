@@ -196,29 +196,27 @@ def pyrebox_ipython_shell():
 
 
 def init_volatility():
-    import volatility.conf as volconf
-    import volatility.registry as registry
-    import volatility.commands as commands
-    import volatility.addrspace as addrspace
-
-    if hasattr(volconf, "PyREBoxVolatility"):
-        registry.PluginImporter()
-        vol_config = volconf.ConfObject()
-        registry.register_global_options(vol_config, commands.Command)
-        registry.register_global_options(vol_config, addrspace.BaseAddressSpace)
-        vol_config.PROFILE = conf_m.vol_profile
-
-        # Set global volatility configuration
-        conf_m.vol_conf = vol_config
+    from volatility_glue import initialize_volatility_linux
+    from volatility_glue import initialize_volatility_windows
+    try:
+        if conf_m.os_profile.startswith("Linux"):
+            success = initialize_volatility_linux()
+        else:
+            success = initialize_volatility_windows()
+        # We cannot yet create the plugin as the kernel
+        # might not be in place
+        conf_m.vol_plugin = None 
         return True
-    else:
+    except ImportError:
         pp_error("""The imported volatility version is not appropriate for PyREBox:
     * Your local volatility installation may be in conflict with PyREBox's volatility installation...
       ... set up a virtual env to avoid the conflict (see installation instructions).
     * You have a virtual env for PyREBox's python dependencies, and you forgot to activate it!
       ... you know what to do!\n""")
         return False
-
+    except Exception as e:
+        pp_error("Exception while initializing volatility: %s" % str(e))
+        return False
 
 def init(platform, root_path, volatility_path, conf_name):
     try:

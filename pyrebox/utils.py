@@ -46,9 +46,7 @@ def pp_error(f, *args):
 class ConfigurationManager:
     # Class variables
     # Volatility configuration object
-    vol_conf = None
-    # Pre initialized address space for volatility
-    addr_space = None
+    vol_plugin = None
     # Path to volatility module
     volatility_path = None
     # Platform (e.g.: i386-softmmu, x86_64-softmmu)
@@ -57,9 +55,9 @@ class ConfigurationManager:
     endianess = None
     # Bitness of the platform
     bitness = None
-    # String containing the volatility profile name as
+    # String containing the os profile name as
     # declared in pyrebox.conf
-    vol_profile = None
+    os_profile = None
     # Agent file name
     agent_filename = None
     # Agent buffer offset and size
@@ -70,23 +68,15 @@ class ConfigurationManager:
 
     def __init__(self):
         ConfigurationManager.volatility_path = None
-        ConfigurationManager.vol_profile = None
+        ConfigurationManager.os_profile = None
         ConfigurationManager.platform = None
         ConfigurationManager.endianess = None
         ConfigurationMananger.bitness = None
-        ConfigurationManager.vol_conf = None
-        ConfigurationManager.addr_space = None
+        ConfigurationManager.vol_plugin = None
         ConfigurationManager.agent_filename = None
         ConfigurationManager.agent_buffer_offset = None
         ConfigurationManager.agent_buffer_size = None
         ConfigurationManager.config = None
-
-
-def get_addr_space(pgd=None):
-    if pgd is not None:
-        ConfigurationManager.addr_space.dtb = pgd
-    return ConfigurationManager.addr_space
-
 
 def find_procs(param):
     import api

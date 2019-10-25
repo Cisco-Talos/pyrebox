@@ -100,7 +100,11 @@ class LayerStacker(interfaces.automagic.AutomagicInterface):
 
         # This must be specific to get us started, setup the config and run
         new_context.config[interfaces.configuration.path_join(current_config_path, "location")] = location
-        physical_layer = physical.FileLayer(new_context, current_config_path, current_layer_name)
+        if location == "::PyREBox memory::":
+            from volatility.framework.layers import pyrebox
+            physical_layer = pyrebox.PyREBoxLayer(new_context, current_config_path, current_layer_name)
+        else:
+            physical_layer = physical.FileLayer(new_context, current_config_path, current_layer_name)
         new_context.add_layer(physical_layer)
 
         # Repeatedly apply "determine what this is" code and build as much up as possible

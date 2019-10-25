@@ -49,11 +49,6 @@ from capstone import CS_ARCH_X86
 from capstone import CS_MODE_32
 from capstone import CS_MODE_64
 
-
-import volatility.registry as registry
-import volatility.commands as commands
-import volatility.obj as obj
-
 # Pyrebox imports
 
 import api
@@ -116,54 +111,59 @@ class Proc:
     def get_pgd(self):
         return self.pgd
 
+# TODO: VOLATILITY
 
-def vol_command_help(command):
-    outputs = []
-    for item in dir(command):
-        if item.startswith("render_"):
-            outputs.append(item.split("render_", 1)[-1])
-    outputopts = "\nModule Output Options: " + \
-        "{0}\n".format("{0}".format("\n".join([", ".join(o for o in sorted(outputs))])))
-
-    result = textwrap.dedent("""
-    ---------------------------------
-    Module {0}
-    ---------------------------------\n""".format(command.__class__.__name__))
-
-    return outputopts + result + command.help() + "\n\n"
-
-
-def vol_execute_command(cmds, cmdname, config, line):
-    sys.argv = line.split()
-    sys.argv = [cmdname] + sys.argv
-    try:
-        if config.parse_options():
-            c = cmds[cmdname](config)
-            # Register the help cb from the command itself
-            config.set_help_hook(functools.partial(vol_command_help, c))
-            c.execute()
-    except Exception as e:
-        pp_error(
-            "VolShell: Error while executing volatility command\n%s\n" %
-            str(e))
+#def vol_command_help(command):
+#    outputs = []
+#    for item in dir(command):
+#        if item.startswith("render_"):
+#            outputs.append(item.split("render_", 1)[-1])
+#    outputopts = "\nModule Output Options: " + \
+#        "{0}\n".format("{0}".format("\n".join([", ".join(o for o in sorted(outputs))])))
+#
+#    result = textwrap.dedent("""
+#    ---------------------------------
+#    Module {0}
+#    ---------------------------------\n""".format(command.__class__.__name__))
+#
+#    return outputopts + result + command.help() + "\n\n"
 
 
-def vol_generate_commands(config):
-    command_list = {}
-    cmds = registry.get_plugin_classes(commands.Command, lower=True)
-    profs = registry.get_plugin_classes(obj.Profile)
+#def vol_execute_command(cmds, cmdname, config, line):
+#    sys.argv = line.split()
+#    sys.argv = [cmdname] + sys.argv
+#    try:
+#        if config.parse_options():
+#            c = cmds[cmdname](config)
+#            # Register the help cb from the command itself
+#            config.set_help_hook(functools.partial(vol_command_help, c))
+#            c.execute()
+#    except Exception as e:
+#        pp_error(
+#            "VolShell: Error while executing volatility command\n%s\n" %
+#            str(e))
 
-    if config.PROFILE not in profs:
-        pp_error("Invalid profile " + config.PROFILE + " selected\n")
-        return True
-    profile = profs[config.PROFILE]()
-    for cmdname in sorted(cmds):
-        command = cmds[cmdname]
-        if command.is_valid_profile(profile):
-            command_list[cmdname] = functools.partial(
-                vol_execute_command, cmds, cmdname, config)
 
-    return command_list
+#def vol_generate_commands(config):
+#    import volatility.registry as registry
+#    import volatility.commands as commands
+#    import volatility.obj as obj
+#
+#    command_list = {}
+#    cmds = registry.get_plugin_classes(commands.Command, lower=True)
+#    profs = registry.get_plugin_classes(obj.Profile)
+#
+#    if config.PROFILE not in profs:
+#        pp_error("Invalid profile " + config.PROFILE + " selected\n")
+#        return True
+#    profile = profs[config.PROFILE]()
+#    for cmdname in sorted(cmds):
+#        command = cmds[cmdname]
+#        if command.is_valid_profile(profile):
+#            command_list[cmdname] = functools.partial(
+#                vol_execute_command, cmds, cmdname, config)
+#
+#    return command_list
 
 
 class ProcPrompt(Prompts):
@@ -206,8 +206,9 @@ class ShellMagics(Magics):
     def __init__(self, shell=None, **kwargs):
         super(ShellMagics, self).__init__(shell=shell, **kwargs)
         self.cpu_index = 0
-        self.vol_conf = None
-        self.vol_commands = None
+        # TODO: VOLATILITY
+        #self.vol_conf = None
+        #self.vol_commands = None
         self.initialize()
 
     def update_conf(self):
@@ -216,12 +217,13 @@ class ShellMagics(Magics):
         else:
             self.cpu_index = 0
 
-        if "__vol_conf" in self.shell.user_ns:
-            self.vol_conf = self.shell.user_ns["__vol_conf"]
-            if self.vol_conf is not None and self.vol_commands is None:
-                self.vol_commands = vol_generate_commands(self.vol_conf)
-        else:
-            self.vol_conf = None
+        # TODO: VOLATILITY
+        #if "__vol_conf" in self.shell.user_ns:
+        #    self.vol_conf = self.shell.user_ns["__vol_conf"]
+        #    if self.vol_conf is not None and self.vol_commands is None:
+        #        self.vol_commands = vol_generate_commands(self.vol_conf)
+        #else:
+        #    self.vol_conf = None
 
     def initialize(self):
         self.update_conf()
@@ -1669,70 +1671,72 @@ class ShellMagics(Magics):
         # Now print the dynamically imported commands
         list_custom_commands()
 
-    @line_magic
-    def list_vol_commands(self, line):
-        '''
-        List all the available volatility commands
-        '''
-        config = self.shell.user_ns["__vol_conf"]
+    # TODO VOLATILITY
 
-        if len(line) == 0:
-            result = "\n\tSupported volatility commands:\n\n"
-            cmds = registry.get_plugin_classes(commands.Command, lower=True)
-            profs = registry.get_plugin_classes(obj.Profile)
+    #@line_magic
+    #def list_vol_commands(self, line):
+    #    '''
+    #    List all the available volatility commands
+    #    '''
+    #    config = self.shell.user_ns["__vol_conf"]
 
-            if config.PROFILE not in profs:
-                pp_error("Invalid profile " + config.PROFILE + " selected\n")
-                return True
-            profile = profs[config.PROFILE]()
-            wrongprofile = ""
+    #    if len(line) == 0:
+    #        result = "\n\tSupported volatility commands:\n\n"
+    #        cmds = registry.get_plugin_classes(commands.Command, lower=True)
+    #        profs = registry.get_plugin_classes(obj.Profile)
 
-            for cmdname in sorted(cmds):
-                command = cmds[cmdname]
-                helpline = command.help() or ''
-                # Just put the title line (First non empty line) in this
-                # abbreviated display
-                for line in helpline.splitlines():
-                    if line:
-                        helpline = line
-                        break
-                if command.is_valid_profile(profile):
-                    result += "\t\t{0:15}\t{1}\n".format(cmdname, helpline)
-                else:
-                    wrongprofile += "\t\t{0:15}\t{1}\n".format(
-                        cmdname, helpline)
+    #        if config.PROFILE not in profs:
+    #            pp_error("Invalid profile " + config.PROFILE + " selected\n")
+    #            return True
+    #        profile = profs[config.PROFILE]()
+    #        wrongprofile = ""
 
-            pp_print(result + "\n")
-        else:
-            cmds = registry.get_plugin_classes(commands.Command, lower=True)
-            cmdname = line.split()[0]
-            c = cmds[cmdname](config)
-            # Register the help cb from the command itself
-            pp_print(vol_command_help(c) + "\n")
+    #        for cmdname in sorted(cmds):
+    #            command = cmds[cmdname]
+    #            helpline = command.help() or ''
+    #            # Just put the title line (First non empty line) in this
+    #            # abbreviated display
+    #            for line in helpline.splitlines():
+    #                if line:
+    #                    helpline = line
+    #                    break
+    #            if command.is_valid_profile(profile):
+    #                result += "\t\t{0:15}\t{1}\n".format(cmdname, helpline)
+    #            else:
+    #                wrongprofile += "\t\t{0:15}\t{1}\n".format(
+    #                    cmdname, helpline)
 
-    @line_magic
-    def vol(self, line):
-        '''
-        Execute a volatility command. Eg: vol pslist. List commands with %list_vol_commands
-        '''
-        if self.vol_commands is None:
-            self.update_conf()
-        if self.vol_commands is None:
-            pp_error("[!] No volatility commands available\n")
+    #        pp_print(result + "\n")
+    #    else:
+    #        cmds = registry.get_plugin_classes(commands.Command, lower=True)
+    #        cmdname = line.split()[0]
+    #        c = cmds[cmdname](config)
+    #        # Register the help cb from the command itself
+    #        pp_print(vol_command_help(c) + "\n")
 
-        els = line.split()
-        if len(els) < 1:
-            self.do_help("vol")
-            return
-        cmd = els[0]
-        if len(els) > 1:
-            cmd_params = " ".join(els[1:])
-        else:
-            cmd_params = ""
-        if cmd not in self.vol_commands:
-            pp_error("[!] The specified volatility command is not in the command list (%list_vol_commands)")
-            return
-        self.vol_commands[cmd](cmd_params)
+    #@line_magic
+    #def vol(self, line):
+    #    '''
+    #    Execute a volatility command. Eg: vol pslist. List commands with %list_vol_commands
+    #    '''
+    #    if self.vol_commands is None:
+    #        self.update_conf()
+    #    if self.vol_commands is None:
+    #        pp_error("[!] No volatility commands available\n")
+
+    #    els = line.split()
+    #    if len(els) < 1:
+    #        self.do_help("vol")
+    #        return
+    #    cmd = els[0]
+    #    if len(els) > 1:
+    #        cmd_params = " ".join(els[1:])
+    #    else:
+    #        cmd_params = ""
+    #    if cmd not in self.vol_commands:
+    #        pp_error("[!] The specified volatility command is not in the command list (%list_vol_commands)")
+    #        return
+    #    self.vol_commands[cmd](cmd_params)
 
     @line_magic
     def custom(self, line):
@@ -1861,7 +1865,8 @@ def start_shell(cpu_index=0):
                 termios.tcsetattr(fd, termios.TCSADRAIN, new)
                 finished = True
                 __local_ns["__cpu_index"] = cpu_index
-                __local_ns["__vol_conf"] = conf_m.vol_conf
+                #TODO: VOLATILITY
+                # __local_ns["__vol_conf"] = conf_m.vol_conf
                 __local_ns["cpu"] = api.r_cpu(cpu_index)
                 if agent is not None:
                     __local_ns["agent"] = agent

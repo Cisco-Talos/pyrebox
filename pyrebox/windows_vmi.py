@@ -21,19 +21,14 @@
 #
 # -------------------------------------------------------------------------
 
-from utils import pp_error
-import volatility.obj as obj
-# import volatility.plugins.kdbgscan as kdbg
-import volatility.utils as utils
 import traceback
 import hashlib
 
+from utils import pp_error
 from utils import pp_print
 from utils import pp_debug
 from utils import pp_warning
 from utils import pp_error
-
-last_kdbg = None
 
 # To store the sleuthkit filesystem
 filesystem = None
@@ -41,7 +36,7 @@ filesystem = None
 # To mark whether or not we need to save the cache
 symbol_cache_must_be_saved = False
 
-def windows_insert_module_internal(
+def windows_insert_module(
         p_pid,
         p_pgd,
         base,
@@ -52,7 +47,6 @@ def windows_insert_module_internal(
         update_symbols,
         do_stop = False):
 
-    from utils import get_addr_space
     from vmi import add_symbols
     from vmi import get_symbols
     from vmi import has_symbols
@@ -165,93 +159,58 @@ def windows_insert_module_internal(
         mod.set_present()
         dispatch_module_load_callback(p_pid, p_pgd, base, size, basename, fullname)
 
-
-def windows_insert_module(p_pid, p_pgd, module, update_symbols):
-    '''
-        Insert a module in the module list, only if it has not been inserted yet
-    '''
-
-    base = module.DllBase.v()
-    if isinstance(base, obj.NoneObject):
-        base = 0
-    size = module.SizeOfImage.v()
-    if isinstance(size, obj.NoneObject):
-        size = 0
-    fullname = module.FullDllName.v()
-    if isinstance(fullname, obj.NoneObject):
-        fullname = "Unknown"
-    basename = module.BaseDllName.v()
-    if isinstance(basename, obj.NoneObject):
-        basename = "Unknown"
-    checksum = module.CheckSum.v()
-    if isinstance(checksum, obj.NoneObject):
-        checksum = ""
-
-    windows_insert_module_internal(
-        p_pid,
-        p_pgd,
-        base,
-        size,
-        fullname,
-        basename,
-        checksum,
-        update_symbols)
-
-
 def windows_update_modules(pgd, update_symbols=False):
     '''
         Use volatility to get the modules and symbols for a given process, and
         update the cache accordingly
     '''
-    global last_kdbg
     global symbol_cache_must_be_saved
 
     import api
-    from utils import get_addr_space
     from vmi import set_modules_non_present
     from vmi import clean_non_present_modules
     from vmi import add_module
     from vmi import get_module
     from vmi import has_module
+    from volatility_glue import get_volatility_interface
 
-    if pgd != 0:
-        addr_space = get_addr_space(pgd)
-    else:
-        addr_space = get_addr_space()
+    vol_plugin = get_volatility_interface()
 
-    if addr_space is None:
-        pp_error("Volatility address space not loaded\n")
+    if vol_plugin is None:
+        pp_error("Volatility not loaded correctly\n")
         return []
 
     # Get EPROC directly from its offset
     procs = api.get_process_list()
     inserted_bases = []
+
+    list_entry_size = vol_plugin.get_type_size("_LIST_ENTRY")
+
     # Parse/update kernel modules if pgd 0 is requested:
-    if pgd == 0 and last_kdbg is not None:
-        kdbg = obj.Object(
-            "_KDDEBUGGER_DATA64",
-            offset=last_kdbg,
-            vm=addr_space)
-        
+    if pgd == 0 and vol_plugin is not None:
         # List entries are returned, so that
         # we can monitor memory writes to these
         # entries and detect when a module is added
         # or removed
-        list_entry_size = None
         list_entry_regions = []
 
+        psLoadedModuleListAddr = vol_plugin.PsLoadedModuleListAddr
+
         # Add the initial list pointer as a list entry
-        list_entry_regions.append((kdbg.obj_offset, kdbg.PsLoadedModuleList.obj_offset, kdbg.PsLoadedModuleList.size()))
+        list_entry_regions.append((psLoadedModuleListAddr, psLoadedModuleListAddr, list_entry_size))
 
         # Mark all modules as non-present
         set_modules_non_present(0, 0)
-        for module in kdbg.modules():
+        for module in vol_plugin.get_kernel_module_list():
             if module.DllBase not in inserted_bases:
                 inserted_bases.append(module.DllBase)
-                windows_insert_module(0, 0, module, update_symbols)
-                if list_entry_size is None:
-                    list_entry_size = module.InLoadOrderLinks.size()
-                list_entry_regions.append((module.obj_offset, module.InLoadOrderLinks.obj_offset, list_entry_size * 3))
+                module_data = (module.DllBase,
+                               module.SizeOfImage,
+                               module.FullDllName.get_string(),
+                               module.BaseDllName.get_string(),
+                               module.CheckSum)
+                windows_insert_module(0, 0, module_data, update_symbols)
+                list_entry_regions.append((vol_plugin.get_object_offset(module), vol_plugin.get_object_offset(module.InLoadOrderLinks), list_entry_size * 3))
 
         # Remove all the modules that are not marked as present
         clean_non_present_modules(0, 0)
@@ -269,28 +228,36 @@ def windows_update_modules(pgd, update_symbols=False):
         # p_name = proc["name"]
         p_kernel_addr = proc["kaddr"]
         if p_pgd == pgd:
-            task = obj.Object("_EPROCESS", offset=p_kernel_addr, vm=addr_space)
+            task = vol_plugin.get_eprocess(p_kernel_addr)
 
             # List entries are returned, so that
             # we can monitor memory writes to these
             # entries and detect when a module is added
             # or removed
-            list_entry_size = None
             list_entry_regions = []
 
             scan_peb = True
-            if task.Peb is None or not task.Peb.is_valid():
-                if isinstance(task.Peb.obj_offset, int):
-                    list_entry_regions.append((task.obj_offset, task.Peb.obj_offset, task.Peb.size()))
+            peb = vol_plugin.get_peb_from_eprocess(task)
+
+            if peb is None:
+                list_entry_regions.append((vol_plugin.get_object_offset(task), 
+                                           vol_plugin.get_object_offset(peb), 
+                                           vol_plugin.get_type_size("_PEB")))
                 scan_peb = False
 
-            if task.Peb.Ldr is None or not task.Peb.Ldr.is_valid():
-                list_entry_regions.append((task.Peb.v(), task.Peb.Ldr.obj_offset, task.Peb.Ldr.size()))
+            ldr = vol_plugin.get_ldr_from_eprocess(task)
+            if ldr is None:
+                list_entry_regions.append((vol_plugin.get_object_offset(peb), 
+                                           vol_plugin.get_object_offset(ldr), 
+                                           vol_plugin.get_type_size("_PEB_LDR_DATA")))
+
                 scan_peb = False
 
             if scan_peb:
                 # Add the initial list pointer as a list entry if we already have a PEB and LDR
-                list_entry_regions.append((task.Peb.Ldr.dereference().obj_offset, task.Peb.Ldr.InLoadOrderModuleList.obj_offset, task.Peb.Ldr.InLoadOrderModuleList.size() * 3))
+                list_entry_regions.append((vol_plugin.get_object_offset(ldr),
+                                           vol_plugin.get_object_offset(ldr.InLoadOrderModuleList)
+                                           list_entry_size * 3))
                 
                 # Note: we do not erase the modules we have information for from the list,
                 # unless we have a different module loaded at the same base address.
@@ -300,50 +267,63 @@ def windows_update_modules(pgd, update_symbols=False):
                 # Mark all modules as non-present
                 set_modules_non_present(p_pid, p_pgd)
 
-                for module in task.get_init_modules():
+                for module in task.init_order_modules():
                     if module.DllBase not in inserted_bases:
                         inserted_bases.append(module.DllBase)
-                        windows_insert_module(p_pid, p_pgd, module, update_symbols)
-                        if list_entry_size is None:
-                            list_entry_size = module.InLoadOrderLinks.size()
-                        list_entry_regions.append((module.obj_offset, module.InLoadOrderLinks.obj_offset, list_entry_size * 3))
+                        module_data = (module.DllBase,
+                                       module.SizeOfImage,
+                                       module.FullDllName.get_string(),
+                                       module.BaseDllName.get_string(),
+                                       module.CheckSum)
+                        windows_insert_module(p_pid, p_pgd, module_data, update_symbols)
+                        list_entry_regions.append((vol_plugin.get_object_offset(module),
+                                                   vol_plugin.get_object_offset(module.InLoadOrderLinks),
+                                                   list_entry_size * 3))
 
-                for module in task.get_mem_modules():
+                for module in task.mem_order_modules():
                     if module.DllBase not in inserted_bases:
                         inserted_bases.append(module.DllBase)
-                        windows_insert_module(p_pid, p_pgd, module, update_symbols)
-                        if list_entry_size is None:
-                            list_entry_size = module.InLoadOrderLinks.size()
-                        list_entry_regions.append((module.obj_offset, module.InLoadOrderLinks.obj_offset, list_entry_size * 3))
+                        module_data = (module.DllBase,
+                                       module.SizeOfImage,
+                                       module.FullDllName.get_string(),
+                                       module.BaseDllName.get_string(),
+                                       module.CheckSum)
+                        windows_insert_module(p_pid, p_pgd, module_data, update_symbols)
+                        list_entry_regions.append((vol_plugin.get_object_offset(module),
+                                                   vol_plugin.get_object_offset(module.InMemoryOrderLinks),
+                                                   list_entry_size * 3))
 
-                for module in task.get_load_modules():
+                for module in task.load_order_modules():
                     if module.DllBase not in inserted_bases:
                         inserted_bases.append(module.DllBase)
-                        windows_insert_module(p_pid, p_pgd, module, update_symbols)
-                        if list_entry_size is None:
-                            list_entry_size = module.InLoadOrderLinks.size()
-                        list_entry_regions.append((module.obj_offset, module.InLoadOrderLinks.obj_offset, list_entry_size * 3))
+                        module_data = (module.DllBase,
+                                       module.SizeOfImage,
+                                       module.FullDllName.get_string(),
+                                       module.BaseDllName.get_string(),
+                                       module.CheckSum)
+                        windows_insert_module(p_pid, p_pgd, module_data, update_symbols)
+                        list_entry_regions.append((vol_plugin.get_object_offset(module),
+                                                   vol_plugin.get_object_offset(module.InInitializationOrderLinks),
+                                                   list_entry_size * 3))
 
                 # Now, if we are a 64bit system and the process is a Wow64 process, traverse VAD 
                 # to find the 32 bit modules
 
-                if api.get_os_bits() == 64 and task.IsWow64:
-                    for vad in task.VadRoot.traverse():
+                if api.get_os_bits() == 64 and task.get_is_wow64():
+                    for vad in task.get_vad_root().traverse():
                         if vad is not None:
-                            if hasattr(vad, "FileObject"):
-                                f = vad.FileObject
-                                if f is not None:
-                                    fname = f.file_name_with_device()
-                                    if fname and "Windows\\SysWOW64".lower() in fname.lower() and ".dll" == fname[-4:].lower():
-                                        fname_starts = fname.find("Windows\\SysWOW64")
-                                        fname = fname[fname_starts:]
-                                        windows_insert_module_internal(p_pid, p_pgd, vad.Start,
-                                                                       vad.End - vad.Start,
-                                                                       fname,
-                                                                       fname.split("\\")[-1],
-                                                                       "",
-                                                                       update_symbols,
-                                                                       do_stop = True)
+                            fname = vad.get_file_name()
+                            if isinstance(fname, str):
+                                if fname and "Windows\\SysWOW64".lower() in fname.lower() and ".dll" == fname[-4:].lower():
+                                    fname_starts = fname.find("Windows\\SysWOW64")
+                                    fname = fname[fname_starts:]
+                                    windows_insert_module(p_pid, p_pgd, vad.get_start(),
+                                                                   vad.get_end() - vad.get_start(),
+                                                                   fname,
+                                                                   fname.split("\\")[-1],
+                                                                   "",
+                                                                   update_symbols,
+                                                                   do_stop = True)
                 # Remove all the modules that are not marked as present
                 clean_non_present_modules(p_pid, p_pgd)
 
@@ -357,56 +337,16 @@ def windows_update_modules(pgd, update_symbols=False):
     return None 
 
 
-def windows_kdbgscan_fast(dtb):
-    global last_kdbg
+def windows_scan_ps_active_process_head(current_dtb):
     from utils import ConfigurationManager as conf_m
+    from volatility_glue import volatility_scan_ps_active_process_head
+    from volatility_glue import get_plugin_instance
 
     try:
-        config = conf_m.vol_conf
-        config.DTB = dtb
-        try:
-            addr_space = utils.load_as(config)
-        except BaseException:
-            # Return silently
-            conf_m.addr_space = None
-            return 0
-        conf_m.addr_space = addr_space
-
-        if obj.VolMagic(addr_space).KPCR.value:
-            kpcr = obj.Object("_KPCR", offset=obj.VolMagic(
-                addr_space).KPCR.value, vm=addr_space)
-            kdbg = kpcr.get_kdbg()
-            if kdbg.is_valid():
-                last_kdbg = kdbg.obj_offset
-                return int(last_kdbg)
-
-        kdbg = obj.VolMagic(addr_space).KDBG.v()
-
-        if kdbg.is_valid():
-            last_kdbg = kdbg.obj_offset
-            return int(last_kdbg)
-
-        # skip the KPCR backup method for x64
-        memmode = addr_space.profile.metadata.get('memory_model', '32bit')
-
-        version = (addr_space.profile.metadata.get('major', 0),
-                   addr_space.profile.metadata.get('minor', 0))
-
-        if memmode == '32bit' or version <= (6, 1):
-
-            # Fall back to finding it via the KPCR. We cannot
-            # accept the first/best suggestion, because only
-            # the KPCR for the first CPU allows us to find KDBG.
-            for kpcr_off in obj.VolMagic(addr_space).KPCR.get_suggestions():
-
-                kpcr = obj.Object("_KPCR", offset=kpcr_off, vm=addr_space)
-
-                kdbg = kpcr.get_kdbg()
-
-                if kdbg.is_valid():
-                    last_kdbg = kdbg.obj_offset
-                    return int(last_kdbg)
-        return 0
+        ps_active_process_list = volatility_scan_ps_active_process_head()
+        if ps_active_process_list is not None:
+            conf_m.vol_plugin = get_plugin_instance() 
+        return ps_active_process_list
     except BaseException:
         traceback.print_exc()
 
@@ -428,6 +368,8 @@ def windows_read_memory_mapped(pgd, addr, size, pte, is_pae, bitness):
     import volatility.win32.tasks as tasks
     import volatility.plugins.vadinfo as vadinfo
     from utils import get_addr_space
+    import volatility.obj as obj
+
 
     addr_space = get_addr_space(pgd)
 
@@ -813,6 +755,8 @@ def windows_read_paged_out_memory(pgd, addr, size):
 def get_system_time():
     from volatility import obj
     from utils import get_addr_space
+    import volatility.obj as obj
+
     addr_space = get_addr_space()
     k = obj.Object("_KUSER_SHARED_DATA", offset = obj.VolMagic(addr_space).KUSER_SHARED_DATA.v(), vm = addr_space)
     return k.SystemTime.as_datetime()
@@ -874,6 +818,7 @@ def get_threads():
     
 
 def set_running_threads(thread_list):
+    import volatility.obj as obj
     from api import get_num_cpus
     from api import r_cpu
     from api import is_kernel_running
@@ -932,6 +877,7 @@ def set_running_threads(thread_list):
 def win_read_thread_register_from_ktrap_frame(thread, reg_name):
     """ Get a register from a threads trap frame """
     from utils import ConfigurationManager as conf_m
+    import volatility.obj as obj
 
     vol_thread = obj.Object("_ETHREAD", offset=thread['thread_object_base'], vm=conf_m.addr_space)
     try:
@@ -952,6 +898,7 @@ def win_read_thread_register_from_ktrap_frame(thread, reg_name):
 def win_write_thread_register_in_ktrap_frame(thread, reg_name, buf, size):
     """ Get a register from a threads trap frame """
     from utils import ConfigurationManager as conf_m
+    import volatility.obj as obj
 
     vol_thread = obj.Object("_ETHREAD", offset=thread['thread_object_base'], vm=conf_m.addr_space)
     try:

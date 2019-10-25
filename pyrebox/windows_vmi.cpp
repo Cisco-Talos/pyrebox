@@ -36,9 +36,8 @@ extern "C"{
 
 using namespace std;
 
-pyrebox_target_ulong kdbg_address = 0;
 static unsigned long long tlb_counter = 0;
-pyrebox_target_ulong ps_active_process_list;
+pyrebox_target_ulong ps_active_process_list = 0;
 
 //Offset list taken from volatility overlays
 unsigned int eprocess_offsets[LimitWindows][LastOffset] = { {0xe8,0xe0,0x1f0,0x238,0x28,0xd0}, // VistaSP0x64
@@ -75,7 +74,7 @@ unsigned int eprocess_offsets[LimitWindows][LastOffset] = { {0xe8,0xe0,0x1f0,0x2
     {0x88,0x84,0x14c,0x174,0x180,0x78}, //WinXPSP2x86,
     {0x88,0x84,0x14c,0x174,0x18,0x78}}; //WinXPSP3x86,
 
-pyrebox_target_ulong scan_kdbg(pyrebox_target_ulong pgd){
+pyrebox_target_ulong scan_ps_active_process_list(pyrebox_target_ulong pgd){
    //Good reference: http://www.geoffchappell.com/studies/windows/km/ntoskrnl/structs/kpcr.htm
    //Good reference: Volatility overlays
    //
@@ -88,12 +87,12 @@ pyrebox_target_ulong scan_kdbg(pyrebox_target_ulong pgd){
    PyObject* py_vmi_module = PyImport_Import(py_module_name);
    Py_DECREF(py_module_name);
 
-   pyrebox_target_ulong kdbg = 0;
+   pyrebox_target_ulong result = 0;
 
    if(py_vmi_module != NULL){
-       PyObject* py_kdbgscan = PyObject_GetAttrString(py_vmi_module,"windows_kdbgscan_fast");
-       if (py_kdbgscan){
-           if (PyCallable_Check(py_kdbgscan)){
+       PyObject* py_scan = PyObject_GetAttrString(py_vmi_module,"windows_scan_ps_active_process_list");
+       if (py_scan){
+           if (PyCallable_Check(py_scan)){
                 PyObject* py_args = PyTuple_New(1);
                 if (arch_bits[os_index] == 32){
                     PyTuple_SetItem(py_args, 0, PyLong_FromUnsignedLong(pgd)); // The reference to the object in the tuple is stolen
@@ -101,19 +100,19 @@ pyrebox_target_ulong scan_kdbg(pyrebox_target_ulong pgd){
                 else{
                     PyTuple_SetItem(py_args, 0, PyLong_FromUnsignedLongLong(pgd)); // The reference to the object in the tuple is stolen
                 }
-                PyObject* addr = PyObject_CallObject(py_kdbgscan,py_args);
+                PyObject* addr = PyObject_CallObject(py_scan,py_args);
                 Py_DECREF(py_args);
                 if (addr){
                     if (arch_bits[os_index] == 32){
-                        kdbg = PyLong_AsUnsignedLong(addr);
+                        result = PyLong_AsUnsignedLong(addr);
                     }
                     else{
-                        kdbg = PyLong_AsUnsignedLongLong(addr);
+                        result = PyLong_AsUnsignedLongLong(addr);
                     }
                     Py_DECREF(addr);
                 }
            }
-           Py_XDECREF(py_kdbgscan);
+           Py_XDECREF(py_scan);
        }
        Py_DECREF(py_vmi_module);
    }
@@ -123,7 +122,7 @@ pyrebox_target_ulong scan_kdbg(pyrebox_target_ulong pgd){
    fflush(stderr);
    pthread_mutex_unlock(&pyrebox_mutex);
 
-   return canonical_address(kdbg); 
+   return canonical_address(result);
 }
 
 void windows_vmi_init(os_index_t os_index){
@@ -178,9 +177,9 @@ void windows_vmi_context_change_callback(pyrebox_target_ulong old_pgd,pyrebox_ta
 }
 
 void windows_vmi_tlb_callback(pyrebox_target_ulong pgd, os_index_t os_index){
-    //First, try to resolve the kdbg_address, if we have not yet done it.
-    int kdbg_found = 0;
-    if (kdbg_address == 0){
+    //First, try to resolve the ps_active_process_list, if we have not yet done it.
+    int ps_active_found = 0;
+    if (ps_active_process_list == 0){
         tlb_counter += 1;
         //Wait until we have a valid kpcr, and then search for kdbg. Hopefully it is already in memory.
         if (tlb_counter % 1000 == 0){
@@ -210,28 +209,27 @@ void windows_vmi_tlb_callback(pyrebox_target_ulong pgd, os_index_t os_index){
             }
             //Now that KPCR seems to be valid, we scan the kdbg
             if (kpcr && kpcr == selfpcr){
-                kdbg_address = scan_kdbg(pgd);
-                if (kdbg_address != 0){
+                ps_active_process_list = scan_ps_active_process_list(pgd);
+                if (ps_active_process_list != 0){
 #if TARGET_LONG_SIZE == 4
                         utils_print_debug("[*] KPCR found at %x!!\n", kpcr);
-                        utils_print_debug("[*] KDBG found at %x!!\n", kdbg_address);
+                        utils_print_debug("[*] PsActiveProcessList found at %x!!\n", ps_active_process_list);
 #elif TARGET_LONG_SIZE == 8
                         utils_print_debug("[*] KPCR found at %lx!!\n", kpcr);
-                        utils_print_debug("[*] KDBG found at %lx!!\n", kdbg_address);
+                        utils_print_debug("[*] PsActiveProcessList found at %lx!!\n", ps_active_process_list);
 #else
 #error TARGET_LONG_SIZE undefined
 #endif
-                        //Update the variable to indicate that we found the kdbg
-                        kdbg_found = 1;
+                        //Update the variable to indicate that we found the pointer
+                        ps_active_found = 1;
                 }
             }
         }
     }
     //If the pgd is not in the list of processes, then we insert it.
     if (is_process_pgd_in_list(pgd) < PROC_PRESENT){
-        //Once kdbg is resolved, we can then start scanning processes
-        if (kdbg_address != 0){
-            qemu_virtual_memory_rw_with_pgd(pgd,kdbg_address + PS_ACTIVE_PROCESS_HEAD_OFFSET,(uint8_t*)&ps_active_process_list,sizeof(pyrebox_target_ulong),0);
+        //Once ps_active_process_list is resolved, we can then start scanning processes
+        if (ps_active_process_list != 0){
             if (ps_active_process_list != 0){
                //ps_active_process_list points to a _LIST_ENTRY structure, 
                //whose first member (flink), points to the first process's _LIST_ENTRY
@@ -246,7 +244,7 @@ void windows_vmi_tlb_callback(pyrebox_target_ulong pgd, os_index_t os_index){
 
                    int is_in_list = is_process_pgd_in_list(proc_pgd);
                    //This is the process we are looking for, or we need to initially populate the list
-                   if (pgd == proc_pgd || (kdbg_found == 1 && is_in_list == PROC_NOT_PRESENT)) {
+                   if (pgd == proc_pgd || (ps_active_found == 1 && is_in_list == PROC_NOT_PRESENT)) {
                        //Read Pid, ppid, name
                        pyrebox_target_ulong pid = 0;
                        pyrebox_target_ulong ppid = 0;
@@ -266,7 +264,7 @@ void windows_vmi_tlb_callback(pyrebox_target_ulong pgd, os_index_t os_index){
                            }                       
                        }
                        //Force loop exit, only if we are not populating the list for the first time
-                       if (kdbg_found == 0){
+                       if (ps_active_list == 0){
                            cur_proc = 0;
                        }
                    }

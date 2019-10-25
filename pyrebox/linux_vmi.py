@@ -23,8 +23,6 @@
 
 import os.path
 from utils import pp_error
-from volatility.renderers.basic import Address
-
 from utils import pp_print
 from utils import pp_debug
 from utils import pp_warning
@@ -78,6 +76,7 @@ def linux_init_address_space():
     from utils import ConfigurationManager as conf_m
     import volatility.utils as utils
     try:
+        # TODO VOLATILITY vol_conf is now vol_plugin
         config = conf_m.vol_conf
         try:
             addr_space = utils.load_as(config)
@@ -254,6 +253,7 @@ def linux_insert_kernel_module(module, base, size, basename, fullname, update_sy
 def linux_update_modules(pgd, update_symbols=False):
     from utils import ConfigurationManager as conf_m
     import volatility.obj as obj
+    from volatility.renderers.basic import Address
     from vmi import set_modules_non_present
     from vmi import clean_non_present_modules
 
