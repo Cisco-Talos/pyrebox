@@ -733,15 +733,20 @@ PyObject* py_vol_read_memory(PyObject *dummy, PyObject *args){
 
     if (PyArg_ParseTuple(args, "KK", &address,&length)){
         char *buf = (char*)malloc(length + 1);
-        nbytes = connection_read_memory(address, buf, length);
-        if (nbytes != length){
-            Py_INCREF(Py_None);
-            result = Py_None;
+        if (buf){
+            nbytes = connection_read_memory(address, buf, length);
+            if (nbytes != length){
+                Py_INCREF(Py_None);
+                result = Py_None;
+            }
+            else{
+                result = Py_BuildValue("y#",buf,length);
+            }
+            free(buf);
+        } else{
+            PyErr_SetString(PyExc_ValueError, "Could not allocate sufficient memory to perform memory read on py_vol_read_memory");
+            return 0;
         }
-        else{
-            result = Py_BuildValue("y#",buf,length);
-        }
-        free(buf);
     }
     return result;
 }
