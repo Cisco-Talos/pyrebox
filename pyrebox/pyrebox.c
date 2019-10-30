@@ -62,8 +62,8 @@ void pyrebox_init_blocks(void){
 
 static struct PyModuleDef capi_module = {
     PyModuleDef_HEAD_INIT,
-    "capi",   /* name of module */
-    0, /* module documentation, may be NULL */
+    "c_api",   /* name of module */
+    "The C API", /* module documentation, may be NULL */
     -1,       /* size of per-interpreter state of the module,
     or -1 if the module keeps state in global variables. */
     api_methods 
@@ -71,12 +71,19 @@ static struct PyModuleDef capi_module = {
 static struct PyModuleDef utils_print_module = {
     PyModuleDef_HEAD_INIT,
     "utils_print",   /* name of module */
-    0, /* module documentation, may be NULL */
+    "Print utils", /* module documentation, may be NULL */
     -1,       /* size of per-interpreter state of the module,
     or -1 if the module keeps state in global variables. */
     utils_methods_print 
 };
 
+static PyMODINIT_FUNC PyInit_capi(void){
+    return PyModule_Create(&capi_module);
+}
+
+static PyMODINIT_FUNC PyInit_utils(void){
+    return PyModule_Create(&utils_print_module);
+}
 
 int pyrebox_init(const char *pyrebox_conf_str){
 
@@ -100,14 +107,25 @@ int pyrebox_init(const char *pyrebox_conf_str){
   //https://mail.python.org/pipermail/new-bugs-announce/2008-November/003322.html
   dlopen("libpython3.7.so", RTLD_LAZY | RTLD_GLOBAL);
 
+  PyImport_AppendInittab("c_api", PyInit_capi);
+  PyImport_AppendInittab("utils_print", PyInit_utils);
   Py_Initialize();
   PyObject *sysPath = PySys_GetObject((char*)"path");
   PyObject *path = PyUnicode_FromString(PYREBOX_PATH);
   PyList_Insert(sysPath, 0, path);
 
+  printf("Initializing python  modules\n");
   //Register all the interface function for python
-  PyModule_Create(&capi_module);
-  PyModule_Create(&utils_print_module);
+  PyObject* m = PyModule_Create(&capi_module);
+  if (m == NULL){
+      printf("c_api module initialization failed.");
+  }
+  PyErr_Print();
+  m = PyModule_Create(&utils_print_module);
+  if (m == NULL){
+      printf("utils_print module initialization failed.");
+  }
+  PyErr_Print();
 
   unsigned int length = strlen(PYREBOX_PATH) + strlen("init.py") + 2;
   //More than 4k path should be unreasonable
@@ -158,7 +176,6 @@ int pyrebox_init(const char *pyrebox_conf_str){
       return 1;
   }
   Py_DECREF(py_args_tuple);
-
   PyObject* vol_prof_repr = PyObject_Repr(vol_profile);
   const char* s = PyUnicode_AsUTF8(vol_prof_repr);
   //Set the vol profile in vmi.cpp

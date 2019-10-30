@@ -85,7 +85,7 @@ def r_pa(addr, length):
     # Given that the exception is self explanatory, we just let it propagate
     # upwards
     offset = addr
-    ret_buffer = ""
+    ret_buffer = b""
     while offset < (addr + length):
         read_length = 0x2000 if (addr + length - offset) > 0x2000 else (addr + length - offset)
         ret_buffer += c_api.r_pa(offset, read_length)
@@ -119,14 +119,14 @@ def r_va(pgd, addr, length, use_filesystem=False):
     # Given that the exception is self explanatory, we just let it propagate
     # upwards
     offset = addr
-    ret_buffer = ""
+    ret_buffer = b""
     while offset < (addr + length):
         # Read page by page, until the next page's boundary. In this way,
         # we make sure we never read memory from more than one page, 
         # dealing individually with paged-out memory
-        boundary = offset + 0x1000 
+        boundary = offset + 0x1000
         boundary -= (offset & 0xFFF)
-        read_length = boundary - offset 
+        read_length = boundary - offset
         if (offset + read_length) > (addr + length):
             read_length = (addr + length) - offset
         try:

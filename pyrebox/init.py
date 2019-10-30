@@ -28,6 +28,7 @@ from prettytable import PrettyTable
 import sys
 import configparser
 import traceback
+import c_api
 from utils import ConfigurationManager as conf_m
 from utils import pp_print
 from utils import pp_debug
@@ -35,6 +36,8 @@ from utils import pp_warning
 from utils import pp_error
 
 import functools
+
+import windows_vmi
 
 
 #   Python module initialization routine
@@ -240,6 +243,7 @@ def init(platform, root_path, volatility_path, conf_name):
         # Set global configuration
         conf_m.volatility_path = volatility_path
         conf_m.vol_profile = vol_profile
+        conf_m.os_profile = vol_profile
         conf_m.platform = platform
         conf_m.pyre_root = root_path
 
