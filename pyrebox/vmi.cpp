@@ -76,9 +76,7 @@ void vmi_context_change(pyrebox_target_ulong old_pgd,pyrebox_target_ulong new_pg
 void update_modules(pyrebox_target_ulong pgd){
 
    //Lock the python mutex
-   pthread_mutex_lock(&pyrebox_mutex);
-   fflush(stdout);
-   fflush(stderr);
+   enter_python_runtime();
 
    //Call python for module scanning
    PyObject* py_module_name = PyUnicode_FromString("vmi");
@@ -108,9 +106,7 @@ void update_modules(pyrebox_target_ulong pgd){
    }
 
    //Unlock the python mutex
-   fflush(stdout);
-   fflush(stderr);
-   pthread_mutex_unlock(&pyrebox_mutex);
+   exit_python_runtime();
 }
 
 

@@ -21,6 +21,7 @@
 #
 # -------------------------------------------------------------------------
 
+import logging
 import volatility.plugins
 import volatility.symbols
 from volatility import framework
@@ -31,6 +32,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union, Type
 from volatility.framework import interfaces, constants
 from volatility.framework.configuration import requirements
 from volatility.plugins.windows import pslist
+from volatility.framework.plugins.windows.pyrebox import PyREBoxAccessWindows
 
 plugin_class = None
 context = None
@@ -38,6 +40,22 @@ automagics = None
 base_config_path= "plugins"
 # Instance of the plugin
 volatility_interface = None
+
+vollog = logging.getLogger()
+
+# Log everything:
+#vollog.setLevel(1)
+
+# Log only Warnings
+vollog.setLevel(logging.WARNING)
+
+# Trim the console down by default
+console = logging.StreamHandler()
+console.setLevel(logging.WARNING)
+formatter = logging.Formatter('%(levelname)-8s %(name)-12s: %(message)s')
+console.setFormatter(formatter)
+vollog.addHandler(console)
+
 
 class PyREBoxAccess(interfaces.plugins.PluginInterface):
     """Environment to directly interact with a memory image."""
@@ -63,111 +81,6 @@ class PyREBoxAccess(interfaces.plugins.PluginInterface):
         return renderers.TreeGrid([("Terminating", str)], None)
 
 
-class PyREBoxAccessWindows(PyREBoxAccess):
-    """Environment to directly interact with a windows memory image."""
-
-    def __init__(self, *args, **kwargs):
-        """ Constructor, pass arguments to parent """
-        super(PyREBoxAccessWindows, self).__init__(*args, **kwargs)
-        self.__layer_name = self.config["primary"]
-        self.__symbol_table = self.config["nt_symbols"]
-        self.__kernel_virtual_offset = self.context.layers[self.__layer_name].config['kernel_virtual_offset']
-
-    @classmethod
-    def get_requirements(cls):
-        return (super().get_requirements() + [
-            requirements.SymbolTableRequirement(name = "nt_symbols", description = "Windows kernel symbols"),
-            requirements.PluginRequirement(name = 'pslist', plugin = pslist.PsList, version = (1, 0, 0)),
-            requirements.IntRequirement(name = 'pid', description = "Process ID", optional = True)
-        ])
-
-    def change_process(self, pid = None):
-        """Change the current process and layer, based on a process ID"""
-        processes = self.list_processes()
-        for process in processes:
-            if process.UniqueProcessId == pid:
-                process_layer = process.add_process_layer()
-                self.change_layer(process_layer)
-                return
-        print("No process with process ID {} found".format(pid))
-
-    def list_processes(self):
-        """Returns a list of EPROCESS objects from the primary layer"""
-        # We always use the main kernel memory and associated symbols
-        return list(pslist.PsList.list_processes(self.context, self.config['primary'], self.config['nt_symbols']))
-
-    def get_kernel_module(self):
-        return self.context.module(self.__symbol_table,
-                              layer_name = self.__layer_name,
-                              offset = self.__kernel_virtual_offset)
-
-    @property
-    def PsActiveProcessHeadAddr(self):
-        ntkrnlmp = self.get_kernel_module()
-        ps_aph_offset = ntkrnlmp.get_symbol("PsActiveProcessHead").address
-        return ps_aph_offset
-
-    @property
-    def PsLoadedModuleListAddr(self):
-        ntkrnlmp = self.get_kernel_module()
-        ps_aph_offset = ntkrnlmp.get_symbol("PsLoadedModuleList").address
-        return ps_aph_offset
-
-    def get_type_size(self, the_type):
-        return self.context.symbol_space.get_type(self.__symbol_table + constants.BANG + the_type).size
-
-    def get_object_offset(self, obj):
-        return obj.vol.offset
-
-    def get_eprocess(self, addr):
-        ntkrnlmp = self.get_kernel_module()
-        eproc = ntkrnlmp.object(object_type = "_EPROCESS", offset = addr, absolute = True)
-        if eproc.is_valid():
-            return eproc
-        else:
-            return None
-
-    def get_peb_from_eprocess(self, eproc):
-        proc_layer_name = eproc.add_process_layer()
-        proc_layer = self.context.layers[proc_layer_name]
-        if not proc_layer.is_valid(eproc.Peb):
-            result = None
-        else:
-            result = eproc.Peb
-        self.context.layers.del_layer(proc_layer_name)
-        return result
-
-    def get_ldr_from_eprocess(self, eproc):
-        proc_layer_name = eproc.add_process_layer()
-        proc_layer = self.context.layers[proc_layer_name]
-        if not proc_layer.is_valid(eproc.Peb):
-            result = None
-        elif not proc_layer.is_valid(eproc.Peb.Ldr):
-            results = None
-        else:
-            result = eproc.Peb.Ldr
-        self.context.layers.del_layer(proc_layer_name)
-        return result
-
-    def get_kernel_module_list(self):
-        ntkrnlmp = self.get_kernel_module() 
-        try:
-            # use this type if its available (starting with windows 10)
-            ldr_entry_type = ntkrnlmp.get_type("_KLDR_DATA_TABLE_ENTRY")
-        except exceptions.SymbolError:
-            ldr_entry_type = ntkrnlmp.get_type("_LDR_DATA_TABLE_ENTRY")
-
-        type_name = ldr_entry_type.type_name.split(constants.BANG)[1]
-
-        list_head = self.PsLoadedModuleListAddr
-        list_entry = ntkrnlmp.object(object_type = "_LIST_ENTRY", offset = list_head)
-        reloff = ldr_entry_type.relative_child_offset("InLoadOrderLinks")
-
-        # Get the first LDR_MODULE
-        module = ntkrnlmp.object(object_type = type_name, offset = list_entry.vol.offset - reloff, absolute = True)
-
-        for mod in module.InLoadOrderLinks:
-            yield mod
 
 class PyREBoxAccessLinux(PyREBoxAccess):
     """Environment to directly interact with a linux memory image."""
@@ -236,7 +149,7 @@ def initialize_volatility(plugin):
 
     return True
 
-def volatility_scan_ps_active_process_head():
+def volatility_scan_ps_active_process_head(pgd):
     '''
         Scans the memory image, locates PsActiveProcessList,
         creates the process, and saves it.
@@ -248,16 +161,43 @@ def volatility_scan_ps_active_process_head():
     global volatility_interface
 
     errors = automagic.run(automagics, context, plugin_class, base_config_path)
-
     if len(errors) > 0:
+        for error in errors:
+            print(error)
         return None
     else:
-        volatility_interface = plugins.construct_plugin(ctx, automagics, plugin, base_config_path, None, None)
+        volatility_interface = plugins.construct_plugin(context, automagics, plugin_class, base_config_path, None, None)
         return volatility_interface.PsActiveProcessHeadAddr
 
 def get_volatility_interface():
     global volatility_interface
     return volatility_interface
+
+def volatility_clear_lru_cache():
+    '''
+        Clear LRU caches for certain functions so that everything is re-read
+    '''
+    try:
+        from volatility.framework.interfaces.layers import TranslationLayerInterface
+        TranslationLayerInterface.read.cache_clear()
+
+        from volatility.framework.symbols.windows.extensions import POOL_HEADER
+        from volatility.framework.symbols.windows.extensions import MMVAD_SHORT
+        POOL_HEADER._calculate_optional_header_lengths.cache_clear()
+        MMVAD_SHORT.get_tag.cache_clear()
+
+        from volatility.framework.contexts import SizedModule
+        # We need to access the getter (fget) of the Hash property
+        SizedModule.hash.fget.cache_clear()
+
+        from volatility.framework.layers.linear import LinearlyMappedLayer
+        LinearlyMappedLayer.read.cache_clear()
+
+        from volatility.framework.layers.intel import Intel
+        Intel._get_valid_table.cache_clear()
+    except Exception as e:
+        print(str(e))
+    return None
 
 def initialize_volatility_windows():
     return initialize_volatility(PyREBoxAccessWindows)

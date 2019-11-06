@@ -1457,9 +1457,7 @@ void hmp_snapshot_delete_blkdev_internal(Monitor *mon, const QDict *qdict)
 void hmp_loadvm(Monitor *mon, const QDict *qdict)
 {
 
-    fflush(stdout);
-    fflush(stderr);
-    pthread_mutex_unlock(&pyrebox_mutex);
+    enter_python_runtime();
 
     int saved_vm_running  = runstate_is_running();
     const char *name = qdict_get_str(qdict, "name");
@@ -1473,16 +1471,12 @@ void hmp_loadvm(Monitor *mon, const QDict *qdict)
     hmp_handle_error(mon, &err);
 
     //Lock the python mutex
-    pthread_mutex_lock(&pyrebox_mutex);
-    fflush(stdout);
-    fflush(stderr);
+    exit_python_runtime();
 }
 
 void hmp_savevm(Monitor *mon, const QDict *qdict)
 {
-    fflush(stdout);
-    fflush(stderr);
-    pthread_mutex_unlock(&pyrebox_mutex);
+    enter_python_runtime();
 
     Error *err = NULL;
 
@@ -1490,9 +1484,7 @@ void hmp_savevm(Monitor *mon, const QDict *qdict)
     hmp_handle_error(mon, &err);
 
     //Lock the python mutex
-    pthread_mutex_lock(&pyrebox_mutex);
-    fflush(stdout);
-    fflush(stderr);
+    exit_python_runtime();
 }
 
 void hmp_delvm(Monitor *mon, const QDict *qdict)

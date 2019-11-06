@@ -199,6 +199,37 @@ int pyrebox_init(const char *pyrebox_conf_str){
   return 0;
 };
 
+void enter_python_runtime(void){
+   pthread_mutex_lock(&pyrebox_mutex);
+   fflush(stdout);
+   fflush(stderr);
+
+   PyObject* py_module_name = PyUnicode_FromString("volatility_glue");
+   PyObject* py_vol_module = PyImport_Import(py_module_name);
+   Py_DECREF(py_module_name);
+
+   if(py_vol_module != NULL){
+       PyObject* py_clear_cache = PyObject_GetAttrString(py_vol_module,"volatility_clear_lru_cache");
+       if (py_clear_cache){
+           if (PyCallable_Check(py_clear_cache)){
+                PyObject* py_args = PyTuple_New(0);
+                PyObject* ret = PyObject_CallObject(py_clear_cache, py_args);
+                Py_DECREF(py_args);
+                if (ret){
+                    Py_DECREF(ret);
+                }
+           }
+           Py_XDECREF(py_clear_cache);
+       }
+       Py_DECREF(py_vol_module);
+   }
+}
+void exit_python_runtime(void){
+   fflush(stdout);
+   fflush(stderr);
+   pthread_mutex_unlock(&pyrebox_mutex);
+}
+
 int pyrebox_finalize(void){
   vm_stop(RUN_STATE_PAUSED);
 

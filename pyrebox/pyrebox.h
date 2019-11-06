@@ -30,4 +30,6 @@ void clear_targets(void);
 int pyrebox_init(const char *pyrebox_conf_str);
 void pyrebox_init_blocks(void);
 int pyrebox_finalize(void);
+void enter_python_runtime(void);
+void exit_python_runtime(void);
 #endif

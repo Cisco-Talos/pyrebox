@@ -45,24 +45,30 @@
 
 void import_module(Monitor* mon, const QDict* qdict)
 {
-
   if ((qdict != NULL) && (qdict_haskey(qdict, "modulename")))
   {
-    PyObject* py_main_module, *py_global_dict;
-    PyObject* py_import,*py_args_tuple;
-    PyObject *module_path = PyUnicode_FromString(qdict_get_str(qdict, "modulename"));
-    // Get a reference to the main module and global dictionary
-    py_main_module = PyImport_AddModule("__main__");
-    py_global_dict = PyModule_GetDict(py_main_module);
-    //Call the module import function
-    py_import = PyDict_GetItemString(py_global_dict, "import_module");
-    py_args_tuple = PyTuple_New(1);
-    PyTuple_SetItem(py_args_tuple, 0, module_path); 
-    PyObject* ret = PyObject_CallObject(py_import,py_args_tuple);
-    Py_XDECREF(ret);
-    Py_DECREF(py_args_tuple);
-  }
+   PyObject* py_module_name = PyUnicode_FromString("init");
+   PyObject* py_init_module = PyImport_Import(py_module_name);
+   Py_DECREF(py_module_name);
+   PyObject *module_path = PyUnicode_FromString(qdict_get_str(qdict, "modulename"));
 
+   if(py_init_module != NULL){
+       PyObject* py_func = PyObject_GetAttrString(py_init_module, "import_module");
+       if (py_func){
+           if (PyCallable_Check(py_func)){
+                PyObject* py_args = PyTuple_New(1);
+                PyTuple_SetItem(py_args, 0, module_path); 
+                PyObject* ret = PyObject_CallObject(py_func, py_args);
+                Py_DECREF(py_args);
+                if (ret){
+                    Py_DECREF(ret);
+                }
+           }
+           Py_XDECREF(py_func);
+       }
+       Py_DECREF(py_init_module);
+   }
+  }
 }
 
 void unload_module(Monitor* mon, const QDict* qdict)
@@ -70,70 +76,104 @@ void unload_module(Monitor* mon, const QDict* qdict)
 
   if ((qdict != NULL) && (qdict_haskey(qdict, "modulehandle")))
   {
-    PyObject* py_main_module, *py_global_dict;
-    PyObject* py_import,*py_args_tuple;
-    PyObject *module_hdl = PyLong_FromLong(qdict_get_int(qdict, "modulehandle"));
-    // Get a reference to the main module and global dictionary
-    py_main_module = PyImport_AddModule("__main__");
-    py_global_dict = PyModule_GetDict(py_main_module);
-    //Call the module import function
-    py_import = PyDict_GetItemString(py_global_dict, "unload_module");
-    py_args_tuple = PyTuple_New(1);
-    PyTuple_SetItem(py_args_tuple, 0, module_hdl); 
-    PyObject* ret = PyObject_CallObject(py_import,py_args_tuple);
-    Py_XDECREF(ret);
-    Py_DECREF(py_args_tuple);
-    commit_deferred_callback_removes();
-  }
+   PyObject* py_module_name = PyUnicode_FromString("init");
+   PyObject* py_init_module = PyImport_Import(py_module_name);
+   Py_DECREF(py_module_name);
+   PyObject *module_hdl = PyLong_FromLong(qdict_get_int(qdict, "modulehandle"));
 
+   if(py_init_module != NULL){
+       PyObject* py_func = PyObject_GetAttrString(py_init_module, "unload_module");
+       if (py_func){
+           if (PyCallable_Check(py_func)){
+                PyObject* py_args = PyTuple_New(1);
+                PyTuple_SetItem(py_args, 0, module_hdl); 
+                PyObject* ret = PyObject_CallObject(py_func, py_args);
+                Py_DECREF(py_args);
+                if (ret){
+                    Py_DECREF(ret);
+                }
+           }
+           Py_XDECREF(py_func);
+       }
+       Py_DECREF(py_init_module);
+   }
+   commit_deferred_callback_removes();
+  }
 }
 
 void reload_module(Monitor* mon, const QDict* qdict)
 {
   if ((qdict != NULL) && (qdict_haskey(qdict, "modulehandle")))
   {
-    PyObject* py_main_module, *py_global_dict;
-    PyObject* py_import,*py_args_tuple;
-    PyObject *module_hdl = PyLong_FromLong(qdict_get_int(qdict, "modulehandle"));
-    // Get a reference to the main module and global dictionary
-    py_main_module = PyImport_AddModule("__main__");
-    py_global_dict = PyModule_GetDict(py_main_module);
-    //Call the module import function
-    py_import = PyDict_GetItemString(py_global_dict, "reload_module");
-    py_args_tuple = PyTuple_New(1);
-    PyTuple_SetItem(py_args_tuple, 0, module_hdl); 
-    PyObject* ret = PyObject_CallObject(py_import,py_args_tuple);
-    Py_XDECREF(ret);
-    Py_DECREF(py_args_tuple);
-    commit_deferred_callback_removes();
+   PyObject* py_module_name = PyUnicode_FromString("init");
+   PyObject* py_init_module = PyImport_Import(py_module_name);
+   Py_DECREF(py_module_name);
+   PyObject *module_hdl = PyLong_FromLong(qdict_get_int(qdict, "modulehandle"));
+
+   if(py_init_module != NULL){
+       PyObject* py_func = PyObject_GetAttrString(py_init_module, "reload_module");
+       if (py_func){
+           if (PyCallable_Check(py_func)){
+                PyObject* py_args = PyTuple_New(1);
+                PyTuple_SetItem(py_args, 0, module_hdl); 
+                PyObject* ret = PyObject_CallObject(py_func, py_args);
+                Py_DECREF(py_args);
+                if (ret){
+                    Py_DECREF(ret);
+                }
+           }
+           Py_XDECREF(py_func);
+       }
+       Py_DECREF(py_init_module);
+   }
+   commit_deferred_callback_removes();
   }
 }
 
 void list_modules(Monitor* mon, const QDict* qdict)
 {
-    PyObject* py_main_module, *py_global_dict;
-    PyObject* py_import;//,*py_args_tuple;
-    // Get a reference to the main module and global dictionary
-    py_main_module = PyImport_AddModule("__main__");
-    py_global_dict = PyModule_GetDict(py_main_module);
-    //Call the module import function
-    py_import = PyDict_GetItemString(py_global_dict, "list_modules");
-    PyObject* ret = PyObject_CallObject(py_import,0);
-    Py_XDECREF(ret);
+   PyObject* py_module_name = PyUnicode_FromString("init");
+   PyObject* py_init_module = PyImport_Import(py_module_name);
+   Py_DECREF(py_module_name);
 
+   if(py_init_module != NULL){
+       PyObject* py_func = PyObject_GetAttrString(py_init_module, "list_modules");
+       if (py_func){
+           if (PyCallable_Check(py_func)){
+                PyObject* py_args = PyTuple_New(0);
+                PyObject* ret = PyObject_CallObject(py_func, py_args);
+                Py_DECREF(py_args);
+                if (ret){
+                    Py_DECREF(ret);
+                }
+           }
+           Py_XDECREF(py_func);
+       }
+       Py_DECREF(py_init_module);
+   }
 }
 
 void pyrebox_shell(Monitor* mon, const QDict* qdict)
 {
-    PyObject* py_main_module, *py_global_dict;
-    PyObject* py_import;//,*py_args_tuple;
-    // Get a reference to the main module and global dictionary
-    py_main_module = PyImport_AddModule("__main__");
-    py_global_dict = PyModule_GetDict(py_main_module);
-    //Call the module import function
-    py_import = PyDict_GetItemString(py_global_dict, "pyrebox_ipython_shell");
-    PyObject* ret = PyObject_CallObject(py_import,0);
-    Py_XDECREF(ret);
+   PyObject* py_module_name = PyUnicode_FromString("init");
+   PyObject* py_init_module = PyImport_Import(py_module_name);
+   Py_DECREF(py_module_name);
+
+   if(py_init_module != NULL){
+       PyObject* py_shell = PyObject_GetAttrString(py_init_module, "pyrebox_ipython_shell");
+       if (py_shell){
+           if (PyCallable_Check(py_shell)){
+                PyObject* py_args = PyTuple_New(0);
+                PyObject* ret = PyObject_CallObject(py_shell, py_args);
+                Py_DECREF(py_args);
+                if (ret){
+                    Py_DECREF(ret);
+                }
+           }
+           Py_XDECREF(py_shell);
+       }
+       Py_DECREF(py_init_module);
+   }
 }
 
 void pyrebox_gdbserver(Monitor* mon, const QDict* qdict){

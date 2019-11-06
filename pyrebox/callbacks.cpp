@@ -616,9 +616,7 @@ void CallbackManager::deliver_callback(callback_type_t type, callback_params_t p
         }
     }
     //Lock the python mutex
-    pthread_mutex_lock(&pyrebox_mutex);
-    fflush(stdout);
-    fflush(stderr);
+    enter_python_runtime();
 
     //For each type of callback, trigger the python callback with its corresponding arguments 
     list<Callback*> callbacks_needed;
@@ -733,9 +731,7 @@ void CallbackManager::deliver_callback(callback_type_t type, callback_params_t p
     if (callbacks_needed.size() == 0)
     {
         //Unlock the python mutex
-        fflush(stdout);
-        fflush(stderr);
-        pthread_mutex_unlock(&pyrebox_mutex);
+        exit_python_runtime();
         return; 
     }
 
@@ -969,9 +965,7 @@ void CallbackManager::deliver_callback(callback_type_t type, callback_params_t p
     Py_XDECREF(kwarg);
     //Remove the installed callbacks whose removal was deferred until all callbacks have been dispatched
     this->commit_deferred_callback_removes();
-    fflush(stdout);
-    fflush(stderr);
-    pthread_mutex_unlock(&pyrebox_mutex);
+    exit_python_runtime();
 }
 
 void CallbackManager::clean_callbacks(){

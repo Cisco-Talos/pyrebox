@@ -162,7 +162,7 @@ static void pyrebox_update_threads(GDBState *s, int already_locked){
     //Update the list of running threads
     //Update the number of current threads
     if (!already_locked){
-        pthread_mutex_lock(&pyrebox_mutex);
+        enter_python_runtime();
     }
 
     if(s->current_threads){
@@ -190,7 +190,7 @@ static void pyrebox_update_threads(GDBState *s, int already_locked){
     PyErr_Print();
 
     if (!already_locked){
-        pthread_mutex_unlock(&pyrebox_mutex);
+        exit_python_runtime();
     }
 
     return;
@@ -200,7 +200,7 @@ static int get_thread_description(GDBState* s, unsigned long long thread, char* 
     // Calls python function to describe a thread, 
     // and returns the size of the description
 
-    pthread_mutex_lock(&pyrebox_mutex);
+    enter_python_runtime();
 
     PyObject* py_module_name = PyUnicode_FromString("vmi");
     PyObject* py_vmi_module = PyImport_Import(py_module_name);
@@ -224,8 +224,7 @@ static int get_thread_description(GDBState* s, unsigned long long thread, char* 
         }
     }
 
-    pthread_mutex_unlock(&pyrebox_mutex);
-
+    exit_python_runtime();
     return strnlen(buf, len);
 }
 
@@ -238,7 +237,7 @@ static unsigned long long pyrebox_thread_gdb_index(GDBState* s, unsigned int thr
 {
     unsigned long long thread_id = 0;
 
-    pthread_mutex_lock(&pyrebox_mutex);
+    enter_python_runtime();
 
     //Return the Thread ID.
     PyObject* py_module_name = PyUnicode_FromString("vmi");
@@ -260,7 +259,7 @@ static unsigned long long pyrebox_thread_gdb_index(GDBState* s, unsigned int thr
         }
     }
 
-    pthread_mutex_unlock(&pyrebox_mutex);
+    exit_python_runtime();
 
     return thread_id;
 }
@@ -270,7 +269,7 @@ static unsigned long long pyrebox_get_running_thread_first_cpu(GDBState* s){
     if (s->current_threads){
         unsigned long long thread_id = 0;
 
-        pthread_mutex_lock(&pyrebox_mutex);
+        enter_python_runtime();
 
         //Return the Thread ID.
         PyObject* py_module_name = PyUnicode_FromString("vmi");
@@ -291,7 +290,7 @@ static unsigned long long pyrebox_get_running_thread_first_cpu(GDBState* s){
             }
         }
 
-        pthread_mutex_unlock(&pyrebox_mutex);
+        exit_python_runtime();
 
         return thread_id;
     } else {
@@ -306,7 +305,7 @@ static int does_thread_exist(GDBState* s, unsigned long long thread){
     
     int exists = 0;
 
-    pthread_mutex_lock(&pyrebox_mutex);
+    enter_python_runtime();
 
     PyObject* py_module_name = PyUnicode_FromString("vmi");
     PyObject* py_vmi_module = PyImport_Import(py_module_name);
@@ -326,7 +325,7 @@ static int does_thread_exist(GDBState* s, unsigned long long thread){
             }
         }
     }
-    pthread_mutex_unlock(&pyrebox_mutex);
+    exit_python_runtime();
     return (exists > 0);
 }
 
@@ -334,7 +333,7 @@ static int does_thread_exist(GDBState* s, unsigned long long thread){
 static int gdb_read_thread_register(GDBState* s, unsigned long long thread, int gdb_register_index, uint8_t* buf){
     // Calls python function to check if a thread exists 
     // and returns 0 if not, 1 if it exists
-    pthread_mutex_lock(&pyrebox_mutex);
+    enter_python_runtime();
 
     PyObject* py_module_name = PyUnicode_FromString("vmi");
     PyObject* py_vmi_module = PyImport_Import(py_module_name);
@@ -361,7 +360,7 @@ static int gdb_read_thread_register(GDBState* s, unsigned long long thread, int 
         }
     }
     PyErr_Print();
-    pthread_mutex_unlock(&pyrebox_mutex);
+    exit_python_runtime();
     return length;
 }
 
@@ -401,7 +400,7 @@ static inline int target_memory_rw_debug(GDBState* s, unsigned long long thread,
 {
     Py_ssize_t length = 0;
 
-    pthread_mutex_lock(&pyrebox_mutex);
+    enter_python_runtime();
 
     // Calls python function to check if a thread exists 
     // and returns 0 if not, 1 if it exists
@@ -446,13 +445,13 @@ static inline int target_memory_rw_debug(GDBState* s, unsigned long long thread,
         }
     }
     PyErr_Print();
-    pthread_mutex_unlock(&pyrebox_mutex);
+    exit_python_runtime();
     return length;
 }
 
 static void gdb_set_cpu_pc(GDBState *s, target_ulong pc)
 {
-    pthread_mutex_lock(&pyrebox_mutex);
+    enter_python_runtime();
     int err = 0;
 
     // Calls python function to set cpu PC 
@@ -492,7 +491,7 @@ static void gdb_set_cpu_pc(GDBState *s, target_ulong pc)
     if (err){
         PyErr_Print();
     }
-    pthread_mutex_unlock(&pyrebox_mutex);
+    exit_python_runtime();
     return;
 }
 
@@ -510,7 +509,7 @@ static inline void pyrebox_gdb_continue(GDBState *s)
 
 static void pyrebox_gdb_breakpoint_remove_all(void)
 {
-    pthread_mutex_lock(&pyrebox_mutex);
+    enter_python_runtime();
 
     int err = 0;
 
@@ -540,7 +539,7 @@ static void pyrebox_gdb_breakpoint_remove_all(void)
     if (err){
         PyErr_Print();
     }
-    pthread_mutex_unlock(&pyrebox_mutex);
+    exit_python_runtime();
     return;
 }
 
@@ -550,7 +549,7 @@ static void pyrebox_cpu_single_step(unsigned long long thread, int activate, int
 
 static int pyrebox_gdb_breakpoint_insert(GDBState* s, unsigned long long thread, target_ulong addr, target_ulong len, int type)
 {
-    pthread_mutex_lock(&pyrebox_mutex);
+    enter_python_runtime();
     int err = 0;
     int ret_val = 0;
 
@@ -597,7 +596,7 @@ static int pyrebox_gdb_breakpoint_insert(GDBState* s, unsigned long long thread,
     if (err) {
         PyErr_Print();
     }
-    pthread_mutex_unlock(&pyrebox_mutex);
+    exit_python_runtime();
     return ret_val;
 }
 
@@ -605,7 +604,7 @@ static int pyrebox_gdb_breakpoint_remove(GDBState* s, unsigned long long thread,
 {
     int err = 0;
     int ret_val = 0;
-    pthread_mutex_lock(&pyrebox_mutex);
+    enter_python_runtime();
 
     PyObject* py_module_name = PyUnicode_FromString("vmi");
     PyObject* py_vmi_module = PyImport_Import(py_module_name);
@@ -652,7 +651,7 @@ static int pyrebox_gdb_breakpoint_remove(GDBState* s, unsigned long long thread,
     if (err){
         PyErr_Print();
     }
-    pthread_mutex_unlock(&pyrebox_mutex);
+    exit_python_runtime();
     return ret_val;
 }
 
@@ -685,17 +684,17 @@ void gdb_signal_breakpoint(unsigned long long thread) {
     //Lock CPU until we continue from the breakpoint,
     //We need to free the pyrebox_mutex in the mean-time
     //because otherwise we lock everything else.
-    pthread_mutex_unlock(&pyrebox_mutex);
+    exit_python_runtime();
     breakpoint_mutex_locked_in_breakpoint = 1;
     pthread_mutex_lock(&breakpoint_mutex);
-    pthread_mutex_lock(&pyrebox_mutex);
+    enter_python_runtime();
 }
 
 static int gdb_get_register_size(int gdb_register_index){
     int ret_val = 0;
     int err = 0;
 
-    pthread_mutex_lock(&pyrebox_mutex);
+    enter_python_runtime();
 
     PyObject* py_module_name = PyUnicode_FromString("vmi");
     PyObject* py_vmi_module = PyImport_Import(py_module_name);
@@ -725,7 +724,7 @@ static int gdb_get_register_size(int gdb_register_index){
     if (err) {
         PyErr_Print();
     }
-    pthread_mutex_unlock(&pyrebox_mutex);
+    exit_python_runtime();
     return ret_val;
 }
 
@@ -739,7 +738,7 @@ static int gdb_write_thread_register(GDBState* s, unsigned long long thread, int
         return 0;
     }
 
-    pthread_mutex_lock(&pyrebox_mutex);
+    enter_python_runtime();
 
     // Calls python function to check if a thread exists 
     // and returns 0 if not, 1 if it exists
@@ -777,7 +776,7 @@ static int gdb_write_thread_register(GDBState* s, unsigned long long thread, int
     if (err) {
         PyErr_Print();
     }
-    pthread_mutex_unlock(&pyrebox_mutex);
+    exit_python_runtime();
     return ret_val;
 }
 

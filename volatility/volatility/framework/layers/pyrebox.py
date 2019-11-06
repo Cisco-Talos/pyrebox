@@ -28,6 +28,16 @@ from volatility.framework import exceptions, interfaces, constants
 from volatility.framework.configuration import requirements
 from volatility.framework.layers import resources
 
+from profilehooks import profile
+
+class DummyLock:
+
+    def __enter__(self):
+        pass
+
+    def __exit__(self, type, value, traceback):
+        pass
+
 class PyREBoxLayer(interfaces.layers.DataLayerInterface):
     """a DataLayer backed by QEMU/PyREBox live memory."""
 
@@ -40,6 +50,14 @@ class PyREBoxLayer(interfaces.layers.DataLayerInterface):
                  config_path: str,
                  name: str,
                  metadata: Optional[Dict[str, Any]] = None) -> None:
+        
+        # Set metadata according to PyREBox live data:
+        # We need: architecture, platorm, and DTB (page_map_offset - (CR3) (windows)). That will make
+        # scanning way faster.
+        from api import r_cpu
+        metadata = {'os': 'Windows',
+                    'architecture': 'Intel32',
+                    'page_map_offset':  r_cpu().CR3}
         super().__init__(context = context, config_path = config_path, name = name, metadata = metadata)
 
         # We don't really need the location, but the layer-stacker (stacker.py) requires to specify a "single_location"
@@ -79,10 +97,10 @@ class PyREBoxLayer(interfaces.layers.DataLayerInterface):
         return bool(self.minimum_address <= offset <= self.maximum_address
                     and self.minimum_address <= offset + length - 1 <= self.maximum_address)
 
+    #@profile(stdout = True, immediate=True)
     def read(self, offset: int, length: int, pad: bool = False) -> bytes:
         """Reads from the file at offset for length."""
         import api_internal
-
         if not self.is_valid(offset, length):
             invalid_address = offset
             if self.minimum_address < offset <= self.maximum_address:
@@ -95,7 +113,7 @@ class PyREBoxLayer(interfaces.layers.DataLayerInterface):
             data = b''
             try:
                 # Split the requests into smaller chunks
-                block_length = 1024*4
+                block_length = 1024*4*4096
                 read_length = 0
                 while read_length < length:
                     # Send read request

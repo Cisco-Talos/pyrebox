@@ -80,9 +80,7 @@ typedef struct list_head {
 void linux_init_address_space(){
 
    //Lock the python mutex
-   pthread_mutex_lock(&pyrebox_mutex);
-   fflush(stdout);
-   fflush(stderr);
+   enter_python_runtime();
 
    utils_print_debug("[*] Initializing volatility address space...\n");
    if (init_task_offset != 0){
@@ -113,18 +111,13 @@ void linux_init_address_space(){
    }
 
    //Unlock the python mutex
-   fflush(stdout);
-   fflush(stderr);
-   pthread_mutex_unlock(&pyrebox_mutex);
-
+   exit_python_runtime();
 }
 
 void linux_vmi_init(os_index_t os_index){
 
    //Lock the python mutex
-   pthread_mutex_lock(&pyrebox_mutex);
-   fflush(stdout);
-   fflush(stderr);
+   enter_python_runtime();
 
    utils_print_debug("[*] Setting up Linux Profile...\n");
 
@@ -229,9 +222,7 @@ void linux_vmi_init(os_index_t os_index){
    }
 
    //Unlock the python mutex
-   fflush(stdout);
-   fflush(stderr);
-   pthread_mutex_unlock(&pyrebox_mutex);
+   exit_python_runtime();
 
 }
 

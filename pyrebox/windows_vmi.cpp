@@ -79,9 +79,7 @@ pyrebox_target_ulong scan_ps_active_process_list(pyrebox_target_ulong pgd){
    //Good reference: Volatility overlays
    //
    //Lock the python mutex
-   pthread_mutex_lock(&pyrebox_mutex);
-   fflush(stdout);
-   fflush(stderr);
+   enter_python_runtime();
 
    PyObject* py_module_name = PyUnicode_FromString("windows_vmi");
    PyObject* py_vmi_module = PyImport_Import(py_module_name);
@@ -90,7 +88,7 @@ pyrebox_target_ulong scan_ps_active_process_list(pyrebox_target_ulong pgd){
    pyrebox_target_ulong result = 0;
 
    if(py_vmi_module != NULL){
-       PyObject* py_scan = PyObject_GetAttrString(py_vmi_module,"windows_scan_ps_active_process_list");
+       PyObject* py_scan = PyObject_GetAttrString(py_vmi_module,"windows_scan_ps_active_process_head");
        if (py_scan){
            if (PyCallable_Check(py_scan)){
                 PyObject* py_args = PyTuple_New(1);
@@ -118,20 +116,16 @@ pyrebox_target_ulong scan_ps_active_process_list(pyrebox_target_ulong pgd){
    }
 
    //Unlock the python mutex
-   fflush(stdout);
-   fflush(stderr);
-   pthread_mutex_unlock(&pyrebox_mutex);
+   exit_python_runtime();
 
    return canonical_address(result);
 }
 
 void windows_vmi_init(os_index_t os_index){
    //Lock the python mutex
-   pthread_mutex_lock(&pyrebox_mutex);
-   fflush(stdout);
-   fflush(stderr);
+   enter_python_runtime();
 
-   utils_print_debug("[*] Searching for KDBG...\n");
+   utils_print_debug("[*] Searching for PsActiveProcessList...\n");
 
    //Update the OS family in the Python VMI module
    PyObject* py_module_name = PyUnicode_FromString("vmi");
@@ -155,9 +149,8 @@ void windows_vmi_init(os_index_t os_index){
    }
 
    //Unlock the python mutex
-   fflush(stdout);
-   fflush(stderr);
-   pthread_mutex_unlock(&pyrebox_mutex);
+   exit_python_runtime();
+
 }
 
 void windows_vmi_context_change_callback(pyrebox_target_ulong old_pgd,pyrebox_target_ulong new_pgd, os_index_t os_index){
@@ -230,50 +223,48 @@ void windows_vmi_tlb_callback(pyrebox_target_ulong pgd, os_index_t os_index){
     if (is_process_pgd_in_list(pgd) < PROC_PRESENT){
         //Once ps_active_process_list is resolved, we can then start scanning processes
         if (ps_active_process_list != 0){
-            if (ps_active_process_list != 0){
-               //ps_active_process_list points to a _LIST_ENTRY structure, 
-               //whose first member (flink), points to the first process's _LIST_ENTRY
-               pyrebox_target_ulong cur_proc = 0;
-               qemu_virtual_memory_rw_with_pgd(pgd,ps_active_process_list,(uint8_t*)&cur_proc,sizeof(pyrebox_target_ulong),0);
-               //Traverse the list, find the process, and add it to the process list 
-               while (cur_proc != 0 && cur_proc != ps_active_process_list){
-                   pyrebox_target_ulong cur_proc_base = cur_proc - eprocess_offsets[os_index][PS_ACTIVE_LIST];
-                   //Read pgd 
-                   pyrebox_target_ulong proc_pgd = 0;
-                   qemu_virtual_memory_rw_with_pgd(pgd,cur_proc_base + eprocess_offsets[os_index][PGD],(uint8_t*)&proc_pgd,sizeof(pyrebox_target_ulong),0);
+           //ps_active_process_list points to a _LIST_ENTRY structure, 
+           //whose first member (flink), points to the first process's _LIST_ENTRY
+           pyrebox_target_ulong cur_proc = 0;
+           qemu_virtual_memory_rw_with_pgd(pgd,ps_active_process_list,(uint8_t*)&cur_proc,sizeof(pyrebox_target_ulong),0);
+           //Traverse the list, find the process, and add it to the process list 
+           while (cur_proc != 0 && cur_proc != ps_active_process_list){
+               pyrebox_target_ulong cur_proc_base = cur_proc - eprocess_offsets[os_index][PS_ACTIVE_LIST];
+               //Read pgd 
+               pyrebox_target_ulong proc_pgd = 0;
+               qemu_virtual_memory_rw_with_pgd(pgd,cur_proc_base + eprocess_offsets[os_index][PGD],(uint8_t*)&proc_pgd,sizeof(pyrebox_target_ulong),0);
 
-                   int is_in_list = is_process_pgd_in_list(proc_pgd);
-                   //This is the process we are looking for, or we need to initially populate the list
-                   if (pgd == proc_pgd || (ps_active_found == 1 && is_in_list == PROC_NOT_PRESENT)) {
-                       //Read Pid, ppid, name
-                       pyrebox_target_ulong pid = 0;
-                       pyrebox_target_ulong ppid = 0;
-                       char proc_name[MAX_PROCNAME_LEN];
-                       //Set string to 0
-                       memset(proc_name,0,MAX_PROCNAME_LEN);
-                       assert(MAX_PROCNAME_LEN >= PROCESS_NAME_SIZE);
-                       uint64_t exittime;
-                       qemu_virtual_memory_rw_with_pgd(pgd,cur_proc_base + eprocess_offsets[os_index][PID],(uint8_t*)&pid,sizeof(pyrebox_target_ulong),0);
-                       qemu_virtual_memory_rw_with_pgd(pgd,cur_proc_base + eprocess_offsets[os_index][PPID],(uint8_t*)&ppid,sizeof(pyrebox_target_ulong),0);
-                       qemu_virtual_memory_rw_with_pgd(pgd,cur_proc_base + eprocess_offsets[os_index][NAME],(uint8_t*)&proc_name,PROCESS_NAME_SIZE,0);
-                       qemu_virtual_memory_rw_with_pgd(pgd,cur_proc_base + eprocess_offsets[os_index][EXIT_TIME],(uint8_t*)&exittime,EXIT_TIME_SIZE,0);
-                       //Add the process, only if has not already exited but the EPROCESS structure remains there
-                       if (exittime == 0){
-                           if (is_in_list == PROC_NOT_PRESENT){
-                               vmi_add_process(proc_pgd, pid, ppid, cur_proc_base, cur_proc_base + eprocess_offsets[os_index][EXIT_TIME],(char*) proc_name);
-                           }                       
-                       }
-                       //Force loop exit, only if we are not populating the list for the first time
-                       if (ps_active_list == 0){
-                           cur_proc = 0;
-                       }
+               int is_in_list = is_process_pgd_in_list(proc_pgd);
+               //This is the process we are looking for, or we need to initially populate the list
+               if (pgd == proc_pgd || (ps_active_found == 1 && is_in_list == PROC_NOT_PRESENT)) {
+                   //Read Pid, ppid, name
+                   pyrebox_target_ulong pid = 0;
+                   pyrebox_target_ulong ppid = 0;
+                   char proc_name[MAX_PROCNAME_LEN];
+                   //Set string to 0
+                   memset(proc_name,0,MAX_PROCNAME_LEN);
+                   assert(MAX_PROCNAME_LEN >= PROCESS_NAME_SIZE);
+                   uint64_t exittime;
+                   qemu_virtual_memory_rw_with_pgd(pgd,cur_proc_base + eprocess_offsets[os_index][PID],(uint8_t*)&pid,sizeof(pyrebox_target_ulong),0);
+                   qemu_virtual_memory_rw_with_pgd(pgd,cur_proc_base + eprocess_offsets[os_index][PPID],(uint8_t*)&ppid,sizeof(pyrebox_target_ulong),0);
+                   qemu_virtual_memory_rw_with_pgd(pgd,cur_proc_base + eprocess_offsets[os_index][NAME],(uint8_t*)&proc_name,PROCESS_NAME_SIZE,0);
+                   qemu_virtual_memory_rw_with_pgd(pgd,cur_proc_base + eprocess_offsets[os_index][EXIT_TIME],(uint8_t*)&exittime,EXIT_TIME_SIZE,0);
+                   //Add the process, only if has not already exited but the EPROCESS structure remains there
+                   if (exittime == 0){
+                       if (is_in_list == PROC_NOT_PRESENT){
+                           vmi_add_process(proc_pgd, pid, ppid, cur_proc_base, cur_proc_base + eprocess_offsets[os_index][EXIT_TIME],(char*) proc_name);
+                       }                       
                    }
-                   if (cur_proc != 0){
-                       //Advance to next process, cur_proc points to the _LIST_ENTRY of the process
-                       qemu_virtual_memory_rw_with_pgd(pgd,cur_proc,(uint8_t*)&cur_proc,sizeof(pyrebox_target_ulong),0);
+                   //Force loop exit, only if we are not populating the list for the first time
+                   if (ps_active_process_list == 0){
+                       cur_proc = 0;
                    }
                }
-            }
+               if (cur_proc != 0){
+                   //Advance to next process, cur_proc points to the _LIST_ENTRY of the process
+                   qemu_virtual_memory_rw_with_pgd(pgd,cur_proc,(uint8_t*)&cur_proc,sizeof(pyrebox_target_ulong),0);
+               }
+           }
         }
     }
 }
