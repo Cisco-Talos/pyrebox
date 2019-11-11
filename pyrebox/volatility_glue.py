@@ -33,6 +33,7 @@ from volatility.framework import interfaces, constants
 from volatility.framework.configuration import requirements
 from volatility.plugins.windows import pslist
 from volatility.framework.plugins.windows.pyrebox import PyREBoxAccessWindows
+from volatility.framework.plugins.linux.pyrebox import PyREBoxAccessLinux
 
 plugin_class = None
 context = None
@@ -55,62 +56,6 @@ console.setLevel(logging.WARNING)
 formatter = logging.Formatter('%(levelname)-8s %(name)-12s: %(message)s')
 console.setFormatter(formatter)
 vollog.addHandler(console)
-
-
-class PyREBoxAccess(interfaces.plugins.PluginInterface):
-    """Environment to directly interact with a memory image."""
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-
-    @classmethod
-    def get_requirements(cls) -> List[interfaces.configuration.RequirementInterface]:
-        return [
-            requirements.TranslationLayerRequirement(name = 'primary',
-                                                     description = 'Memory layer for the kernel',
-                                                     architectures = ["Intel32", "Intel64"])
-        ]
-
-    def run(self, additional_locals: Dict[str, Any] = None) -> interfaces.renderers.TreeGrid:
-        """Runs the plugin.
-
-        Returns:
-            Return a TreeGrid but this is always empty since the point of this plugin is to run interactively
-        """
-
-        return renderers.TreeGrid([("Terminating", str)], None)
-
-
-
-class PyREBoxAccessLinux(PyREBoxAccess):
-    """Environment to directly interact with a linux memory image."""
-
-    @classmethod
-    def get_requirements(cls):
-        return (super().get_requirements() + [
-            requirements.SymbolTableRequirement(name = "vmlinux", description = "Linux kernel symbols"),
-            requirements.PluginRequirement(name = 'pslist', plugin = pslist.PsList, version = (1, 0, 0)),
-            requirements.IntRequirement(name = 'pid', description = "Process ID", optional = True)
-        ])
-
-    def change_task(self, pid = None):
-        """Change the current process and layer, based on a process ID"""
-        tasks = self.list_tasks()
-        for task in tasks:
-            if task.pid == pid:
-                process_layer = task.add_process_layer()
-                if process_layer is not None:
-                    self.change_layer(process_layer)
-                    return
-                print("Layer for task ID {} could not be constructed".format(pid))
-                return
-        print("No task with task ID {} found".format(pid))
-
-    def list_tasks(self):
-        """Returns a list of task objects from the primary layer"""
-        # We always use the main kernel memory and associated symbols
-        return list(pslist.PsList.list_tasks(self.context, self.config['primary'], self.config['vmlinux']))
-
 
 def initialize_volatility(plugin):
     global context

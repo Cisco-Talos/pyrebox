@@ -5,37 +5,13 @@ from volatility.cli import text_renderer
 from volatility.framework import automagic, constants, contexts, exceptions, interfaces, plugins, configuration
 from volatility.framework.configuration import requirements
 from typing import Any, Dict, List, Optional, Tuple, Union, Type
-from volatility.framework import interfaces, constants
+from volatility.framework import interfaces, constants, objects
 from volatility.framework.configuration import requirements
 from volatility.plugins.windows import pslist
 from volatility.framework.objects import StructType
 from volatility.framework.objects import Pointer 
-
-class StructTypePyREBoxWrapper():
-    def __init__(self, obj, context, layer_name):
-        self._wrapped_obj = obj
-        self._context = context
-        self._layer_name = layer_name
-    def __getattr__(self, attr):
-        if attr in self.__dict__:
-            return getattr(self, attr)
-        return getattr(self._wrapped_obj, attr)
-    def __del__(self):
-        if self._layer_name is not None:
-            self._context.layers.del_layer(self._layer_name)
-
-class PointerPyREBoxWrapper():
-    def __init__(self, obj, context, layer_name):
-        self._wrapped_obj = obj
-        self._context
-        self._layer_name = layer_name
-    def __getattr__(self, attr):
-        if attr in self.__dict__:
-            return getattr(self, attr)
-        return getattr(self._wrapped_obj, attr)
-    def __del__(self):
-        if self._layer_name is not None:
-            self._context.layers.del_layer(self._layer_name)
+from volatility.framework.plugins.pyrebox_common import StructTypePyREBoxWrapper, PointerPyREBoxWrapper
+from volatility.framework.plugins.pyrebox_common import get_layer_from_task, get_layer_from_pgd
 
 
 class PyREBoxAccessWindows(interfaces.plugins.PluginInterface):
@@ -68,16 +44,6 @@ class PyREBoxAccessWindows(interfaces.plugins.PluginInterface):
 
         return renderers.TreeGrid([("Terminating", str)], None)
 
-    def change_process(self, pid = None):
-        """Change the current process and layer, based on a process ID"""
-        processes = self.list_processes()
-        for process in processes:
-            if process.UniqueProcessId == pid:
-                process_layer = process.add_process_layer()
-                self.change_layer(process_layer)
-                return
-        print("No process with process ID {} found".format(pid))
-
     def list_processes(self):
         """Returns a list of EPROCESS objects from the primary layer"""
         # We always use the main kernel memory and associated symbols
@@ -106,6 +72,9 @@ class PyREBoxAccessWindows(interfaces.plugins.PluginInterface):
     def get_type_size(self, the_type):
         return self.context.symbol_space.get_type(self.__symbol_table + constants.BANG + the_type).size
 
+    def get_type(self, the_type):
+        return self.context.symbol_space.get_type(self.__symbol_table + constants.BANG + the_type)
+
     def get_object_offset(self, obj):
         return obj.vol.offset
 
@@ -118,11 +87,10 @@ class PyREBoxAccessWindows(interfaces.plugins.PluginInterface):
             return None
 
     def get_peb_from_eprocess(self, eproc):
-        proc_layer_name = eproc.add_process_layer()
-        proc_layer = self.context.layers[proc_layer_name]
+        proc_layer_name, proc_layer = get_layer_from_task(self, eproc)
+
         if not proc_layer.is_valid(eproc.Peb):
             result = (None, self.get_object_offset(eproc.Peb))
-            self.context.layers.del_layer(proc_layer_name)
         else:
             ntkrnlmp = self.get_kernel_module(proc_layer_name)
             peb = StructTypePyREBoxWrapper(ntkrnlmp.object(object_type = "_PEB", offset = eproc.Peb, absolute = True),
@@ -132,12 +100,10 @@ class PyREBoxAccessWindows(interfaces.plugins.PluginInterface):
         return result
 
     def get_ldr_from_eprocess(self, eproc, peb):
-        proc_layer_name = eproc.add_process_layer()
-        proc_layer = self.context.layers[proc_layer_name]
+        proc_layer_name, proc_layer = get_layer_from_task(self, eproc)
         # peb must be valid
         if not proc_layer.is_valid(peb.Ldr):
             result = (None, self.get_object_offset(peb.Ldr))
-            self.context.layers.del_layer(proc_layer_name)
         else:
             result = (PointerPyREBoxWrapper(peb.Ldr, self.context, proc_layer_name), self.get_object_offset(peb.Ldr))
         return result
@@ -175,4 +141,76 @@ class PyREBoxAccessWindows(interfaces.plugins.PluginInterface):
                                 offset = kuser_addr,
                                 absolute = True)
         return kuser
+
+    def get_pgd_from_task(self, task):
+        dtb = 0
+        if isinstance(task.Pcb.DirectoryTableBase, objects.Array):
+            dtb = task.Pcb.DirectoryTableBase.cast("unsigned long long")
+        else:
+            dtb = task.Pcb.DirectoryTableBase
+        dtb = dtb & ((1 << self.context.layers[self.__layer_name].bits_per_register) - 1)
+        return dtb
+
+
+    def get_task_from_pgd(self, pgd):
+        processes = self.list_processes()
+        for process in processes:
+            dtb = self.get_pgd_from_task(process)
+            if dtb == pgd:
+                return process
+        return None
+
+
+    def get_control_area_and_subsection_from_vad(self, eproc, vad):
+        '''
+        Validates the ControlArea, and returns None if invalid
+        '''
+        proc_layer_name, proc_layer = get_layer_from_task(self, eproc)
+        ca = None
+        subsect = None
+
+        if (vad.has_member("ControlArea")) and \
+            vad.ControlArea and \
+            proc_layer.is_valid(vad.ControlArea):
+            ca = vad.ControlArea
+            # Get offset of subsection, to validate the ControlArea
+            try: 
+                # Just try to dereference a field to make sure it doesnt
+                # throw an exception
+                number_subsections = ca.NumberOfSubsections 
+                if vad.has_member("Subsection"):
+                    # This is for vista through Win7 and onwards
+                    subsect = vad.Subsection
+                else:
+                    # There is no Subsection pointer in VAD
+                    # structure, so we just read after the ControlArea.
+                    # Note: See Windows Internals Sixth Edition, Part 2, page 288 
+                    offset = int(ca) + vad.get_symbol_table().get_type("_CONTROL_AREA").size
+                    subsect = self.context.object(self.config["nt_symbols"] + constants.BANG  + "_SUBSECTION", 
+                                                    proc_layer_name, offset)
+                ca_bis = subsect.ControlArea
+            except Exception as e: 
+                return None
+
+            if int(ca_bis) != int(ca):
+                return None
+        else:
+            return None
+
+        return (ca, subsect)
+
+
+    def get_segment_from_vad(self, eproc, vad):
+        proc_layer_name, proc_layer = get_layer_from_task(self, eproc)
+
+        _res  = self.get_control_area_and_subsection_from_vad(eproc, vad)
+        if _res:
+            ctl, subsect = _res
+        else:
+            return None
+        if ctl and ctl.has_member("Segment") and \
+            ctl.Segment and proc_layer.is_valid(ctl.Segment):
+            return ctl.Segment
+
+        return None 
 
