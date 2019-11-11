@@ -365,81 +365,87 @@ def windows_read_memory_mapped(pgd, addr, size, pte, is_pae, bitness):
     # Step 6: Compute the offset in file for such PrototypePTE by looking at the
     #         subsections pointed by the ControlArea.
     # Step 7: Finally, open the file, read the contents, and return them.
-    import volatility.obj as obj
-    import volatility.win32.tasks as tasks
-    import volatility.plugins.vadinfo as vadinfo
-    from utils import get_addr_space
-    import volatility.obj as obj
+    from utils import ConfigurationManager as conf_m
+    import volatility.framework.objects.String
 
 
-    addr_space = get_addr_space(pgd)
-
-    eprocs = [t for t in tasks.pslist(
-        addr_space) if t.Pcb.DirectoryTableBase.v() == pgd]
-
-    if len(eprocs) != 1:
+    if conf_m.vol_plugin is None:
         return None
 
-    task = eprocs[0]
+    plugin = conf_m.vol_plugin
+
+    # Get EPROC for PGD and find VAD-----------------
+    task = plugin.get_task_from_pgd(pgd)
+
+    if task is None:
+        return None
+
     vad = None
     # File name and offset
-    for vad in task.VadRoot.traverse():
-        if addr >= vad.Start and addr < vad.End:
+    for v in task.get_vad_root().traverse():
+        if addr >= v.get_start() and addr < vad.get_end():
+            vad = v
             break
+
     if vad is None:
         return None
-    
+
     filename = None
-    if vad.ControlArea is not None and vad.FileObject is not None:
-        filename = str(vad.ControlArea.FileObject.FileName)
 
-    if vad.ControlArea.Segment is None:
+    if getattr(vad, "get_file_name"):
+        fname = vad.get_file_name()
+        if isinstance(fname, volatility.framework.objects.String):
+            filename = fname
+
+    _res = plugin.get_control_area_and_subsection_from_vad(e, vad)
+    if _res is None:
         return None
+    else:
+        control_area, subsect = _res
 
+    segment = plugin.get_segment_from_vad(e, vad, control_area)
+
+    if segment is None:
+        return None
+        
     # Compute page offset with respect to Start of the VAD,
     # and the corresponding prototype Page Table Entry pointed
     # by the Segment
-    offset_on_vad = addr - vad.Start
+    offset_on_vad = addr - vad.get_start()
     page_offset_on_vad = (offset_on_vad - (offset_on_vad & 0xFFF))
     # Consider 4 KiB pages
     ppte_index = int(page_offset_on_vad / 0x1000)
     
-    if ppte_index >= vad.ControlArea.Segment.TotalNumberOfPtes.v():
+    if ppte_index >= int(segment.TotalNumberOfPtes):
         return None
 
     if bitness == 32 and is_pae:
-        ppte_addr = vad.ControlArea.Segment.PrototypePte.v() + (ppte_index * 8)
+        ppte_addr = int(segment.PrototypePte) + (ppte_index * 8)
     else:
-        ppte_addr = vad.ControlArea.Segment.PrototypePte.v() + (ppte_index * addr_space.profile.vtypes["_MMPTE_PROTOTYPE"][0])
+        ppte_addr = int(segment.PrototypePte) + (ppte_index * plugin.get_type_size("_MMPTE_PROTOTYPE"))
 
-    # Read Subsections pointed by ControlArea
+    # Read Subsections
     visited_subsections = {}
-    if "Subsection" in vad.members:
-        subsect = vad.Subsection
-    # There is no Subsection pointer in VAD
-    # structure, so we just read after the ControlArea
-    else:
-        subsect = obj.Object("_SUBSECTION", offset=(vad.ControlArea.v() + addr_space.profile.vtypes["_CONTROL_AREA"][0]), vm=addr_space)
 
     file_offset_to_read = None
-    while file_offset_to_read is None and subsect is not None or subsect.v() != 0 and subsect.v() not in visited_subsections:
-        visited_subsections.append(subsect.v())
+    while file_offset_to_read is None and subsect is not None subsect.vol.offset not in visited_subsections:
+        visited_subsections.append(subsect.vol.offset)
         # Get the PPTE address where the Subsection starts,
         # and compute the virtual address that it corresponds 
         # to.
-        ppte_addr = subsect.SubsectionBase.v()
+        ppte_addr = int(subsect.SubsectionBase)
         if bitness == 32 and is_pae:
-            ppte_index = int((subsect.SubsectionBase.v() - vad.ControlArea.Segment.PrototypePte.v()) / 8)
+            ppte_index = int(int(subsect.SubsectionBase) - int(vad.ControlArea.Segment.PrototypePte) / 8)
         else:
-            ppte_index = int((subsect.SubsectionBase.v() - vad.ControlArea.Segment.PrototypePte.v()) / addr_space.profile.vtypes["_MMPTE_PROTOTYPE"][0])
+            ppte_index = int((int(subsect.SubsectionBase) - int(vad.ControlArea.Segment.PrototypePte)) / plugin.get_type_size("_MMPTE_PROTOTYPE"))
 
         subsection_base = vad.Start + (ppte_index * 0x1000)
-        subsection_size = subsect.PtesInSubsection.v() * 0x1000
-        subsection_file_offset = subsect.StartingSector.v() * 512
-        subsection_file_size = vad.Subsection.NumberOfFullSectors.v() * 512 
+        subsection_size = int(subsect.PtesInSubsection) * 0x1000
+        subsection_file_offset = int(subsect.StartingSector) * 512
+        subsection_file_size = int(vad.Subsection.NumberOfFullSectors) * 512 
 
-        visited_subsections[subsect.v()] = (subsection_base, 
-                                            subsection_size, 
+        visited_subsections[subsect.vol.offset] = (subsection_base,
+                                            subsection_size,
                                             subsection_file_offset,
                                             subsection_file_size)
 
@@ -466,35 +472,44 @@ def windows_read_memory_mapped(pgd, addr, size, pte, is_pae, bitness):
 
 
 def windows_get_prototype_pte_address_range(pgd, address):
-    import volatility.obj as obj
-    import volatility.win32.tasks as tasks
-    import volatility.plugins.vadinfo as vadinfo
-    from utils import get_addr_space
+    from utils import ConfigurationManager as conf_m
+    import volatility.framework.objects.String
 
-    addr_space = get_addr_space(pgd)
-
-    eprocs = [t for t in tasks.pslist(
-        addr_space) if t.Pcb.DirectoryTableBase.v() == pgd]
-
-    if len(eprocs) != 1:
+    if conf_m.vol_plugin is None:
         return None
 
-    task = eprocs[0]
+    plugin = conf_m.vol_plugin
+
+    # Get EPROC
+    task = plugin.get_task_from_pgd(pgd)
+
+    if task is None:
+        return None
+
     vad = None
     # File name and offset
-    for vad in task.VadRoot.traverse():
-        if address >= vad.Start and address < vad.End:
+    for v in task.get_vad_root().traverse():
+        if addr >= v.get_start() and addr < vad.get_end():
+            vad = v
             break
 
     if vad is None:
         return None
 
-    if vad.ControlArea is not None and vad.ControlArea.Segment is not None:
-        start = vad.ControlArea.Segment.PrototypePte.v()
-        end = start + (vad.ControlArea.Segment.TotalNumberOfPtes.v() * addr_space.profile.vtypes["_MMPTE_SOFTWARE"][0])
-        return (start,end)
-    else:
+    _res = plugin.get_control_area_and_subsection_from_vad(e, vad)
+    if _res is None:
         return None
+    else:
+        control_area, subsect = _res
+
+    segment = plugin.get_segment_from_vad(e, vad, control_area)
+
+    if segment is None:
+        return None
+
+    start = int(segment.PrototypePte)
+    end = start + (int(segment.TotalNumberOfPtes) * plugin.get_type_size("_MMPTE_SOFTWARE"))
+    return (start,end)
 
 
 def windows_read_paged_file(pgd, addr, size, page_file_offset, page_file_number):
@@ -533,8 +548,13 @@ def windows_read_paged_out_memory(pgd, addr, size):
     import api
     import api_internal
     import struct
-    from utils import get_addr_space
-    
+    from utils import ConfigurationManager as conf_m
+
+    if conf_m.vol_plugin is None:
+        return None
+
+    plugin = conf_m.vol_plugin
+
     VALID_BIT = 0x1
     PROTOTYPE_BIT = 0x1 << 10
     TRANSITION_BIT = 0x1 << 11
@@ -549,8 +569,6 @@ def windows_read_paged_out_memory(pgd, addr, size):
     pte = api_internal.x86_get_pte(pgd, addr)
     is_pae = api_internal.x86_is_pae()
     bitness = api.get_os_bits()
-
-    addr_space = get_addr_space(pgd)
 
     # if PTE is None, it could mean that the page directory has not been created.
     # if PTE is 0, it could mean the pte has not been yet created.
@@ -573,28 +591,28 @@ def windows_read_paged_out_memory(pgd, addr, size):
             page_file_offset = 0
             page_file_number = 0
             if (bitness == 32 and not is_pae) or bitness == 64:
-                offset_mask = generate_mask(addr_space.profile.vtypes["_MMPTE_SOFTWARE"][1]["PageFileHigh"][1][1]["start_bit"],
-                                            addr_space.profile.vtypes["_MMPTE_SOFTWARE"][1]["PageFileHigh"][1][1]["end_bit"])
-                number_mask = generate_mask(addr_space.profile.vtypes["_MMPTE_SOFTWARE"][1]["PageFileLow"][1][1]["start_bit"],
-                                            addr_space.profile.vtypes["_MMPTE_SOFTWARE"][1]["PageFileLow"][1][1]["end_bit"])
-                number_bits_offset = addr_space.profile.vtypes["_MMPTE_SOFTWARE"][1]["PageFileHigh"][1][1]["end_bit"] - \
-                                     addr_space.profile.vtypes["_MMPTE_SOFTWARE"][1]["PageFileHigh"][1][1]["start_bit"]
-                number_bits_number = addr_space.profile.vtypes["_MMPTE_SOFTWARE"][1]["PageFileLow"][1][1]["end_bit"] - \
-                                     addr_space.profile.vtypes["_MMPTE_SOFTWARE"][1]["PageFileLow"][1][1]["start_bit"]
-                page_file_offset = (pte & offset_mask) >> addr_space.profile.vtypes["_MMPTE_SOFTWARE"][1]["PageFileHigh"][1][1]["start_bit"]
-                page_file_number = (pte & number_mask) >> addr_space.profile.vtypes["_MMPTE_SOFTWARE"][1]["PageFileLow"][1][1]["start_bit"]
+                offset_mask = generate_mask(plugin.get_type("_MMPTE_SOFTWARE").members["PageFileHigh"][1].start_bit,
+                                            plugin.get_type("_MMPTE_SOFTWARE").members["PageFileHigh"][1].end_bit)
+                number_mask = generate_mask(plugin.get_type("_MMPTE_SOFTWARE").members["PageFileLow"][1].start_bit,
+                                            plugin.get_type("_MMPTE_SOFTWARE").members["PageFileLow"][1].end_bit)
+                number_bits_offset = plugin.get_type("_MMPTE_SOFTWARE").members["PageFileHigh"][1].end_bit - \
+                                     plugin.get_type("_MMPTE_SOFTWARE").members["PageFileHigh"][1].start_bit
+                number_bits_number = plugin.get_type("_MMPTE_SOFTWARE").members["PageFileLow"][1].end_bit - \
+                                     plugin.get_type("_MMPTE_SOFTWARE").members["PageFileLow"][1].start_bit
+                page_file_offset = (pte & offset_mask) >> plugin.get_type("_MMPTE_SOFTWARE").members["PageFileHigh"][1].start_bit
+                page_file_number = (pte & number_mask) >> plugin.get_type("_MMPTE_SOFTWARE").members["PageFileLow"][1].start_bit
             elif bitness == 32 and is_pae:
                 # See Intel manual, consider 24 bits of address for the 4KiB page offset
                 # Page file offset should correspond to the same 24 bits
                 offset_mask = generate_mask(12, 12 + 24)
                 # Reuse the same as for 32/64 bits
-                number_mask = generate_mask(addr_space.profile.vtypes["_MMPTE_SOFTWARE"][1]["PageFileLow"][1][1]["start_bit"],
-                                            addr_space.profile.vtypes["_MMPTE_SOFTWARE"][1]["PageFileLow"][1][1]["end_bit"])
+                number_mask = generate_mask(plugin.get_type("_MMPTE_SOFTWARE").members["PageFileLow"][1].start_bit,
+                                            plugin.get_type("_MMPTE_SOFTWARE").members["PageFileLow"][1].end_bit)
                 number_bits_offset = 24 
-                number_bits_number = addr_space.profile.vtypes["_MMPTE_SOFTWARE"][1]["PageFileLow"][1][1]["end_bit"] - \
-                                     addr_space.profile.vtypes["_MMPTE_SOFTWARE"][1]["PageFileLow"][1][1]["start_bit"]
+                number_bits_number = plugin.get_type("_MMPTE_SOFTWARE").members["PageFileLow"][1].end_bit - \
+                                     plugin.get_type("_MMPTE_SOFTWARE").members["PageFileLow"][1].start_bit
                 page_file_offset = (pte & offset_mask) >> 12
-                page_file_number = (pte & number_mask) >> addr_space.profile.vtypes["_MMPTE_SOFTWARE"][1]["PageFileLow"][1][1]["start_bit"]
+                page_file_number = (pte & number_mask) >> plugin.get_type("_MMPTE_SOFTWARE").members["PageFileLow"][1].start_bit
 
             else:
                 raise NotImplementedError()
@@ -614,8 +632,8 @@ def windows_read_paged_out_memory(pgd, addr, size):
             # Get the offset from the PTE, and compute ourselves the physical address
             page_offset = 0
             if (bitness == 32 and not is_pae) or bitness == 64:
-                offset_mask = generate_mask(addr_space.profile.vtypes["_MMPTE_HARDWARE"][1]["PageFrameNumber"][1][1]["start_bit"],
-                                            addr_space.profile.vtypes["_MMPTE_HARDWARE"][1]["PageFrameNumber"][1][1]["end_bit"])
+                offset_mask = generate_mask(plugin.get_type("_MMPTE_HARDWARE").members["PageFrameNumber"][1].start_bit,
+                                            plugin.get_type("_MMPTE_HARDWARE").members["PageFrameNumber"][1].end_bit)
                 page_offset = (pte & offset_mask)
             elif bitness == 32 and is_pae:
                 # See Intel manual, consider 24 bits of address for the 4KiB page offset
@@ -636,18 +654,18 @@ def windows_read_paged_out_memory(pgd, addr, size):
         if bitness == 32 and not is_pae:
             # In this case, the PPTE pointer is not a pointer, but an index, so it 
             # needs some additional computation
-            index_low_mask = generate_mask(addr_space.profile.vtypes["_MMPTE_PROTOTYPE"][1]["ProtoAddressLow"][1][1]["start_bit"],
-                                        addr_space.profile.vtypes["_MMPTE_PROTOTYPE"][1]["ProtoAddressLow"][1][1]["end_bit"])
-            index_low = (pte & index_low_mask) >> addr_space.profile.vtypes["_MMPTE_PROTOTYPE"][1]["ProtoAddressLow"][1][1]["start_bit"]
+            index_low_mask = generate_mask(plugin.get_type("_MMPTE_PROTOTYPE").members["ProtoAddressLow"][1].start_bit,
+                                        plugin.get_type("_MMPTE_PROTOTYPE").members["ProtoAddressLow"][1].end_bit)
+            index_low = (pte & index_low_mask) >> plugin.get_type("_MMPTE_PROTOTYPE").members["ProtoAddressLow"][1].start_bit
 
-            index_high_mask = generate_mask(addr_space.profile.vtypes["_MMPTE_PROTOTYPE"][1]["ProtoAddressHigh"][1][1]["start_bit"],
-                                        addr_space.profile.vtypes["_MMPTE_PROTOTYPE"][1]["ProtoAddressHigh"][1][1]["end_bit"])
-            index_high = (pte & index_high_mask) >> addr_space.profile.vtypes["_MMPTE_PROTOTYPE"][1]["ProtoAddressHigh"][1][1]["start_bit"]
+            index_high_mask = generate_mask(plugin.get_type("_MMPTE_PROTOTYPE").members["ProtoAddressHigh"][1].start_bit,
+                                        plugin.get_type("_MMPTE_PROTOTYPE").members["ProtoAddressHigh"][1].end_bit)
+            index_high = (pte & index_high_mask) >> plugin.get_type("_MMPTE_PROTOTYPE").members["ProtoAddressHigh"][1].start_bit
 
-            number_bits_index_low = addr_space.profile.vtypes["_MMPTE_PROTOTYPE"][1]["ProtoAddressLow"][1][1]["end_bit"]- \
-                                        addr_space.profile.vtypes["_MMPTE_PROTOTYPE"][1]["ProtoAddressLow"][1][1]["start_bit"]
+            number_bits_index_low = plugin.get_type("_MMPTE_PROTOTYPE").members["ProtoAddressLow"][1].end_bit - \
+                                        plugin.get_type("_MMPTE_PROTOTYPE").members["ProtoAddressLow"][1].start_bit
 
-            ppte_size = addr_space.profile.vtypes["_MMPTE"][0]
+            ppte_size = plugin.get_type_size("_MMPTE")
 
             # Formula to compute the index
             index = ((index_high << number_bits_index_low) | index_low) << 2
@@ -681,10 +699,10 @@ def windows_read_paged_out_memory(pgd, addr, size):
             ppte_size = 64
 
         elif bitness == 64:
-            offset_mask = generate_mask(addr_space.profile.vtypes["_MMPTE_PROTOTYPE"][1]["ProtoAddress"][1][1]["start_bit"],
-                                        addr_space.profile.vtypes["_MMPTE_PROTOTYPE"][1]["ProtoAddress"][1][1]["end_bit"])
-            ppte_addr = (pte & offset_mask) >> addr_space.profile.vtypes["_MMPTE_PROTOTYPE"][1]["ProtoAddress"][1][1]["start_bit"]
-            ppte_size = addr_space.profile.vtypes["_MMPTE"][0]
+            offset_mask = generate_mask(plugin.get_type("_MMPTE_PROTOTYPE").members["ProtoAddress"][1].start_bit,
+                                        plugin.get_type("_MMPTE_PROTOTYPE").members["ProtoAddress"][1].end_bit)
+            ppte_addr = (pte & offset_mask) >> plugin.get_type("_MMPTE_PROTOTYPE").members["ProtoAddress"][1].start_bit
+            ppte_size = plugin.get_type_size("_MMPTE")
 
         else:
             raise NotImplementedError()
@@ -704,8 +722,8 @@ def windows_read_paged_out_memory(pgd, addr, size):
             # Get the offset from the PTE, and compute ourselves the physical address
             page_offset = 0
             if (bitness == 32 and not is_pae) or bitness == 64:
-                offset_mask = generate_mask(addr_space.profile.vtypes["_MMPTE_HARDWARE"][1]["PageFrameNumber"][1][1]["start_bit"],
-                                            addr_space.profile.vtypes["_MMPTE_HARDWARE"][1]["PageFrameNumber"][1][1]["end_bit"])
+                offset_mask = generate_mask(plugin.get_type("_MMPTE_HARDWARE").members["PageFrameNumber"][1].start_bit,
+                                            plugin.get_type("_MMPTE_HARDWARE").members["PageFrameNumber"][1].end_bit)
                 page_offset = (ppte & offset_mask)
             elif bitness == 32 and is_pae:
                 # See Intel manual, consider 24 bits of address for the 4KiB page offset
@@ -725,21 +743,21 @@ def windows_read_paged_out_memory(pgd, addr, size):
             page_file_offset = 0
             page_file_number = 0
             if (bitness == 32 and not is_pae) or bitness == 64:
-                offset_mask = generate_mask(addr_space.profile.vtypes["_MMPTE_SOFTWARE"][1]["PageFileHigh"][1][1]["start_bit"],
-                                            addr_space.profile.vtypes["_MMPTE_SOFTWARE"][1]["PageFileHigh"][1][1]["end_bit"])
-                number_mask = generate_mask(addr_space.profile.vtypes["_MMPTE_SOFTWARE"][1]["PageFileLow"][1][1]["start_bit"],
-                                            addr_space.profile.vtypes["_MMPTE_SOFTWARE"][1]["PageFileLow"][1][1]["end_bit"])
-                page_file_offset = (pte & offset_mask) >> addr_space.profile.vtypes["_MMPTE_SOFTWARE"][1]["PageFileHigh"][1][1]["start_bit"]
-                page_file_number = (pte & number_mask) >> addr_space.profile.vtypes["_MMPTE_SOFTWARE"][1]["PageFileLow"][1][1]["start_bit"]
+                offset_mask = generate_mask(plugin.get_type("_MMPTE_SOFTWARE").members["PageFileHigh"][1].start_bit,
+                                            plugin.get_type("_MMPTE_SOFTWARE").members["PageFileHigh"][1].end_bit)
+                number_mask = generate_mask(plugin.get_type("_MMPTE_SOFTWARE").members["PageFileLow"][1].start_bit,
+                                            plugin.get_type("_MMPTE_SOFTWARE").members["PageFileLow"][1].end_bit)
+                page_file_offset = (pte & offset_mask) >> plugin.get_type("_MMPTE_SOFTWARE").members["PageFileHigh"][1].start_bit
+                page_file_number = (pte & number_mask) >> plugin.get_type("_MMPTE_SOFTWARE").members["PageFileLow"][1].start_bit
             elif bitness == 32 and is_pae:
                 # See Intel manual, consider 24 bits of address for the 4KiB page offset
                 # Page file offset should correspond to the same 24 bits
                 offset_mask = generate_mask(12, 12 + 24)
                 # Reuse the same as for 32/64 bits
-                number_mask = generate_mask(addr_space.profile.vtypes["_MMPTE_SOFTWARE"][1]["PageFileLow"][1][1]["start_bit"],
-                                            addr_space.profile.vtypes["_MMPTE_SOFTWARE"][1]["PageFileLow"][1][1]["end_bit"])
+                number_mask = generate_mask(plugin.get_type("_MMPTE_SOFTWARE").members["PageFileLow"][1].start_bit,
+                                            plugin.get_type("_MMPTE_SOFTWARE").members["PageFileLow"][1].end_bit)
                 page_file_offset = (pte & offset_mask) >> 12
-                page_file_number = (pte & number_mask) >> addr_space.profile.vtypes["_MMPTE_SOFTWARE"][1]["PageFileLow"][1][1]["start_bit"]
+                page_file_number = (pte & number_mask) >> plugin.get_type("_MMPTE_SOFTWARE").members["PageFileLow"][1].start_bit
             else:
                 raise NotImplementedError()
 
