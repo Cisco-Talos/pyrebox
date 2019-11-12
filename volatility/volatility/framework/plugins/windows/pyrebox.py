@@ -143,6 +143,7 @@ class PyREBoxAccessWindows(interfaces.plugins.PluginInterface):
         return kuser
 
     def get_pgd_from_task(self, task):
+        print("Getting pgd for EPROC: %x" % int(task.vol.offset))
         dtb = 0
         if isinstance(task.Pcb.DirectoryTableBase, objects.Array):
             dtb = task.Pcb.DirectoryTableBase.cast("unsigned long long")
@@ -213,4 +214,43 @@ class PyREBoxAccessWindows(interfaces.plugins.PluginInterface):
             return ctl.Segment
 
         return None 
+
+    def list_process_threads(self, eproc):
+        """ List process threads """
+
+        ntkrnlmp = self.get_kernel_module()
+
+        if int(eproc.ThreadListHead.Flink) == 0:
+            return []
+
+        reloff = ntkrnlmp.get_type("_ETHREAD").relative_child_offset("ThreadListEntry")
+        ethread = ntkrnlmp.object(object_type = "_ETHREAD", offset = eproc.ThreadListHead.Flink - reloff, absolute = True)
+
+        for e in ethread.ThreadListEntry:
+            yield e
+
+
+    def get_kpcr(self, kpcr_addr):
+        """ Given its adress, return a KPCR structure, check if it is valid """
+        ntkrnlmp = self.get_kernel_module()
+        kpcr = ntkrnlmp.object(object_type = "_KPCR", offset = kpcr_addr, absolute = True)
+        if int(kpcr.SelfPcr) == kpcr.vol.offset:
+            return kpcr
+        else:
+            return None
+
+    def get_ktrap_frame_from_ethread(self, ethread_addr):
+        """ Ethread address """
+        ntkrnlmp = self.get_kernel_module()
+        try:
+            thread = ntkrnlmp.object(object_type = "_ETHREAD", offset = ethread_addr, absolute = True)
+            trap_frame_addr = thread.Tcb.TrapFrame
+            if trap_frame_addr == 0:
+                return None
+            trap = trap_frame_addr.dereference().cast("_KTRAP_FRAME")
+            return trap
+        except:
+            return None
+
+
 

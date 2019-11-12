@@ -787,51 +787,50 @@ def get_threads():
     from utils import ConfigurationManager as conf_m
 
     # Use the threads plugin to retrieve thread data
-    # Code partially obtained from volatility.plugins.malware.threads
+    if conf_m.vol_plugin is None:
+        return None
+
+    plugin = conf_m.vol_plugin
 
     results = []
 
-    config = conf_m.vol_conf
-    t = Threads(config, light_mode = True)
-
     # Each returned item has a pid, a tid, and a variable
     # set of attributes
-    for thread, addr_space, mods, mod_addrs, \
-                 instances, hooked_tables, system_range, owner_name in t.calculate():
+    for eproc in plugin.list_processes():
+        for thread in plugin.list_process_threads(eproc):
+            # We need to cast it to _EPROCESS because we get a reference to a _KPROCESS
+            attached_process = thread.Tcb.ApcState.Process.dereference().cast("_EPROCESS")
+            owning_process = thread.ThreadsProcess.dereference()
+            element = {}
+            # Tags, not used at this moment
+            #element['tags'] = set([t for t, v in list(instances.items()) if v.check()])
+            element['pid'] = int(thread.Cid.UniqueProcess)
+            element['tid'] = int(thread.Cid.UniqueThread)
+            element['thread_object_base'] = int(plugin.get_object_offset(thread))
+            element['pgd'] = int(plugin.get_pgd_from_task(attached_process))
+            element['id'] = int(element['tid'])
+            element['created'] = str(thread.CreateTime)
+            element['exited'] = str(thread.ExitTime)
+            element['process_name'] = str(owning_process.ImageFileName.cast('string', 
+                                                                            max_length = owning_process.ImageFileName.vol.count,
+                                                                            errors = 'replace'))
 
-        element = {}
-        element['tags'] = set([t for t, v in list(instances.items()) if v.check()])
+            element['attached_process_name'] = str(attached_process.ImageFileName.cast('string',
+                                                                            max_length = owning_process.ImageFileName.vol.count,
+                                                                            errors = 'replace'))
+            # Lookup the thread's state
+            element['state'] = int(thread.Tcb.State)
+            element['wait_reason'] = int(thread.Tcb.WaitReason)
 
-        element['pid'] = int(thread.Cid.UniqueProcess)
-        element['tid'] = int(thread.Cid.UniqueThread)
-        element['thread_object_base'] = thread.Tcb.v()
-        element['pgd'] = int(thread.attached_process().Pcb.DirectoryTableBase)
-
-        element['id'] = element['tid']
-
-        element['created'] = str(thread.CreateTime)
-        element['exited'] = str(thread.ExitTime)
-        element['process_name'] = str(
-            thread.owning_process().ImageFileName)
-        element['attached_process_name'] = str(
-            thread.attached_process().ImageFileName)
-
-        # Lookup the thread's state
-        state = str(thread.Tcb.State)
-
-        # Append the wait reason
-        if state == 'Waiting':
-            state = state + ':' + str(thread.Tcb.WaitReason)
-
-        element['state'] = str(state)
-        element['base_priority'] = int(thread.Tcb.BasePriority)
-        element['priority'] = int(thread.Tcb.Priority)
-        element['teb'] = int(thread.Tcb.Teb)
-        element['start_address'] = int(thread.StartAddress)
-        element['start_address_owner_name'] = str(owner_name)
-        element['running'] = None 
-        
-        results.append(element)
+            element['base_priority'] = int(thread.Tcb.BasePriority)
+            element['priority'] = int(thread.Tcb.Priority)
+            element['teb'] = int(thread.Tcb.Teb)
+            element['start_address'] = int(thread.StartAddress)
+            # Name of the DLL that owns the StartAddress. Not used at this moment
+            #element['start_address_owner_name'] 
+            element['running'] = None 
+            
+            results.append(element)
 
     results = sorted(results,  key=lambda k: k['pid'])
     set_running_threads(results)
@@ -839,7 +838,6 @@ def get_threads():
     
 
 def set_running_threads(thread_list):
-    import volatility.obj as obj
     from api import get_num_cpus
     from api import r_cpu
     from api import is_kernel_running
@@ -847,6 +845,14 @@ def set_running_threads(thread_list):
     import struct
     from cpus import X86CPU
     from cpus import X64CPU
+
+    from utils import ConfigurationManager as conf_m
+
+    # Use the threads plugin to retrieve thread data
+    if conf_m.vol_plugin is None:
+        return None
+
+    plugin = conf_m.vol_plugin
 
     num_cpus = get_num_cpus()
 
@@ -879,18 +885,17 @@ def set_running_threads(thread_list):
             if isinstance(cpu, X86CPU):
                 # In 32 bits, use fs register
                 kpcr_addr = cpu.FS["base"]
-                kpcr = obj.Object("_KPCR", offset=kpcr_addr, vm=conf_m.addr_space)
-                self_kpcr_addr = kpcr.SelfPcr.v()
             elif isinstance(cpu, X64CPU):
                 # In 64 bits, use gs register
                 kpcr_addr = cpu.GS["base"]
-                kpcr = obj.Object("_KPCR", offset=kpcr_addr, vm=conf_m.addr_space)
-                self_kpcr_addr = kpcr.Self.v()
-            if self_kpcr_addr == kpcr_addr:
-                current_thread = kpcr.ProcessorBlock.CurrentThread.dereference_as("_ETHREAD")
+            # Get KPCR structure, checks validity,
+            # returns None if not valid
+            kpcr = plugin.get_kpcr(kpcr_addr)
+            if kpcr:
+                current_thread = kpcr.Prcb.CurrentThread.dereference().cast("_ETHREAD") 
                 if current_thread:
                     for element in thread_list:
-                        if element["thread_object_base"] == current_thread.obj_offset:
+                        if element["thread_object_base"] == plugin.get_object_offset(current_thread):
                             element['running'] = cpu_index
             else:
                 raise NotImplementedError("Windows set_running_threads: Architecture of type %s not implemented yet" % str(type(cpu)))
@@ -898,44 +903,51 @@ def set_running_threads(thread_list):
 def win_read_thread_register_from_ktrap_frame(thread, reg_name):
     """ Get a register from a threads trap frame """
     from utils import ConfigurationManager as conf_m
-    import volatility.obj as obj
+    # Use the threads plugin to retrieve thread data
+    if conf_m.vol_plugin is None:
+        return None
 
-    vol_thread = obj.Object("_ETHREAD", offset=thread['thread_object_base'], vm=conf_m.addr_space)
+    plugin = conf_m.vol_plugin
+
     try:
-        trap = vol_thread.Tcb.TrapFrame.dereference_as("_KTRAP_FRAME")
+        trap = plugin.get_ktrap_frame_from_ethread(thread['thread_object_base'])
     except:
         return 0
-    if isinstance(trap, obj.NoneObject):
+
+    if trap is None
         return 0
+
     # Silently fall back to 0
     try:
-        value = getattr(trap, reg_name).v()
+        value = int(getattr(trap, reg_name))
     except:
         value = 0
-    if value == -1:
+    if value is None or value == -1:
         value = 0
     return value
 
 def win_write_thread_register_in_ktrap_frame(thread, reg_name, buf, size):
     """ Get a register from a threads trap frame """
     from utils import ConfigurationManager as conf_m
-    import volatility.obj as obj
+    # Use the threads plugin to retrieve thread data
+    if conf_m.vol_plugin is None:
+        return None
 
-    vol_thread = obj.Object("_ETHREAD", offset=thread['thread_object_base'], vm=conf_m.addr_space)
+    plugin = conf_m.vol_plugin
+
     try:
-        trap = vol_thread.Tcb.TrapFrame.dereference_as("_KTRAP_FRAME")
+        trap = plugin.get_ktrap_frame_from_ethread(thread['thread_object_base'])
     except:
         return 0
-    if isinstance(trap, obj.NoneObject):
+
+    if trap is None
         return 0
+
     # Silently fall back to 0
     try:
-        offset = getattr(trap, reg_name).obj_offset
+        offset = int(plugin.get_object_offset(getattr(trap, reg_name)))
         from api import w_va
         w_va(thread['pgd'], offset, buf, size)
         return size
     except:
         return 0 
-    if value < 0:
-        value = 0
-    return value
