@@ -428,7 +428,7 @@ def windows_read_memory_mapped(pgd, addr, size, pte, is_pae, bitness):
     visited_subsections = {}
 
     file_offset_to_read = None
-    while file_offset_to_read is None and subsect is not None subsect.vol.offset not in visited_subsections:
+    while file_offset_to_read is None and subsect is not None and subsect.vol.offset not in visited_subsections:
         visited_subsections.append(subsect.vol.offset)
         # Get the PPTE address where the Subsection starts,
         # and compute the virtual address that it corresponds 
@@ -914,7 +914,7 @@ def win_read_thread_register_from_ktrap_frame(thread, reg_name):
     except:
         return 0
 
-    if trap is None
+    if trap is None:
         return 0
 
     # Silently fall back to 0
@@ -940,7 +940,7 @@ def win_write_thread_register_in_ktrap_frame(thread, reg_name, buf, size):
     except:
         return 0
 
-    if trap is None
+    if trap is None:
         return 0
 
     # Silently fall back to 0

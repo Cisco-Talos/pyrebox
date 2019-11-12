@@ -10,7 +10,6 @@ from volatility.framework.configuration import requirements
 from volatility.plugins.windows import pslist
 from volatility.framework.objects import StructType
 from volatility.framework.objects import Pointer 
-from volatility.framework.plugins.pyrebox_common import StructTypePyREBoxWrapper, PointerPyREBoxWrapper
 from volatility.framework.plugins.pyrebox_common import get_layer_from_task, get_layer_from_pgd
 
 
@@ -93,9 +92,7 @@ class PyREBoxAccessWindows(interfaces.plugins.PluginInterface):
             result = (None, self.get_object_offset(eproc.Peb))
         else:
             ntkrnlmp = self.get_kernel_module(proc_layer_name)
-            peb = StructTypePyREBoxWrapper(ntkrnlmp.object(object_type = "_PEB", offset = eproc.Peb, absolute = True),
-                                           self.context, 
-                                           proc_layer_name)
+            peb = ntkrnlmp.object(object_type = "_PEB", offset = eproc.Peb, absolute = True)
             result = (peb, self.get_object_offset(eproc.Peb))
         return result
 
@@ -105,7 +102,7 @@ class PyREBoxAccessWindows(interfaces.plugins.PluginInterface):
         if not proc_layer.is_valid(peb.Ldr):
             result = (None, self.get_object_offset(peb.Ldr))
         else:
-            result = (PointerPyREBoxWrapper(peb.Ldr, self.context, proc_layer_name), self.get_object_offset(peb.Ldr))
+            result = (peb.Ldr, self.get_object_offset(peb.Ldr))
         return result
 
     def get_kernel_module_list(self):
@@ -143,7 +140,6 @@ class PyREBoxAccessWindows(interfaces.plugins.PluginInterface):
         return kuser
 
     def get_pgd_from_task(self, task):
-        print("Getting pgd for EPROC: %x" % int(task.vol.offset))
         dtb = 0
         if isinstance(task.Pcb.DirectoryTableBase, objects.Array):
             dtb = task.Pcb.DirectoryTableBase.cast("unsigned long long")

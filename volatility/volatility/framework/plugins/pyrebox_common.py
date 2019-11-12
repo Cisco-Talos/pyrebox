@@ -42,31 +42,3 @@ def get_layer_from_pgd(plugin, pgd):
             return None
 
         return get_layer_from_task(plugin, task, pgd)
-
-
-class StructTypePyREBoxWrapper():
-    def __init__(self, obj, context, layer_name):
-        self._wrapped_obj = obj
-        self._context = context
-        self._layer_name = layer_name
-    def __getattr__(self, attr):
-        if attr in self.__dict__:
-            return getattr(self, attr)
-        return getattr(self._wrapped_obj, attr)
-    def __del__(self):
-        if self._layer_name is not None:
-            self._context.layers.del_layer(self._layer_name)
-
-class PointerPyREBoxWrapper():
-    def __init__(self, obj, context, layer_name):
-        self._wrapped_obj = obj
-        self._context
-        self._layer_name = layer_name
-    def __getattr__(self, attr):
-        if attr in self.__dict__:
-            return getattr(self, attr)
-        return getattr(self._wrapped_obj, attr)
-    def __del__(self):
-        if self._layer_name is not None:
-            self._context.layers.del_layer(self._layer_name)
-
