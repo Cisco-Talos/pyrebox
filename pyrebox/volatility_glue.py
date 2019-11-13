@@ -21,6 +21,7 @@
 #
 # -------------------------------------------------------------------------
 
+from utils import pp_error
 import logging
 import volatility.plugins
 import volatility.symbols
@@ -93,6 +94,16 @@ def initialize_volatility(plugin):
     context = ctx
 
     return True
+
+def construct_plugin(plugin_class, config_to_add):
+    global context
+    global automagics
+    try:
+        for k in config_to_add:
+            context.config[k] = config_to_add[k]
+        return plugins.construct_plugin(context, automagics, plugin_class, base_config_path, None, None)
+    except Exception as e:
+        pp_error("Exception constructing plugin: %s\n" % str(e))
 
 def volatility_scan_ps_active_process_head(pgd):
     '''
