@@ -86,9 +86,9 @@ if [ x"${reconfigure}" = xyes ] || [ ! -f ${qemu_path}/config-host.mak ] || [ ! 
 
 
     echo -e "\n${GREEN}[*] Configuring qemu...${NC}\n"
-    git submodule deinit .
+    git submodule deinit -f .
     git submodule init
-    git submodule update --recursive
+    git submodule update -f --recursive
     cd ${qemu_path}
     qemu_configure_flags=""
     if [ x"${debug}" = xyes ]
