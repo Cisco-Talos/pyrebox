@@ -37,8 +37,12 @@ def get_layer_from_pgd(plugin, pgd):
     if pgd in process_layers:
         return process_layers[pgd]
     else:
-        task = plugin.get_task_from_pgd(pgd)
-        if task is None:
+        task_generator = plugin.get_task_from_pgd(pgd)
+        if task_generator is None:
             return None
 
-        return get_layer_from_task(plugin, task, pgd)
+        tasks = list(task_generator)
+        if len(tasks) == 0:
+            return None
+
+        return get_layer_from_task(plugin, task[0], pgd)

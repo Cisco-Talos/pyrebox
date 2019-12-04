@@ -38,6 +38,7 @@ from utils import pp_error
 import functools
 
 import windows_vmi
+import linux_vmi
 
 
 #   Python module initialization routine

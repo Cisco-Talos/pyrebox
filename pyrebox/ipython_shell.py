@@ -220,7 +220,7 @@ def vol_execute_command(cmdclass, cmdname, line):
 
 def vol_generate_commands():
     from volatility.framework import list_plugins
-    exclude = ["pyreboxaccesswindows", "layerwriter", "configwriter"]
+    exclude = ["pyreboxaccesswindows", "pyreboxaccesslinux", "layerwriter", "configwriter"]
     selected_commands = []
     if conf_m.os_profile.startswith("Linux"):
         for plugin in list_plugins():

@@ -154,7 +154,7 @@ class PyREBoxAccessWindows(interfaces.plugins.PluginInterface):
         for process in processes:
             dtb = self.get_pgd_from_task(process)
             if dtb == pgd:
-                return process
+                yield process
         return None
 
 

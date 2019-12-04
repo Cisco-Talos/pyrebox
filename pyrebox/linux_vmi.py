@@ -27,31 +27,39 @@ from utils import pp_print
 from utils import pp_debug
 from utils import pp_warning
 from utils import pp_error
+import json
 
 def linux_get_offsets():
+    # Get the offsets directly from the json file
+    # before we initialize volatility
     from utils import ConfigurationManager as conf_m
-    import volatility.obj as obj
-    import volatility.registry as registry
+
+    # Find the json file
+    #'Linux_x64_[filename]'
+    file_name = os.path.join(conf_m.volatility_path, "volatility", "symbols", "linux", conf_m.vol_profile[10:] + ".json")
     try:
-        profs = registry.get_plugin_classes(obj.Profile)
-        profile = profs[conf_m.vol_profile]()
-        init_task_offset = profile.get_symbol("init_task")
-        comm_offset = profile.get_obj_offset("task_struct", "comm")
-        pid_offset = profile.get_obj_offset("task_struct", "pid")
-        tasks_offset = profile.get_obj_offset("task_struct", "tasks")
-        mm_offset = profile.get_obj_offset("task_struct", "mm")
-        pgd_offset = profile.get_obj_offset("mm_struct", "pgd")
-        parent_offset = profile.get_obj_offset("task_struct", "parent")
-        exit_state_offset = profile.get_obj_offset("task_struct", "exit_state")
-        thread_stack_size = profile.get_obj_offset(
-            "pyrebox_thread_stack_size_info", "offset")
+        f = open(file_name, "r")
+        symbols = json.load(f)
+        f.close()
+    except Exception as e:
+        pp_error("Unable to open symbol file: %s" % file_name)
+
+    try:
+        init_task_offset = symbols['symbols']['init_task']['address']
+        comm_offset = symbols['user_types']['task_struct']['fields']['comm']['offset']
+        pid_offset = symbols['user_types']['task_struct']['fields']['pid']['offset']
+        tasks_offset = symbols['user_types']['task_struct']['fields']['tasks']['offset']
+        mm_offset = symbols['user_types']['task_struct']['fields']['mm']['offset']
+        pgd_offset = symbols['user_types']['mm_struct']['fields']['pgd']['offset']
+        parent_offset = symbols['user_types']['task_struct']['fields']['parent']['offset']
+        exit_state_offset = symbols['user_types']['task_struct']['fields']['exit_state']['offset']
 
         # new process
-        proc_exec_connector_offset = profile.get_symbol("proc_exec_connector")
+        proc_exec_connector_offset = symbols['symbols']['proc_exec_connector']['address']
         # new kernel module
-        trim_init_extable_offset = profile.get_symbol("trim_init_extable")
+        trim_init_extable_offset = symbols['symbols']['trim_init_extable']['address']
         # process exit
-        proc_exit_connector_offset = profile.get_symbol("proc_exit_connector")
+        proc_exit_connector_offset = symbols['symbols']['proc_exit_connector']['address']
 
         return (int(init_task_offset),
                 int(comm_offset),
@@ -61,7 +69,6 @@ def linux_get_offsets():
                 int(pgd_offset),
                 int(parent_offset),
                 int(exit_state_offset),
-                int(thread_stack_size),
                 int(proc_exec_connector_offset),
                 int(trim_init_extable_offset),
                 int(proc_exit_connector_offset))
@@ -74,18 +81,13 @@ def linux_get_offsets():
 
 def linux_init_address_space():
     from utils import ConfigurationManager as conf_m
-    import volatility.utils as utils
+    from volatility_glue import get_volatility_interface
+
     try:
-        # TODO VOLATILITY vol_conf is now vol_plugin
-        config = conf_m.vol_conf
-        try:
-            addr_space = utils.load_as(config)
-        except BaseException as e:
-            # Return silently
-            print((str(e)))
-            conf_m.addr_space = None
+        conf_m.vol_plugin = get_volatility_interface() 
+        if conf_m.vol_plugin is None:
+            pp_error("Could not initialize volatility interface")
             return False
-        conf_m.addr_space = addr_space
         return True
     except Exception as e:
         pp_error("Could not load volatility address space: %s" % str(e))
@@ -93,7 +95,6 @@ def linux_init_address_space():
 
 def linux_insert_module(task, pid, pgd, base, size, basename, fullname, update_symbols=False):
     from utils import ConfigurationManager as conf_m
-    import volatility.obj as obj
     from vmi import add_symbols
     from vmi import get_symbols
     from vmi import has_symbols
@@ -106,7 +107,10 @@ def linux_insert_module(task, pid, pgd, base, size, basename, fullname, update_s
     import api
     import hashlib
 
-    pgd_for_memory_read = conf_m.addr_space.vtop(task.mm.pgd) or task.mm.pgd
+    if conf_m.vol_plugin is None:
+        return None
+
+    plugin = conf_m.vol_plugin
 
     # Create module, use 0 as checksum as it is irrelevant here
     mod = Module(base, size, pid, pgd, 0, basename, fullname)
@@ -134,48 +138,44 @@ def linux_insert_module(task, pid, pgd, base, size, basename, fullname, update_s
     get_module(pid, pgd, base).set_present()
 
     if update_symbols:
-        # Compute the checksum of the ELF Header, as a way to avoid name
+        # TODO: Compute the checksum of the ELF Header, as a way to avoid name
         # collisions on the symbol cache. May extend this hash to other parts
         # of the binary if necessary in the future.
-        elf_hdr = obj.Object(
-            "elf_hdr", offset=base, vm=task.get_process_address_space())
 
-        if elf_hdr.is_valid():
-            elf_hdr_size = elf_hdr.elf_obj.size()
-            buf = ""
+        from volatility.framework.symbols.linux.elf import ElfIntermedSymbols
+        elf_table_name = ElfIntermedSymbols.create(plugin.context, plugin.config_path, "linux", "elf")
+        e = plugin.context.object(elf_table_name + "!" + "Elf", get_layer_from_task(task)[0], base)
 
-            try:
-                buf = api.r_va(pgd_for_memory_read, base, elf_hdr_size)
-            except:
-                pp_warning("Could not read ELF header at address %x" % base)
-
-            if not has_symbols(fullname):
+        if not has_symbols(fullname): 
+            if e.is_valid():
                 syms = {}
                 # Fetch symbols
-                for sym in elf_hdr.symbols():
+                for sym in e.get_symbols():
                     if sym.st_value == 0 or (sym.st_info & 0xf) != 2:
                         continue
-
-                    sym_name = elf_hdr.symbol_name(sym)
+                    sym_name = sym.get_name()
                     sym_offset = sym.st_value
-                    if sym_name in syms:
-                        if syms[sym_name] != sym_offset:
-                            # There are cases in which the same import is present twice, such as in this case:
-                            # nm /lib/x86_64-linux-gnu/libpthread-2.24.so | grep "pthread_getaffinity_np"
-                            # 00000000000113f0 T pthread_getaffinity_np@GLIBC_2.3.3
-                            # 00000000000113a0 T
-                            # pthread_getaffinity_np@@GLIBC_2.3.4
-                            sym_name = sym_name + "_"
-                            while sym_name in syms and syms[sym_name] != sym_offset:
+                    if sym_name:
+                        if sym_name in syms:
+                            if syms[sym_name] != sym_offset:
+                                # There are cases in which the same import is present twice, such as in this case:
+                                # nm /lib/x86_64-linux-gnu/libpthread-2.24.so | grep "pthread_getaffinity_np"
+                                # 00000000000113f0 T pthread_getaffinity_np@GLIBC_2.3.3
+                                # 00000000000113a0 T
+                                # pthread_getaffinity_np@@GLIBC_2.3.4
                                 sym_name = sym_name + "_"
-                            if sym_name not in syms:
-                                syms[sym_name] = sym_offset
-                    else:
-                        syms[sym_name] = sym_offset
+                                while sym_name in syms and syms[sym_name] != sym_offset:
+                                    sym_name = sym_name + "_"
+                                if sym_name not in syms:
+                                    syms[sym_name] = sym_offset
+                        else:
+                            syms[sym_name] = sym_offset
 
                 add_symbols(fullname, syms)
 
-            mod.set_symbols(get_symbols(fullname))
+        # Always set symbols
+        mod.set_symbols(get_symbols(fullname))
+
 
     return None
 
@@ -220,24 +220,26 @@ def linux_insert_kernel_module(module, base, size, basename, fullname, update_sy
         if not has_symbols(fullname):
             syms = {}
             try:
-                '''
-                pp_debug("Processing symbols for module %s\n" % basename)
-                '''
-                for sym_name, sym_offset in module.get_symbols():
-                    if sym_name in syms:
-                        if syms[sym_name] != sym_offset:
-                            # There are cases in which the same import is present twice, such as in this case:
-                            # nm /lib/x86_64-linux-gnu/libpthread-2.24.so | grep "pthread_getaffinity_np"
-                            # 00000000000113f0 T pthread_getaffinity_np@GLIBC_2.3.3
-                            # 00000000000113a0 T
-                            # pthread_getaffinity_np@@GLIBC_2.3.4
-                            sym_name = sym_name + "_"
-                            while sym_name in syms and syms[sym_name] != sym_offset:
+                for sym in module.get_symbols():
+                    if sym.st_value == 0 or (sym.st_info & 0xf) != 2:
+                        continue
+                    sym_name  = sym.get_name()
+                    sym_offset = sym.st_value
+                    if sym_name:
+                        if sym_name in syms:
+                            if syms[sym_name] != sym_offset:
+                                # There are cases in which the same import is present twice, such as in this case:
+                                # nm /lib/x86_64-linux-gnu/libpthread-2.24.so | grep "pthread_getaffinity_np"
+                                # 00000000000113f0 T pthread_getaffinity_np@GLIBC_2.3.3
+                                # 00000000000113a0 T
+                                # pthread_getaffinity_np@@GLIBC_2.3.4
                                 sym_name = sym_name + "_"
-                            if sym_name not in syms:
-                                syms[sym_name] = sym_offset
-                    else:
-                        syms[sym_name] = sym_offset
+                                while sym_name in syms and syms[sym_name] != sym_offset:
+                                    sym_name = sym_name + "_"
+                                if sym_name not in syms:
+                                    syms[sym_name] = sym_offset
+                        else:
+                            syms[sym_name] = sym_offset
 
                 add_symbols(fullname, syms)
             except Exception as e:
@@ -252,13 +254,17 @@ def linux_insert_kernel_module(module, base, size, basename, fullname, update_sy
 
 def linux_update_modules(pgd, update_symbols=False):
     from utils import ConfigurationManager as conf_m
-    import volatility.obj as obj
-    from volatility.renderers.basic import Address
     from vmi import set_modules_non_present
     from vmi import clean_non_present_modules
 
-    if conf_m.addr_space is None:
-        linux_init_address_space()
+    from utils import ConfigurationManager as conf_m
+
+    if conf_m.vol_plugin is None:
+        return None
+
+    plugin = conf_m.vol_plugin
+
+    list_entry_size = plugin.get_type_size("list_head")
 
     # pgd == 0 means that kernel modules have been requested
     if pgd == 0:
@@ -267,65 +273,46 @@ def linux_update_modules(pgd, update_symbols=False):
         # we can monitor memory writes to these
         # entries and detect when a module is added
         # or removed
-        list_entry_size = None
         list_entry_regions = []
-
-        # Now, update the kernel modules
-        modules_addr = conf_m.addr_space.profile.get_symbol("modules")
-        modules = obj.Object(
-            "list_head", vm=conf_m.addr_space, offset=modules_addr)
 
         # Add the initial list pointer as a list entry
         # modules_addr is the offset of a list_head (2 pointers) that points to the
         # first entry of a module list of type module.
-        list_entry_regions.append((modules_addr, modules_addr, modules.size()))
+        modules_addr = plugins.get_symbol("modules")
+        modules_size = plugins.get_symbol_size("modules")
+        list_entry_regions.append((modules_addr, modules_addr, modules_size))
 
         # Mark all modules as non-present
         set_modules_non_present(0, 0)
 
-        for module in modules.list_of_type("module", "list"):
-            """
-            pp_debug("Module: %s - %x - %x - %x - %x - %x\n" % (module.name,
-                                                                module.obj_offset,
-                                                                module.module_init,
-                                                                module.init_size,
-                                                                module.module_core,
-                                                                module.core_size))
-
-            secs = []
-            for section in module.get_sections():
-                secs.append({"name": section.sect_name, "addr": section.address })
-
-            for section in sorted(secs, key = lambda k: k["addr"]):
-                pp_debug("    %s - %x\n" % (section["name"],section["addr"]))
-            """
-
-            if list_entry_size is None:
-                list_entry_size = module.list.size()
+        for module in plugin.list_kernel_modules():
             # The 'module' type has a field named list of type list_head, that points
             # to the next module in the linked list.
-            entry = (module.obj_offset, module.list.obj_offset, list_entry_size)
+            entry = (plugin.get_object_offset(module), plugin.get_object_offset(module.list), list_entry_size)
             if entry not in list_entry_regions:
                 list_entry_regions.append(entry)
 
             # First, create a module for the "module_core", that contains
             # .text, readonly data and writable data
-            if module.module_core != 0 and module.core_size != 0:
-                linux_insert_kernel_module(module, int(module.module_core.v()), int(
-                    module.core_size.v()), str(module.name), str(module.name), update_symbols)
+            mod_core = plugin.get_object_offset(module.get_module_core())
+            if module.get_core_size() != 0:
+                linux_insert_kernel_module(module, mod_core, 
+                                           module.get_core_size(), module.get_name(), module.get_name(),
+                                           update_symbols)
             # Now, check if there is "module_init" region, which will contain init sections such as .init.text , init
             # readonly and writable data...
-            if module.module_init != 0 and module.init_size != 0:
-                linux_insert_kernel_module(module, module.module_init.v(), module.init_size.v(),
-                                           module.name + "/module_init", module.name + "/module_init",
+            if module.get_init_size() != 0:
+                linux_insert_kernel_module(module, plugin.get_object_offset(module.get_module_init()), module.get_init_size(),
+                                           module.get_name() + "/module_init", module.get_name() + "/module_init",
                                            update_symbols)
             else:
                 # If there is no module_init, check if there is any section
                 # outside the module_core region
                 secs = []
                 for section in module.get_sections():
-                    if section.address < module.module_core or section.address >= (module.module_core + module.core_size):
+                    if section.address < mod_core or section.address >= (mod_core + module.get_core_size()):
                         secs.append(section)
+
                 if len(secs) > 0:
                     # Now, compute the range of sections and put them into a
                     # module_init module block
@@ -343,28 +330,7 @@ def linux_update_modules(pgd, update_symbols=False):
 
     # If pgd != 0 was requested
     
-    tasks = []
-
-    init_task_addr = conf_m.addr_space.profile.get_symbol("init_task")
-    init_task = obj.Object(
-        "task_struct", vm=conf_m.addr_space, offset=init_task_addr)
-
-    # walk the ->tasks list, note that this will *not* display "swapper"
-    for task in init_task.tasks:
-        tasks.append(task)
-
-    # List of tasks (threads) whose pgd is equal to the pgd to update
-    tasks_to_update = []
-
-    # First task in the list with a valid pgd
-    for task in tasks:
-        # Certain kernel threads do not have a memory map (they just take the pgd / memory map of
-        # the thread that was previously executed, because the kernel is mapped
-        # in all the threads.
-        if task.mm:
-            phys_pgd = conf_m.addr_space.vtop(task.mm.pgd) or task.mm.pgd
-            if phys_pgd == pgd:
-                tasks_to_update.append(task)
+    tasks_to_update = plugin.get_task_from_pgd(pgd)
 
     # List entries are returned, so that
     # we can monitor memory writes to these
@@ -374,39 +340,40 @@ def linux_update_modules(pgd, update_symbols=False):
     list_entry_regions = []
 
     for task in tasks_to_update:
-        phys_pgd = conf_m.addr_space.vtop(task.mm.pgd) or task.mm.pgd
+        #phys_pgd = conf_m.addr_space.vtop(task.mm.pgd) or task.mm.pgd
+        phys_pgd = pgd
 
         # Mark all modules as non-present
-        set_modules_non_present(task.pid.v(), phys_pgd)
+        set_modules_non_present(int(task.pid), phys_pgd)
 
         # Add the initial list pointer as a list entry
-        list_entry_regions.append((task.mm.mmap.obj_offset, task.mm.mmap.obj_offset, task.mm.mmap.size()))
+        list_entry_regions.append((plugin.get_object_offset(task.mm.mmap), plugin.get_object_offset(task.mm.mmap),
+                                   plugin.get_type_size("vm_area_struct")))
 
-        for vma in task.get_proc_maps():
-            if list_entry_size is None:
-                list_entry_size = vma.vm_next.size()
-            entry = (vma.obj_offset, vma.vm_next.obj_offset, list_entry_size)
+        for vma in task.mm.get_mmap_iter():
+            start = int(vma.vm_start)
+            end = int(vma.vm_end)
+
+            if heap_only and not (start <= task.mm.brk and end >= task.mm.start_brk):
+                continue
+
+            entry = (plugin.get_object_offset(vma), plugin.get_object_offset(vma.vm_next), list_entry_size)
             if entry not in list_entry_regions:
                 list_entry_regions.append(entry)
 
-            (fname, major, minor, ino, pgoff) = vma.info(task)
-            # Only add the module if the inode is not 0 (it is an actual module
-            # and not a heap region
-            if ino != 0:
-                # Checksum
-                linux_insert_module(task, task.pid.v(),
-                                    Address(phys_pgd),
-                                    Address(vma.vm_start),
-                                    Address(vma.vm_end) - Address(
-                                        vma.vm_start),
-                                    os.path.basename(fname),
-                                    fname,
-                                    update_symbols)
+            fname = vma.get_name(plugin.context, task)
+            linux_insert_module(task, int(task.pid),
+                                phys_pgd,
+                                start,
+                                end - start,
+                                os.path.basename(fname),
+                                fname,
+                                update_symbols)
 
         # Remove all the modules that are not marked as present
-        clean_non_present_modules(task.pid.v(), phys_pgd)
+        clean_non_present_modules(int(task.pid), phys_pgd)
 
     return list_entry_regions
 
 def linux_read_paged_out_memory(pgd, addr, size):
-    raise NotImplementedError() 
+    raise NotImplementedError()

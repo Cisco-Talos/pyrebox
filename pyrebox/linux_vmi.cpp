@@ -48,7 +48,6 @@ pyrebox_target_ulong tasks_offset = 0;
 pyrebox_target_ulong mm_offset = 0;
 pyrebox_target_ulong parent_offset = 0;
 pyrebox_target_ulong exit_state_offset = 0;
-pyrebox_target_ulong thread_stack_size = 0;
 //Offsets inside mm_struct
 pyrebox_target_ulong pgd_offset = 0;
 
@@ -127,7 +126,7 @@ void linux_vmi_init(os_index_t os_index){
    Py_DECREF(py_module_name);
 
    if(py_vmi_module != NULL){
-       PyObject* py_setosfamily = PyObject_GetAttrString(py_vmi_module,"set_os_family_linux");
+       PyObject* py_setosfamily = PyObject_GetAttrString(py_vmi_module, "set_os_family_linux");
        if (py_setosfamily){
            if (PyCallable_Check(py_setosfamily)){
                 PyObject* py_args = PyTuple_New(0);
@@ -161,10 +160,9 @@ void linux_vmi_init(os_index_t os_index){
                         PyObject* py_pgd_offset = PyTuple_GetItem(ret,5);
                         PyObject* py_parent_offset = PyTuple_GetItem(ret,6);
                         PyObject* py_exit_state_offset = PyTuple_GetItem(ret,7);
-                        PyObject* py_thread_stack_size = PyTuple_GetItem(ret,8);
-                        PyObject* py_proc_exec_connector_offset = PyTuple_GetItem(ret,9);
-                        PyObject* py_trim_init_extable_offset = PyTuple_GetItem(ret,10);
-                        PyObject* py_proc_exit_connector_offset = PyTuple_GetItem(ret,11);
+                        PyObject* py_proc_exec_connector_offset = PyTuple_GetItem(ret,8);
+                        PyObject* py_trim_init_extable_offset = PyTuple_GetItem(ret,9);
+                        PyObject* py_proc_exit_connector_offset = PyTuple_GetItem(ret,10);
 
                         if (arch_bits[os_index] == 32){
                             init_task_offset = PyLong_AsUnsignedLong(py_init_task_offset);
@@ -175,7 +173,6 @@ void linux_vmi_init(os_index_t os_index){
                             pgd_offset = PyLong_AsUnsignedLong(py_pgd_offset);
                             parent_offset = PyLong_AsUnsignedLong(py_parent_offset);
                             exit_state_offset = PyLong_AsUnsignedLong(py_exit_state_offset);
-                            thread_stack_size = PyLong_AsUnsignedLong(py_thread_stack_size);
 
                             proc_exec_connector_offset = PyLong_AsUnsignedLong(py_proc_exec_connector_offset);
                             trim_init_extable_offset = PyLong_AsUnsignedLong(py_trim_init_extable_offset);
@@ -190,7 +187,6 @@ void linux_vmi_init(os_index_t os_index){
                             pgd_offset = PyLong_AsUnsignedLongLong(py_pgd_offset);
                             parent_offset = PyLong_AsUnsignedLongLong(py_parent_offset);
                             exit_state_offset = PyLong_AsUnsignedLongLong(py_exit_state_offset);
-                            thread_stack_size = PyLong_AsUnsignedLongLong(py_thread_stack_size);
 
                             proc_exec_connector_offset = PyLong_AsUnsignedLongLong(py_proc_exec_connector_offset);
                             trim_init_extable_offset = PyLong_AsUnsignedLongLong(py_trim_init_extable_offset);
@@ -206,8 +202,7 @@ void linux_vmi_init(os_index_t os_index){
                         utils_print_debug("  [-] exit_state offset: %016lx\n", exit_state_offset);
                         utils_print_debug("  [-] proc exec connector: %016lx\n", proc_exec_connector_offset);
                         utils_print_debug("  [-] trim init extable: %016lx\n", trim_init_extable_offset);
-                        utils_print_debug("  [-] proc exit connector: %016lx\n", proc_exit_connector_offset);
-                        utils_print_debug("  [-] thread stack size: %016lx\n", thread_stack_size);*/
+                        utils_print_debug("  [-] proc exit connector: %016lx\n", proc_exit_connector_offset);*/
 
                         Py_DECREF(ret);
                     }
@@ -384,11 +379,11 @@ void initialize_init_task(pyrebox_target_ulong pgd){
                 utils_print_debug("[*] kernel shift: %016lx\n", kernel_shift);
             }
         }
-        //If we could not find the swapper task with the previous method, then 
+        //If we could not find the swapper task with the previous method, then
         //we try to find it, in case theres KASLR in place
         if (init_task_address == 0){
             //We search it in physical memory instead of virtual memory, due to
-            //identity paging we should not have any problem to locate the different 
+            //identity paging we should not have any problem to locate the different
             //offsets of task struct.
             uint64_t memory_size = get_memory_size();
             uint8_t buff[0x2000];

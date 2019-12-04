@@ -36,6 +36,11 @@ from volatility.plugins.windows import pslist
 from volatility.framework.plugins.windows.pyrebox import PyREBoxAccessWindows
 from volatility.framework.plugins.linux.pyrebox import PyREBoxAccessLinux
 
+OS_TYPE_WINDOWS = 0
+OS_TYPE_LINUX = 1
+OS_TYPE_MAC = 2
+
+os_type = None
 plugin_class = None
 context = None
 automagics = None
@@ -125,9 +130,26 @@ def volatility_scan_ps_active_process_head(pgd):
         volatility_interface = plugins.construct_plugin(context, automagics, plugin_class, base_config_path, None, None)
         return volatility_interface.PsActiveProcessHeadAddr
 
+
 def get_volatility_interface():
     global volatility_interface
+    global context
+    global plugin_class
+    global automagics
+    global base_config_path
+    global os_type
+
+    if volatility_interface is None and os_type == OS_TYPE_LINUX:
+        errors = automagic.run(automagics, context, plugin_class, base_config_path)
+        if len(errors) > 0:
+            for error in errors:
+                pp_error(error + "\n")
+            return None
+        else:
+            volatility_interface = plugins.construct_plugin(context, automagics, plugin_class, base_config_path, None, None)
+
     return volatility_interface
+
 
 def volatility_clear_lru_cache():
     '''
@@ -156,7 +178,11 @@ def volatility_clear_lru_cache():
     return None
 
 def initialize_volatility_windows():
+    global os_type
+    os_type = OS_TYPE_WINDOWS
     return initialize_volatility(PyREBoxAccessWindows)
 
 def initialize_volatility_linux():
+    global os_type
+    os_type = OS_TYPE_LINUX
     return initialize_volatility(PyREBoxAccessLinux)

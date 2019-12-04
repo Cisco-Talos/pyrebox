@@ -229,15 +229,18 @@ void vmi_init(const char* prof){
     else if(profile_starts_with(vol_profile,"'WinXPSP3x86",MAX_PROFILE_LEN) == 0){
         os_index = WinXPSP3x86;
     }
+    else if(profile_starts_with(vol_profile,"'Linux_x86",10) == 0){
+        os_index = Linuxx86;
+    }
+    else if(profile_starts_with(vol_profile,"'Linux_x64",10) == 0){
+        os_index = Linuxx64;
+    }
     else if(profile_starts_with(vol_profile,"'Linux",6) == 0){
-        if (strstr(vol_profile,"x86'")){
-            os_index = Linuxx86;
-        } else if (strstr(vol_profile,"x64'")){
-            os_index = Linuxx64;
-        } else {
-            utils_print_error("[!] Linux architecture not supported: (Supported archs: x86 - x64)");
-            exit(1);
-        }
+        utils_print_error("[!] Linux architecture not supported: (Supported archs: x86 - x64)");
+        exit(1);
+    } else {
+        utils_print_error("[!] Architecture not supported. Check profile configuration");
+        exit(1);
     }
     //Call to the corresponding initialization routine
     if (os_index < LimitWindows){

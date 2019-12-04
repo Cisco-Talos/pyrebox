@@ -55,8 +55,17 @@ class PyREBoxLayer(interfaces.layers.DataLayerInterface):
         # We need: architecture, platorm, and DTB (page_map_offset - (CR3) (windows)). That will make
         # scanning way faster.
         from api import r_cpu
+        arch = None 
+        import api
+        if api.get_os_bits() == 32:
+            arch  = 'Intel32'
+        elif api.get_os_bits() == 64:
+            arch  = 'Intel64'
+        else:
+            raise Exception("OS bits is not 32 or 64 bits")
+
         metadata = {'os': 'Windows',
-                    'architecture': 'Intel32',
+                    'architecture': 'Intel64',
                     'page_map_offset':  r_cpu().CR3}
         super().__init__(context = context, config_path = config_path, name = name, metadata = metadata)
 
