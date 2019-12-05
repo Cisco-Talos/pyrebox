@@ -101,6 +101,7 @@ def linux_insert_module(task, pid, pgd, base, size, basename, fullname, update_s
     from utils import ConfigurationManager as conf_m
     from vmi import add_symbols
     from vmi import get_symbols
+    from vmi import has_symbols
     from vmi import add_module
     from vmi import has_module
     from vmi import get_module
@@ -157,37 +158,38 @@ def linux_insert_module(task, pid, pgd, base, size, basename, fullname, update_s
         # collisions on the symbol cache. May extend this hash to other parts
         # of the binary if necessary in the future.
 
-        e = plugin.get_elf(task, base)
+        if not has_symbols(fullname):
+            e = plugin.get_elf(task, base)
 
-        if e and e.is_valid():
-            syms = {}
-            # Fetch symbols
-            for sym in e.get_symbols():
-                if sym.st_value == 0 or (sym.st_info & 0xf) != 2:
-                    continue
-                sym_name = sym.get_name()
-                if sym.st_value >= base:
-                    sym_offset = sym.st_value - base
-                else:
-                    sym_offset = sym.st_value
-                if sym_name:
-                    if sym_name in syms:
-                        if syms[sym_name] != sym_offset:
-                            # There are cases in which the same import is present twice, such as in this case:
-                            # nm /lib/x86_64-linux-gnu/libpthread-2.24.so | grep "pthread_getaffinity_np"
-                            # 00000000000113f0 T pthread_getaffinity_np@GLIBC_2.3.3
-                            # 00000000000113a0 T
-                            # pthread_getaffinity_np@@GLIBC_2.3.4
-                            sym_name = sym_name + "_"
-                            while sym_name in syms and syms[sym_name] != sym_offset:
-                                sym_name = sym_name + "_"
-                            if sym_name not in syms:
-                                syms[sym_name] = sym_offset
+            if e and e.is_valid():
+                syms = {}
+                # Fetch symbols
+                for sym in e.get_symbols():
+                    if sym.st_value == 0 or (sym.st_info & 0xf) != 2:
+                        continue
+                    sym_name = sym.get_name()
+                    if sym.st_value >= base:
+                        sym_offset = sym.st_value - base
                     else:
-                        syms[sym_name] = sym_offset
+                        sym_offset = sym.st_value
+                    if sym_name:
+                        if sym_name in syms:
+                            if syms[sym_name] != sym_offset:
+                                # There are cases in which the same import is present twice, such as in this case:
+                                # nm /lib/x86_64-linux-gnu/libpthread-2.24.so | grep "pthread_getaffinity_np"
+                                # 00000000000113f0 T pthread_getaffinity_np@GLIBC_2.3.3
+                                # 00000000000113a0 T
+                                # pthread_getaffinity_np@@GLIBC_2.3.4
+                                sym_name = sym_name + "_"
+                                while sym_name in syms and syms[sym_name] != sym_offset:
+                                    sym_name = sym_name + "_"
+                                if sym_name not in syms:
+                                    syms[sym_name] = sym_offset
+                        else:
+                            syms[sym_name] = sym_offset
 
-            add_symbols(fullname, syms)
-        symbol_cache_must_be_saved = True
+                add_symbols(fullname, syms)
+            symbol_cache_must_be_saved = True
 
 
     # Always set symbols
@@ -201,6 +203,7 @@ def linux_insert_kernel_module(module, base, size, basename, fullname, update_sy
     from vmi import has_module
     from vmi import get_module
     from vmi import get_symbols
+    from vmi import has_symbols
     from vmi import add_symbols
     from vmi import Module
     from api_internal import dispatch_module_load_callback
@@ -234,7 +237,7 @@ def linux_insert_kernel_module(module, base, size, basename, fullname, update_sy
     # Mark the module as present
     get_module(0, 0, base).set_present()
 
-    if update_symbols:
+    if update_symbols and not has_symbols(fullname):
         syms = {}
         try:
             for sym in module.get_symbols():

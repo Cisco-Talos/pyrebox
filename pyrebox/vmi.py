@@ -85,7 +85,7 @@ def get_symbols(mod_full_name):
 
 def has_symbols(mod_full_name):
     global __symbols
-    return ((mod_full_name in __symbols))
+    return ((mod_full_name in __symbols) and len(__symbols[mod_full_name]) > 0)
 
 def set_symbol_cache_path(path):
     global symbol_cache_path

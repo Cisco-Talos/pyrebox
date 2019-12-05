@@ -872,17 +872,17 @@ class ShellMagics(Magics):
 
         # Get the base address for all the kernel modules
         for m in api.get_module_list(0):
-            mods[m["fullname"].lower()] = m["base"]
+            mods[m["fullname"].lower()] = mods.get(m["fullname"].lower(), []) + [m["base"]]
 
         # If process is set, get the base address for all the modules:
         if self.proc_context is not None:
             for m in api.get_module_list(self.proc_context.get_pgd()):
-                mods[m["fullname"].lower()] = m["base"]
+                mods[m["fullname"].lower()] = mods.get(m["fullname"].lower(), []) + [m["base"]]
         t = PrettyTable(["Module", "Function", "Address"])
         t.align["Address"] = "r"
         for sym in self.find_syms(param):
             t.add_row([sym["mod"], sym["name"], "%016x" % (sym["addr"] if sym["mod_fullname"].lower(
-            ) not in mods else sym["addr"] + mods[sym["mod_fullname"].lower()])])
+            ) not in mods else sym["addr"] + min(mods[sym["mod_fullname"].lower()]))])
         pp_print(str(t) + "\n")
 
     @line_magic
