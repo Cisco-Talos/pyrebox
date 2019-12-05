@@ -12,6 +12,8 @@ from volatility.framework.objects import StructType
 from volatility.framework.objects import Pointer 
 from volatility.framework.automagic import linux
 from volatility.framework.layers import linear
+from volatility.framework.plugins.pyrebox_common import get_layer_from_task, get_layer_from_pgd
+
 
 class PyREBoxAccessLinux(interfaces.plugins.PluginInterface):
     """Environment to directly interact with a linux memory image."""
@@ -81,9 +83,7 @@ class PyREBoxAccessLinux(interfaces.plugins.PluginInterface):
         krnl = self.get_kernel_module()
         sym_obj = krnl.get_symbol(sym)
         if sym_obj:
-            return sym_obj.size
-
-        return None 
+            return self.context.symbol_space.get_type(sym_obj.type_name).size
 
     def get_object_offset(self, obj):
         return obj.vol.offset
@@ -121,4 +121,13 @@ class PyREBoxAccessLinux(interfaces.plugins.PluginInterface):
                 # More than one task struct can have the same PGD
                 yield process
         return None
+
+    def get_elf(self, task, base):
+        from volatility.framework.symbols.linux.elf import ElfIntermedSymbols
+        elf_table_name = ElfIntermedSymbols.create(self.context, self.config_path, "linux", "elf")
+        layer_name = get_layer_from_task(self, task)[0]
+        try:
+            return self.context.object(elf_table_name + "!" + "Elf", layer_name, base)
+        except:
+            return None
 

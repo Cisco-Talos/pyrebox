@@ -32,6 +32,9 @@ class elf(objects.StructType):
                                                layer_name = layer_name,
                                                offset = object_info.offset)
         
+        self.__type_prefix = None
+        self.__hdr = None
+
         # Check validity
         if magic != 0x464c457f:
             return None
@@ -90,8 +93,7 @@ class elf(objects.StructType):
         section_headers = self._context.object(self.get_symbol_table().name + constants.BANG + "array",
                                                layer_name = self.vol.layer_name,
                                                offset = self.__offset + self.e_shoff,
-                                               subtype =
-                                               self._context.symbol_space.get_type(self.get_symbol_table().name + constants.BANG + self.__type_prefix + "Shdr"),
+                                               subtype = self._context.symbol_space.get_type(self.get_symbol_table().name + constants.BANG + self.__type_prefix + "Shdr"),
                                                count = self.e_shnum)
         return section_headers
 
@@ -110,18 +112,23 @@ class elf(objects.StructType):
                 # exception is raised
                 return None
 
-            # This section contains pointers to the strtab, symtab, and strent sections
-            for dsec in phdr.dynamic_sections():
-                if dsec.d_tag == 5:
-                    dt_strtab = dsec.d_ptr
+            try:
+                # This section contains pointers to the strtab, symtab, and strent sections
+                for dsec in phdr.dynamic_sections():
+                    if dsec.d_tag == 5:
+                        dt_strtab = dsec.d_ptr
 
-                elif dsec.d_tag == 6:
-                    dt_symtab = dsec.d_ptr
+                    elif dsec.d_tag == 6:
+                        dt_symtab = dsec.d_ptr
 
-                elif dsec.d_tag == 11:
-                    # Size of the symtab symbol entry 
-                    dt_strent = dsec.d_ptr
-
+                    elif dsec.d_tag == 11:
+                        # Size of the symtab symbol entry 
+                        dt_strent = dsec.d_ptr
+            except:
+                # This can except if there is some unmapped memory, we just continue
+                # and finally will not update the corresponding pointers and
+                # will return None
+                pass
             break
 
         if dt_strtab == None or dt_symtab == None or dt_strent == None:
@@ -150,8 +157,9 @@ class elf(objects.StructType):
                                                count = self.cached_numsyms)
 
         for sym in symtab_arr:
-            sym.set_cached_strtab(self.cached_strtab)
-            yield sym
+            if sym.is_valid():
+                sym.set_cached_strtab(self.cached_strtab)
+                yield sym
 
 
 class elf_sym(objects.StructType):
@@ -159,6 +167,13 @@ class elf_sym(objects.StructType):
 
     def set_cached_strtab(self, cached_strtab):
         self.cached_strtab = cached_strtab
+
+    def is_valid(self):
+        try:
+            _, _, _ = (self.st_value, self.st_info, self.st_name)
+            return True
+        except:
+            return False
 
     def get_name(self):
         addr = self.cached_strtab + self.st_name

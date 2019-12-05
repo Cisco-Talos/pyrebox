@@ -29,6 +29,10 @@ from utils import pp_warning
 from utils import pp_error
 import json
 
+# To mark whether or not we need to save the cache
+symbol_cache_must_be_saved = False
+
+
 def linux_get_offsets():
     # Get the offsets directly from the json file
     # before we initialize volatility
@@ -97,20 +101,24 @@ def linux_insert_module(task, pid, pgd, base, size, basename, fullname, update_s
     from utils import ConfigurationManager as conf_m
     from vmi import add_symbols
     from vmi import get_symbols
-    from vmi import has_symbols
     from vmi import add_module
     from vmi import has_module
     from vmi import get_module
     from vmi import Module
     from api_internal import dispatch_module_load_callback
     from api_internal import dispatch_module_remove_callback
+    from api import r_va
     import api
     import hashlib
+    global symbol_cache_must_be_saved
+
 
     if conf_m.vol_plugin is None:
         return None
 
     plugin = conf_m.vol_plugin
+
+    checksum = 0
 
     # Create module, use 0 as checksum as it is irrelevant here
     mod = Module(base, size, pid, pgd, 0, basename, fullname)
@@ -137,45 +145,53 @@ def linux_insert_module(task, pid, pgd, base, size, basename, fullname, update_s
     # Mark the module as present
     get_module(pid, pgd, base).set_present()
 
-    if update_symbols:
+    # In Linux, we get one VMA region per program header, and all of them
+    # refer to the same file, it is just mapped into different regions.
+    # We must only update symbols for the first region (that contains
+    # the elf headers).
+
+    is_elf = (api.r_va(pgd, base, 4) == b"\x7f\x45\x4c\x46")
+
+    if is_elf and update_symbols:
         # TODO: Compute the checksum of the ELF Header, as a way to avoid name
         # collisions on the symbol cache. May extend this hash to other parts
         # of the binary if necessary in the future.
 
-        from volatility.framework.symbols.linux.elf import ElfIntermedSymbols
-        elf_table_name = ElfIntermedSymbols.create(plugin.context, plugin.config_path, "linux", "elf")
-        e = plugin.context.object(elf_table_name + "!" + "Elf", get_layer_from_task(task)[0], base)
+        e = plugin.get_elf(task, base)
 
-        if not has_symbols(fullname): 
-            if e.is_valid():
-                syms = {}
-                # Fetch symbols
-                for sym in e.get_symbols():
-                    if sym.st_value == 0 or (sym.st_info & 0xf) != 2:
-                        continue
-                    sym_name = sym.get_name()
+        if e and e.is_valid():
+            syms = {}
+            # Fetch symbols
+            for sym in e.get_symbols():
+                if sym.st_value == 0 or (sym.st_info & 0xf) != 2:
+                    continue
+                sym_name = sym.get_name()
+                if sym.st_value >= base:
+                    sym_offset = sym.st_value - base
+                else:
                     sym_offset = sym.st_value
-                    if sym_name:
-                        if sym_name in syms:
-                            if syms[sym_name] != sym_offset:
-                                # There are cases in which the same import is present twice, such as in this case:
-                                # nm /lib/x86_64-linux-gnu/libpthread-2.24.so | grep "pthread_getaffinity_np"
-                                # 00000000000113f0 T pthread_getaffinity_np@GLIBC_2.3.3
-                                # 00000000000113a0 T
-                                # pthread_getaffinity_np@@GLIBC_2.3.4
+                if sym_name:
+                    if sym_name in syms:
+                        if syms[sym_name] != sym_offset:
+                            # There are cases in which the same import is present twice, such as in this case:
+                            # nm /lib/x86_64-linux-gnu/libpthread-2.24.so | grep "pthread_getaffinity_np"
+                            # 00000000000113f0 T pthread_getaffinity_np@GLIBC_2.3.3
+                            # 00000000000113a0 T
+                            # pthread_getaffinity_np@@GLIBC_2.3.4
+                            sym_name = sym_name + "_"
+                            while sym_name in syms and syms[sym_name] != sym_offset:
                                 sym_name = sym_name + "_"
-                                while sym_name in syms and syms[sym_name] != sym_offset:
-                                    sym_name = sym_name + "_"
-                                if sym_name not in syms:
-                                    syms[sym_name] = sym_offset
-                        else:
-                            syms[sym_name] = sym_offset
+                            if sym_name not in syms:
+                                syms[sym_name] = sym_offset
+                    else:
+                        syms[sym_name] = sym_offset
 
-                add_symbols(fullname, syms)
+            add_symbols(fullname, syms)
+        symbol_cache_must_be_saved = True
 
-        # Always set symbols
-        mod.set_symbols(get_symbols(fullname))
 
+    # Always set symbols
+    mod.set_symbols(get_symbols(fullname))
 
     return None
 
@@ -184,15 +200,17 @@ def linux_insert_kernel_module(module, base, size, basename, fullname, update_sy
     from vmi import add_module
     from vmi import has_module
     from vmi import get_module
-    from vmi import has_symbols
     from vmi import get_symbols
     from vmi import add_symbols
     from vmi import Module
     from api_internal import dispatch_module_load_callback
     from api_internal import dispatch_module_remove_callback
+    global symbol_cache_must_be_saved
 
     # Create module, use 0 as checksum as it is irrelevant here
     mod = Module(base, size, 0, 0, 0, basename, fullname)
+
+    checksum = 0
 
     #Module load/del notification
     if has_module(0, 0, base):
@@ -217,37 +235,42 @@ def linux_insert_kernel_module(module, base, size, basename, fullname, update_sy
     get_module(0, 0, base).set_present()
 
     if update_symbols:
-        if not has_symbols(fullname):
-            syms = {}
-            try:
-                for sym in module.get_symbols():
-                    if sym.st_value == 0 or (sym.st_info & 0xf) != 2:
-                        continue
-                    sym_name  = sym.get_name()
+        syms = {}
+        try:
+            for sym in module.get_symbols():
+                if sym.st_value == 0 or (sym.st_info & 0xf) != 2:
+                    continue
+                sym_name  = sym.get_name()
+                if sym.st_value >= base:
+                    sym_offset = sym.st_value - base
+                else:
                     sym_offset = sym.st_value
-                    if sym_name:
-                        if sym_name in syms:
-                            if syms[sym_name] != sym_offset:
-                                # There are cases in which the same import is present twice, such as in this case:
-                                # nm /lib/x86_64-linux-gnu/libpthread-2.24.so | grep "pthread_getaffinity_np"
-                                # 00000000000113f0 T pthread_getaffinity_np@GLIBC_2.3.3
-                                # 00000000000113a0 T
-                                # pthread_getaffinity_np@@GLIBC_2.3.4
+                if sym_name:
+                    if sym_name in syms:
+                        if syms[sym_name] != sym_offset:
+                            # There are cases in which the same import is present twice, such as in this case:
+                            # nm /lib/x86_64-linux-gnu/libpthread-2.24.so | grep "pthread_getaffinity_np"
+                            # 00000000000113f0 T pthread_getaffinity_np@GLIBC_2.3.3
+                            # 00000000000113a0 T
+                            # pthread_getaffinity_np@@GLIBC_2.3.4
+                            sym_name = sym_name + "_"
+                            while sym_name in syms and syms[sym_name] != sym_offset:
                                 sym_name = sym_name + "_"
-                                while sym_name in syms and syms[sym_name] != sym_offset:
-                                    sym_name = sym_name + "_"
-                                if sym_name not in syms:
-                                    syms[sym_name] = sym_offset
-                        else:
-                            syms[sym_name] = sym_offset
+                            if sym_name not in syms:
+                                syms[sym_name] = sym_offset
+                    else:
+                        syms[sym_name] = sym_offset
 
-                add_symbols(fullname, syms)
-            except Exception as e:
-                # Probably could not fetch the symbols for this module
-                pp_error("%s" % str(e))
-                pass
+            add_symbols(fullname, syms)
+        except Exception as e:
+            # Probably could not fetch the symbols for this module
+            pp_error("%s" % str(e))
+            pass
 
-        mod.set_symbols(get_symbols(fullname))
+        symbol_cache_must_be_saved = True
+
+    # Always set the symbols
+    mod.set_symbols(get_symbols(fullname))
 
     return None
 
@@ -258,6 +281,8 @@ def linux_update_modules(pgd, update_symbols=False):
     from vmi import clean_non_present_modules
 
     from utils import ConfigurationManager as conf_m
+    global symbol_cache_must_be_saved
+
 
     if conf_m.vol_plugin is None:
         return None
@@ -278,8 +303,8 @@ def linux_update_modules(pgd, update_symbols=False):
         # Add the initial list pointer as a list entry
         # modules_addr is the offset of a list_head (2 pointers) that points to the
         # first entry of a module list of type module.
-        modules_addr = plugins.get_symbol("modules")
-        modules_size = plugins.get_symbol_size("modules")
+        modules_addr = plugin.get_symbol("modules")
+        modules_size = plugin.get_symbol_size("modules")
         list_entry_regions.append((modules_addr, modules_addr, modules_size))
 
         # Mark all modules as non-present
@@ -322,10 +347,16 @@ def linux_update_modules(pgd, update_symbols=False):
                     # the size
                     size = (secs[-1].address + 0x4000) - secs[0].address
                     linux_insert_kernel_module(module, start, size,
-                                               module.name + "/module_init", module.name + "/module_init", update_symbols)
+                                               module.get_name() + "/module_init", module.get_name() + "/module_init", update_symbols)
 
         # Remove all the modules that are not marked as present
         clean_non_present_modules(0, 0)
+
+        if symbol_cache_must_be_saved:
+            from vmi import save_symbols_to_cache_file
+            save_symbols_to_cache_file()
+            symbol_cache_must_be_saved = False
+
         return list_entry_regions
 
     # If pgd != 0 was requested
@@ -354,7 +385,8 @@ def linux_update_modules(pgd, update_symbols=False):
             start = int(vma.vm_start)
             end = int(vma.vm_end)
 
-            if heap_only and not (start <= task.mm.brk and end >= task.mm.start_brk):
+            # If heap: continue
+            if (start <= task.mm.brk and end >= task.mm.start_brk):
                 continue
 
             entry = (plugin.get_object_offset(vma), plugin.get_object_offset(vma.vm_next), list_entry_size)
@@ -372,6 +404,11 @@ def linux_update_modules(pgd, update_symbols=False):
 
         # Remove all the modules that are not marked as present
         clean_non_present_modules(int(task.pid), phys_pgd)
+
+        if symbol_cache_must_be_saved:
+            from vmi import save_symbols_to_cache_file
+            save_symbols_to_cache_file()
+            symbol_cache_must_be_saved = False
 
     return list_entry_regions
 

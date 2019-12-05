@@ -67,7 +67,14 @@ def add_module(pid, pgd, base, mod):
 
 def add_symbols(mod_full_name, syms):
     global __symbols
-    __symbols[mod_full_name] = syms
+    if not mod_full_name in __symbols:
+        __symbols[mod_full_name] = syms
+    else:
+        # Update (add more) symbols, if necessary,
+        # But do not modify existing ones
+        for sym_name in syms:
+            if sym_name not in __symbols[mod_full_name]:
+                __symbols[mod_full_name][sym_name] = syms[sym_name]
 
 def get_symbols(mod_full_name):
     global __symbols

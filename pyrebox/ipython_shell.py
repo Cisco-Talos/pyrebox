@@ -436,7 +436,7 @@ class ShellMagics(Magics):
         # If process is set, get the base address for all the modules:
         if self.proc_context is not None:
             for m in api.get_module_list(self.proc_context.get_pgd()):
-                mods[m["fullname"].lower()] = m["base"]
+                mods[m["fullname"].lower()] = mods.get(m["fullname"].lower(), []) + [m["base"]]
 
         # Read symbols near the address given:
         nearest_low = None
@@ -450,14 +450,16 @@ class ShellMagics(Magics):
             f_name = d["name"]
             saddr = d["addr"]
             if mod_name.lower() in mods:
-                saddr = saddr + mods[mod_name.lower()]
-            if saddr >= start_addr and saddr <= end_addr:
-                if saddr <= addr and (
-                        nearest_low is None or saddr > nearest_low[2]):
-                    nearest_low = (mod_name_short, f_name, saddr)
-                if saddr >= addr and (
-                        nearest_high is None or saddr < nearest_high[2]):
-                    nearest_high = (mod_name_short, f_name, saddr)
+                for base in mods[mod_name.lower()]:
+                    saddr = saddr + base
+
+                    if saddr >= start_addr and saddr <= end_addr:
+                        if saddr <= addr and (
+                                nearest_low is None or saddr > nearest_low[2]):
+                            nearest_low = (mod_name_short, f_name, saddr)
+                        if saddr >= addr and (
+                                nearest_high is None or saddr < nearest_high[2]):
+                            nearest_high = (mod_name_short, f_name, saddr)
 
         return (nearest_low, nearest_high)
 
