@@ -437,6 +437,9 @@ class ShellMagics(Magics):
         if self.proc_context is not None:
             for m in api.get_module_list(self.proc_context.get_pgd()):
                 mods[m["fullname"].lower()] = mods.get(m["fullname"].lower(), []) + [m["base"]]
+            # For the kernel too
+            for m in api.get_module_list(0):
+                mods[m["fullname"].lower()] = mods.get(m["fullname"].lower(), []) + [m["base"]]
 
         # Read symbols near the address given:
         nearest_low = None
