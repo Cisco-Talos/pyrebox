@@ -59,11 +59,21 @@ def linux_get_offsets():
         exit_state_offset = symbols['user_types']['task_struct']['fields']['exit_state']['offset']
 
         # new process
-        proc_exec_connector_offset = symbols['symbols']['proc_exec_connector']['address']
+        if 'proc_exec_connector' in symbols['symbols']:
+            proc_exec_connector_offset = symbols['symbols']['proc_exec_connector']['address']
+        else:
+            proc_exec_connector_offset = 0
+            
         # new kernel module
-        trim_init_extable_offset = symbols['symbols']['trim_init_extable']['address']
+        if 'trim_init_extable' in symbols['symbols']:
+            trim_init_extable_offset = symbols['symbols']['trim_init_extable']['address']
+        else:
+            trim_init_extable_offset = 0
         # process exit
-        proc_exit_connector_offset = symbols['symbols']['proc_exit_connector']['address']
+        if 'proc_exit_connector' in symbols['symbols']:
+            proc_exit_connector_offset = symbols['symbols']['proc_exit_connector']['address']
+        else:
+            proc_exit_connector_offset = 0
 
         return (int(init_task_offset),
                 int(comm_offset),
