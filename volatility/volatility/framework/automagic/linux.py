@@ -55,7 +55,11 @@ class LintelStacker(interfaces.automagic.StackerLayerInterface):
             return None
 
         mss = scanners.MultiStringScanner([x for x in linux_banners if x is not None])
-        for _, banner in layer.scan(context = context, scanner = mss, progress_callback = progress_callback):
+        #for _, banner in layer.scan(context = context, scanner = mss, progress_callback = progress_callback):
+        # the loop below will in effect just pick the first banner
+        # so we will need to clear the banner cache when changing OS version
+        # this hack is probably not the right way to do it
+        for banner in [x for x in linux_banners if x is not None]:
             dtb = None
             vollog.debug("Identified banner: {}".format(repr(banner)))
 
