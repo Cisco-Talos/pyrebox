@@ -530,6 +530,18 @@ def get_os_bits():
     # upwards
     return c_api.get_os_bits()
 
+def get_os_kind():
+    """ Return the bitness of the system / O.S. being emulated
+
+        :return: The bitness of the system / O.S. being emualated
+        :rtype: int
+    """
+    import c_api
+    # If this function call fails, it will raise an exception.
+    # Given that the exception is self explanatory, we just let it propagate
+    # upwards
+    return c_api.get_os_kind()
+
 # Rest of API functions
 
 def get_module_list(pgd):

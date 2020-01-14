@@ -915,6 +915,15 @@ PyObject* py_get_os_bits(PyObject *dummy, PyObject *args){
     return result;
 }
 
+PyObject* py_get_os_kind(PyObject *dummy, PyObject *args){
+    PyObject* result = 0;
+    if (os_index < LimitWindows)
+        result = Py_BuildValue("s","Windows");
+    else
+        result = Py_BuildValue("s","Linux");
+    return result;
+}
+
 PyObject* py_import_module(PyObject *dummy, PyObject *args){
     char* name;
     int length;
@@ -1344,6 +1353,7 @@ PyMethodDef api_methods[] = {
       {"get_num_cpus",py_get_num_cpus, METH_VARARGS, "get_num_cpus"},
       {"plugin_print_internal",py_print_plugin, METH_VARARGS, "plugin_print_internal"},
       {"get_os_bits",py_get_os_bits,METH_VARARGS,"get_os_bits"},
+      {"get_os_kind",py_get_os_kind,METH_VARARGS,"get_os_kind"},
       {"import_module",py_import_module,METH_VARARGS,"import_module"},
       {"unload_module",py_unload_module,METH_VARARGS,"unload_module"},
       {"reload_module",py_reload_module,METH_VARARGS,"reload_module"},
