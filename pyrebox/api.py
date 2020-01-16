@@ -1020,7 +1020,7 @@ class CallbackManager:
         # name
         if name is None:
             random.seed(time.time())
-            name = "".join(random.choice(string.lowercase) for i in range(16))
+            name = "".join(random.choice(string.ascii_lowercase) for i in range(16))
         name = self.generate_callback_name(name)
 
         # If the callback_type is a module callback, register it with specific API
