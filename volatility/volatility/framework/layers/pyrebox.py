@@ -64,8 +64,8 @@ class PyREBoxLayer(interfaces.layers.DataLayerInterface):
         else:
             raise Exception("OS bits is not 32 or 64 bits")
 
-        metadata = {'os': 'Windows',
-                    'architecture': 'Intel64',
+        metadata = {'os': api.get_os_kind(),
+                    'architecture': arch,
                     'page_map_offset':  r_cpu().CR3}
         super().__init__(context = context, config_path = config_path, name = name, metadata = metadata)
 

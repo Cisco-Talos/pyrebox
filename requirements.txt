@@ -7,3 +7,6 @@ capstone
 distorm3
 pycrypto
 pytz
+prettytable
+profilehooks
+
