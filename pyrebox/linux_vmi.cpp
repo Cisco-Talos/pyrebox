@@ -60,6 +60,7 @@ pyrebox_target_ulong proc_exit_connector_offset = 0;
 //the kernel shift
 pyrebox_target_ulong init_task_address = 0;
 pyrebox_target_ulong kernel_shift = 0;
+pyrebox_target_ulong virtual_init_task_address = 0;
 
 //Flag to indicate that the process list is already 
 //a valid list
@@ -250,7 +251,7 @@ void update_process_list(pyrebox_target_ulong pgd){
     connection_read_memory(init_task_address + tasks_offset,(char*)&h,sizeof(list_head));
 
     //Traverse linked list
-    while (h.next != 0 && h.next != (init_task_address + tasks_offset + kernel_shift)){
+    while (h.next != 0 && h.next != (virtual_init_task_address + tasks_offset)){
         //Read PID
         uint32_t pid = 0;
         pyrebox_target_ulong exit_state = 0;
@@ -452,10 +453,16 @@ void initialize_init_task(pyrebox_target_ulong pgd){
             //Go to the first task, then go to the next one, and then go back with the prev pointer and check if it points to the first one
             //At this point, h.next would be pointing to the first task's list_head (the first after swapper)
             qemu_virtual_memory_rw_with_pgd(pgd,h.next,(uint8_t*)&h,sizeof(list_head),0);
+
+            // translate h.prev back to physical address
+            pyrebox_target_ulong prev_physical_address = qemu_virtual_to_physical_with_pgd( pgd, h.prev-tasks_offset );
+
             //Now, h.prev would be pointing to the first task (swapper task)
-            if ((h.prev - tasks_offset) == (init_task_address + kernel_shift)){
-                //utils_print_debug("[*] Adding initial swapper process...\n");
+            if (prev_physical_address == init_task_address){
+                utils_print_debug("[*] Adding initial swapper process...\n");
                 process_list_valid = 1;
+                virtual_init_task_address = h.prev-tasks_offset;
+
                 //Add the swapper task
                 vmi_add_process(0, 0, 0, init_task_address, 0,(char*)"swapper");
                 //Add internal callbacks for process creation and exit
