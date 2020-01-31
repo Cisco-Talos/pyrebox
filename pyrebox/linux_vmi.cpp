@@ -402,10 +402,12 @@ void initialize_init_task(pyrebox_target_ulong pgd){
                         uint64_t swapper_address = (mem_addr + offset) - comm_offset;
                         uint8_t chunk1[4] = {0,0,0,0};
                         uint8_t chunk2[4] = {0,0,0,0};
+
                         //Check first 4 bytes (must be 0) the PID (must be 0) and the alignment
                         //of the KASLR shift, (must be page aligned).
                         connection_read_memory(swapper_address,(char*)chunk1,4);
                         connection_read_memory(swapper_address + pid_offset,(char*)chunk2,4);
+
                         if (*((uint32_t*)chunk1) == 0 && 
                             *((uint32_t*)chunk2) == 0 && 
                             ((swapper_address - (init_task_offset - shifts[0])) & 0xfff) == 0x0){
@@ -415,6 +417,13 @@ void initialize_init_task(pyrebox_target_ulong pgd){
                             kernel_shift = (init_task_offset - swapper_address);
                             utils_print_debug("[*] init_task located at: %016x\n", init_task_address);
                             utils_print_debug("[*] kernel shift: %016x\n", kernel_shift);
+                        }
+                        else
+                        { 
+                            // The sanity checks failed, so increment offset
+                            // otherwise we have an infinite loop
+                            // increment by at least 15 to get past the needle we just found
+                            offset += 15;
                         }
                     } else {
                         //Force while exit
@@ -453,6 +462,7 @@ void initialize_init_task(pyrebox_target_ulong pgd){
                 add_internal_callback(0,proc_exec_connector_offset,process_create_delete_callback);
                 add_internal_callback(0,proc_exit_connector_offset,process_create_delete_callback);
             }
+
         }
     }
 
