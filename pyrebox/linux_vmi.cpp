@@ -322,11 +322,28 @@ void process_create_delete_callback(callback_params_t params){
 
 
 void linux_vmi_tlb_callback(pyrebox_target_ulong pgd, os_index_t os_index){
+    static time_t last=time(NULL);
+    static time_t interval = 1;
 
     if (init_task_address == 0 || process_list_valid == 0 || populate_initial_process_list == 1){
         tlb_counter += 1;
         if (tlb_counter % 1000 == 0){
-            initialize_init_task(pgd);
+            // make sure that the search is not performed too frequently
+            // by using a grdually increasing interval
+
+            time_t now = time(NULL);
+            if (now - last > interval)
+            {
+              initialize_init_task(pgd);
+              last = time(NULL);
+            }
+            else
+            {
+                interval += 10;
+                if (interval > 120)
+                    interval = 120;
+            }
+            //initialize_init_task(pgd);
         }
     }
 }
@@ -459,7 +476,7 @@ void initialize_init_task(pyrebox_target_ulong pgd){
 
             //Now, h.prev would be pointing to the first task (swapper task)
             if (prev_physical_address == init_task_address){
-                utils_print_debug("[*] Adding initial swapper process...\n");
+                //utils_print_debug("[*] Adding initial swapper process...\n");
                 process_list_valid = 1;
                 virtual_init_task_address = h.prev-tasks_offset;
 
