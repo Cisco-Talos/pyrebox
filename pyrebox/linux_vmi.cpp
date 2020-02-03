@@ -55,6 +55,8 @@ pyrebox_target_ulong pgd_offset = 0;
 pyrebox_target_ulong proc_exec_connector_offset = 0;
 pyrebox_target_ulong trim_init_extable_offset = 0;
 pyrebox_target_ulong proc_exit_connector_offset = 0;
+pyrebox_target_ulong flush_signal_handlers_offset = 0;
+pyrebox_target_ulong do_exit_offset = 0;
 
 //Offsets we save once we find the init_task address and 
 //the kernel shift
@@ -164,6 +166,8 @@ void linux_vmi_init(os_index_t os_index){
                         PyObject* py_proc_exec_connector_offset = PyTuple_GetItem(ret,8);
                         PyObject* py_trim_init_extable_offset = PyTuple_GetItem(ret,9);
                         PyObject* py_proc_exit_connector_offset = PyTuple_GetItem(ret,10);
+                        PyObject* py_flush_signal_handlers_offset = PyTuple_GetItem(ret,11);
+                        PyObject* py_do_exit_offset = PyTuple_GetItem(ret,12);
 
                         if (arch_bits[os_index] == 32){
                             init_task_offset = PyLong_AsUnsignedLong(py_init_task_offset);
@@ -178,6 +182,8 @@ void linux_vmi_init(os_index_t os_index){
                             proc_exec_connector_offset = PyLong_AsUnsignedLong(py_proc_exec_connector_offset);
                             trim_init_extable_offset = PyLong_AsUnsignedLong(py_trim_init_extable_offset);
                             proc_exit_connector_offset = PyLong_AsUnsignedLong(py_proc_exit_connector_offset);
+                            flush_signal_handlers_offset = PyLong_AsUnsignedLong(py_flush_signal_handlers_offset);
+                            do_exit_offset = PyLong_AsUnsignedLong(py_do_exit_offset);
                         }
                         else{
                             init_task_offset = PyLong_AsUnsignedLongLong(py_init_task_offset);
@@ -192,6 +198,8 @@ void linux_vmi_init(os_index_t os_index){
                             proc_exec_connector_offset = PyLong_AsUnsignedLongLong(py_proc_exec_connector_offset);
                             trim_init_extable_offset = PyLong_AsUnsignedLongLong(py_trim_init_extable_offset);
                             proc_exit_connector_offset = PyLong_AsUnsignedLongLong(py_proc_exit_connector_offset);
+                            flush_signal_handlers_offset = PyLong_AsUnsignedLongLong(py_flush_signal_handlers_offset);
+                            do_exit_offset = PyLong_AsUnsignedLongLong(py_do_exit_offset);
                         }
                         /*utils_print_debug("  [-] init_task offset: %016lx\n", init_task_offset);
                         utils_print_debug("  [-] pid offset: %016lx\n", pid_offset);
@@ -203,7 +211,9 @@ void linux_vmi_init(os_index_t os_index){
                         utils_print_debug("  [-] exit_state offset: %016lx\n", exit_state_offset);
                         utils_print_debug("  [-] proc exec connector: %016lx\n", proc_exec_connector_offset);
                         utils_print_debug("  [-] trim init extable: %016lx\n", trim_init_extable_offset);
-                        utils_print_debug("  [-] proc exit connector: %016lx\n", proc_exit_connector_offset);*/
+                        utils_print_debug("  [-] proc exit connector: %016lx\n", proc_exit_connector_offset);
+                        utils_print_debug("  [-] flush sig handlers: %016lx\n", flush_signal_handlers_offset);
+                        utils_print_debug("  [-] do_exit: %016lx\n", do_exit_offset);*/
 
                         Py_DECREF(ret);
                     }
@@ -487,6 +497,11 @@ void initialize_init_task(pyrebox_target_ulong pgd){
                 {
                     add_internal_callback(0,proc_exec_connector_offset,process_create_delete_callback);
                     add_internal_callback(0,proc_exit_connector_offset,process_create_delete_callback);
+                }
+                else
+                {
+                    add_internal_callback(0,flush_signal_handlers_offset,process_create_delete_callback);
+                    add_internal_callback(0,do_exit_offset,process_create_delete_callback);
                 }
             }
 

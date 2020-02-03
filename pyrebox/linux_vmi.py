@@ -29,6 +29,8 @@ from utils import pp_warning
 from utils import pp_error
 import json
 
+#import traceback
+
 # To mark whether or not we need to save the cache
 symbol_cache_must_be_saved = False
 
@@ -75,6 +77,17 @@ def linux_get_offsets():
         else:
             proc_exit_connector_offset = 0
 
+        # alternate process creation (user space only)
+        if 'flush_signal_handlers' in symbols['symbols']:
+            flush_signal_handlers_offset = symbols['symbols']['flush_signal_handlers']['address']
+        else:
+            flush_signal_handlers_offset = 0
+
+        if 'do_exit' in symbols['symbols']:
+            do_exit_offset = symbols['symbols']['do_exit']['address']
+        else:
+            do_exit_offset = 0
+
         return (int(init_task_offset),
                 int(comm_offset),
                 int(pid_offset),
@@ -85,7 +98,9 @@ def linux_get_offsets():
                 int(exit_state_offset),
                 int(proc_exec_connector_offset),
                 int(trim_init_extable_offset),
-                int(proc_exit_connector_offset))
+                int(proc_exit_connector_offset),
+                int(flush_signal_handlers_offset),
+                int(do_exit_offset))
 
     except Exception as e:
         pp_error("Could not retrieve symbols for profile initialization %s" %
