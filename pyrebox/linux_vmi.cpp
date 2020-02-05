@@ -55,11 +55,14 @@ pyrebox_target_ulong pgd_offset = 0;
 pyrebox_target_ulong proc_exec_connector_offset = 0;
 pyrebox_target_ulong trim_init_extable_offset = 0;
 pyrebox_target_ulong proc_exit_connector_offset = 0;
+pyrebox_target_ulong flush_signal_handlers_offset = 0;
+pyrebox_target_ulong do_exit_offset = 0;
 
 //Offsets we save once we find the init_task address and 
 //the kernel shift
 pyrebox_target_ulong init_task_address = 0;
 pyrebox_target_ulong kernel_shift = 0;
+pyrebox_target_ulong virtual_init_task_address = 0;
 
 //Flag to indicate that the process list is already 
 //a valid list
@@ -163,6 +166,8 @@ void linux_vmi_init(os_index_t os_index){
                         PyObject* py_proc_exec_connector_offset = PyTuple_GetItem(ret,8);
                         PyObject* py_trim_init_extable_offset = PyTuple_GetItem(ret,9);
                         PyObject* py_proc_exit_connector_offset = PyTuple_GetItem(ret,10);
+                        PyObject* py_flush_signal_handlers_offset = PyTuple_GetItem(ret,11);
+                        PyObject* py_do_exit_offset = PyTuple_GetItem(ret,12);
 
                         if (arch_bits[os_index] == 32){
                             init_task_offset = PyLong_AsUnsignedLong(py_init_task_offset);
@@ -177,6 +182,8 @@ void linux_vmi_init(os_index_t os_index){
                             proc_exec_connector_offset = PyLong_AsUnsignedLong(py_proc_exec_connector_offset);
                             trim_init_extable_offset = PyLong_AsUnsignedLong(py_trim_init_extable_offset);
                             proc_exit_connector_offset = PyLong_AsUnsignedLong(py_proc_exit_connector_offset);
+                            flush_signal_handlers_offset = PyLong_AsUnsignedLong(py_flush_signal_handlers_offset);
+                            do_exit_offset = PyLong_AsUnsignedLong(py_do_exit_offset);
                         }
                         else{
                             init_task_offset = PyLong_AsUnsignedLongLong(py_init_task_offset);
@@ -191,6 +198,8 @@ void linux_vmi_init(os_index_t os_index){
                             proc_exec_connector_offset = PyLong_AsUnsignedLongLong(py_proc_exec_connector_offset);
                             trim_init_extable_offset = PyLong_AsUnsignedLongLong(py_trim_init_extable_offset);
                             proc_exit_connector_offset = PyLong_AsUnsignedLongLong(py_proc_exit_connector_offset);
+                            flush_signal_handlers_offset = PyLong_AsUnsignedLongLong(py_flush_signal_handlers_offset);
+                            do_exit_offset = PyLong_AsUnsignedLongLong(py_do_exit_offset);
                         }
                         /*utils_print_debug("  [-] init_task offset: %016lx\n", init_task_offset);
                         utils_print_debug("  [-] pid offset: %016lx\n", pid_offset);
@@ -202,7 +211,9 @@ void linux_vmi_init(os_index_t os_index){
                         utils_print_debug("  [-] exit_state offset: %016lx\n", exit_state_offset);
                         utils_print_debug("  [-] proc exec connector: %016lx\n", proc_exec_connector_offset);
                         utils_print_debug("  [-] trim init extable: %016lx\n", trim_init_extable_offset);
-                        utils_print_debug("  [-] proc exit connector: %016lx\n", proc_exit_connector_offset);*/
+                        utils_print_debug("  [-] proc exit connector: %016lx\n", proc_exit_connector_offset);
+                        utils_print_debug("  [-] flush sig handlers: %016lx\n", flush_signal_handlers_offset);
+                        utils_print_debug("  [-] do_exit: %016lx\n", do_exit_offset);*/
 
                         Py_DECREF(ret);
                     }
@@ -250,7 +261,7 @@ void update_process_list(pyrebox_target_ulong pgd){
     connection_read_memory(init_task_address + tasks_offset,(char*)&h,sizeof(list_head));
 
     //Traverse linked list
-    while (h.next != 0 && h.next != (init_task_address + tasks_offset + kernel_shift)){
+    while (h.next != 0 && h.next != (virtual_init_task_address + tasks_offset)){
         //Read PID
         uint32_t pid = 0;
         pyrebox_target_ulong exit_state = 0;
@@ -321,11 +332,27 @@ void process_create_delete_callback(callback_params_t params){
 
 
 void linux_vmi_tlb_callback(pyrebox_target_ulong pgd, os_index_t os_index){
+    static time_t last=time(NULL);
+    static time_t interval = 1;
 
     if (init_task_address == 0 || process_list_valid == 0 || populate_initial_process_list == 1){
         tlb_counter += 1;
         if (tlb_counter % 1000 == 0){
-            initialize_init_task(pgd);
+            // make sure that the search is not performed too frequently
+            // by using a grdually increasing interval
+
+            time_t now = time(NULL);
+            if (now - last > interval)
+            {
+              initialize_init_task(pgd);
+              last = time(NULL);
+            }
+            else
+            {
+                interval += 10;
+                if (interval > 120)
+                    interval = 120;
+            }
         }
     }
 }
@@ -402,10 +429,12 @@ void initialize_init_task(pyrebox_target_ulong pgd){
                         uint64_t swapper_address = (mem_addr + offset) - comm_offset;
                         uint8_t chunk1[4] = {0,0,0,0};
                         uint8_t chunk2[4] = {0,0,0,0};
+
                         //Check first 4 bytes (must be 0) the PID (must be 0) and the alignment
                         //of the KASLR shift, (must be page aligned).
                         connection_read_memory(swapper_address,(char*)chunk1,4);
                         connection_read_memory(swapper_address + pid_offset,(char*)chunk2,4);
+
                         if (*((uint32_t*)chunk1) == 0 && 
                             *((uint32_t*)chunk2) == 0 && 
                             ((swapper_address - (init_task_offset - shifts[0])) & 0xfff) == 0x0){
@@ -415,6 +444,13 @@ void initialize_init_task(pyrebox_target_ulong pgd){
                             kernel_shift = (init_task_offset - swapper_address);
                             utils_print_debug("[*] init_task located at: %016x\n", init_task_address);
                             utils_print_debug("[*] kernel shift: %016x\n", kernel_shift);
+                        }
+                        else
+                        { 
+                            // The sanity checks failed, so increment offset
+                            // otherwise we have an infinite loop
+                            // increment by at least 15 to get past the needle we just found
+                            offset += 15;
                         }
                     } else {
                         //Force while exit
@@ -443,16 +479,35 @@ void initialize_init_task(pyrebox_target_ulong pgd){
             //Go to the first task, then go to the next one, and then go back with the prev pointer and check if it points to the first one
             //At this point, h.next would be pointing to the first task's list_head (the first after swapper)
             qemu_virtual_memory_rw_with_pgd(pgd,h.next,(uint8_t*)&h,sizeof(list_head),0);
+
+            // translate h.prev back to physical address
+            pyrebox_target_ulong prev_physical_address = qemu_virtual_to_physical_with_pgd( pgd, h.prev-tasks_offset );
+
             //Now, h.prev would be pointing to the first task (swapper task)
-            if ((h.prev - tasks_offset) == (init_task_address + kernel_shift)){
-                //utils_print_debug("[*] Adding initial swapper process...\n");
+            if (prev_physical_address == init_task_address){
+                utils_print_debug("[*] Adding initial swapper process...\n");
                 process_list_valid = 1;
+                virtual_init_task_address = h.prev-tasks_offset;
+
                 //Add the swapper task
                 vmi_add_process(0, 0, 0, init_task_address, 0,(char*)"swapper");
                 //Add internal callbacks for process creation and exit
-                add_internal_callback(0,proc_exec_connector_offset,process_create_delete_callback);
-                add_internal_callback(0,proc_exit_connector_offset,process_create_delete_callback);
+                if (proc_exec_connector_offset != 0){
+                    add_internal_callback(0,proc_exec_connector_offset,process_create_delete_callback);
+                }
+                else if (flush_signal_handlers_offset != 0){
+                    // alternative function that is also called during process creation
+                    add_internal_callback(0,flush_signal_handlers_offset,process_create_delete_callback);
+                }
+                if (proc_exit_connector_offset != 0){
+                    add_internal_callback(0,proc_exit_connector_offset,process_create_delete_callback);
+                }
+                else if (do_exit_offset != 0){
+                    // alternative function for monitoring process exit
+                    add_internal_callback(0,do_exit_offset,process_create_delete_callback);
+                }
             }
+
         }
     }
 
