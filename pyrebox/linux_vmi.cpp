@@ -492,14 +492,18 @@ void initialize_init_task(pyrebox_target_ulong pgd){
                 //Add the swapper task
                 vmi_add_process(0, 0, 0, init_task_address, 0,(char*)"swapper");
                 //Add internal callbacks for process creation and exit
-                if (proc_exec_connector_offset != 0)
-                {
+                if (proc_exec_connector_offset != 0){
                     add_internal_callback(0,proc_exec_connector_offset,process_create_delete_callback);
+                }
+                else if (flush_signal_handlers_offset != 0){
+                    // alternative function that is also called during process creation
+                    add_internal_callback(0,flush_signal_handlers_offset,process_create_delete_callback);
+                }
+                if (proc_exit_connector_offset != 0){
                     add_internal_callback(0,proc_exit_connector_offset,process_create_delete_callback);
                 }
-                else
-                {
-                    add_internal_callback(0,flush_signal_handlers_offset,process_create_delete_callback);
+                else if (do_exit_offset != 0){
+                    // alternative function for monitoring process exit
                     add_internal_callback(0,do_exit_offset,process_create_delete_callback);
                 }
             }
