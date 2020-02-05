@@ -353,7 +353,6 @@ void linux_vmi_tlb_callback(pyrebox_target_ulong pgd, os_index_t os_index){
                 if (interval > 120)
                     interval = 120;
             }
-            //initialize_init_task(pgd);
         }
     }
 }
@@ -486,7 +485,7 @@ void initialize_init_task(pyrebox_target_ulong pgd){
 
             //Now, h.prev would be pointing to the first task (swapper task)
             if (prev_physical_address == init_task_address){
-                //utils_print_debug("[*] Adding initial swapper process...\n");
+                utils_print_debug("[*] Adding initial swapper process...\n");
                 process_list_valid = 1;
                 virtual_init_task_address = h.prev-tasks_offset;
 
