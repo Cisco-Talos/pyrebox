@@ -420,11 +420,14 @@ void initialize_init_task(pyrebox_target_ulong pgd){
                 //Search in the buffer
                 //needle -> "swapper/0\x00\x00\x00\x00\x00\x00"
                 uint8_t needle[15] = {0x73, 0x77, 0x61, 0x70, 0x70, 0x65, 0x72, 0x2f, 0x30, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+                uint8_t check1[8] = {0x2f, 0x30, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+                uint8_t check2[8] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
                 unsigned int offset = 0;
                 while(init_task_address == 0 && offset < (0x2000 - 15)){
-                    uint8_t* p = (uint8_t*) memmem(buff + offset, 0x2000 - offset, needle, 15);
-                    if (p != 0){
+                    uint8_t* p = (uint8_t*) memmem(buff + offset, 0x2000 - offset, needle, 7);
+                    if ((p != 0)&&((memcmp(p+7,check1,8) == 0)||(memcmp(p+7,check2,8) == 0))){
                         //Needle found
+                        //Check the rest of the needle is present
                         offset = p - buff;
                         uint64_t swapper_address = (mem_addr + offset) - comm_offset;
                         uint8_t chunk1[4] = {0,0,0,0};
