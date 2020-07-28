@@ -174,7 +174,7 @@ def find_ep(proc, proc_name):
             name = m["name"]
             base = m["base"]
             # size = m["size"]
-            if name == proc_name:
+            if proc_name in name:
                     pe_data = api.r_va(proc.get_pgd(), base, 0x1000)
                     pe = pefile.PE(data=pe_data)
                     ep = pe.OPTIONAL_HEADER.AddressOfEntryPoint
