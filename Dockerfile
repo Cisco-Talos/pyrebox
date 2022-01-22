@@ -21,28 +21,33 @@
 #
 # -------------------------------------------------------------------------------
 
-FROM ubuntu:16.04
+FROM ubuntu:18.04
 MAINTAINER Jonas Zaddach
 
 ENV PREFIX /home
-
-#Install packages
 RUN apt-get update
-RUN apt-get install -y build-essential zlib1g-dev pkg-config \
+RUN apt-get install -y python3 python3-pip
+RUN export python=python3
+#Install packages
+RUN apt-get install -y --fix-missing build-essential zlib1g-dev pkg-config \
                        libglib2.0-dev binutils-dev libboost-all-dev \
                        autoconf libtool libssl-dev libpixman-1-dev \
                        libpython-dev python-pip \
                        git curl vim
 
 #upgrade pip
-RUN pip install --upgrade pip
+RUN python3 -m pip install --upgrade pip
+
 
 #clone pybox
 RUN git clone https://github.com/Cisco-Talos/pyrebox pyrebox
 WORKDIR pyrebox
-RUN pip install -r requirements.txt
+RUN python3 -m pip install -r requirements.txt
 RUN ./build.sh
-RUN cp /usr/local/lib/python2.7/dist-packages/capstone/lib/libcapstone.so /usr/local/lib
+# i don't know why pyrebox-i386 uses python2 still 
+RUN python2 -m pip install distorm3 ipython capstone
+#RUN cp /usr/local/lib/python2.7/dist-packages/capstone/lib/libcapstone.so /usr/local/lib
+#RUN cp /usr/local/lib/python3.6/dist-packages/capstone/lib/libcapstone.so /usr/local/lib
 RUN ldconfig
 
 #OPTIONAL: Copy VM in. Left as an example
