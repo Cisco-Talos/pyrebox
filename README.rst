@@ -1,3 +1,10 @@
+================
+ARCHIVED PROJECT
+================
+
+THIS PROJECT HAS BEEN ARCHIVED AND ITS ISSUE QUEUE IS LOCKED. THE PROJECT WILL BE KEPT PUBLIC ONLY FOR REFERENCE PURPORSES.
+
+
 .. image:: docs/media/pyrebox_logo_light_bg.png 
 
 .. _QEMU: http://qemu.org/
