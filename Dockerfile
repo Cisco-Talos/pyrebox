@@ -35,7 +35,8 @@ RUN apt-get install -y build-essential zlib1g-dev pkg-config \
                        git curl vim
 
 #upgrade pip
-RUN pip install --upgrade pip
+# RUN pip install --upgrade pip
+RUN python -m pip install pip==20.3
 
 #clone pybox
 RUN git clone https://github.com/Cisco-Talos/pyrebox pyrebox
